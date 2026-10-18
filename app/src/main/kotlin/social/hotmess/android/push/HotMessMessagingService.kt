@@ -24,7 +24,8 @@ import social.hotmess.core.PushNotification
  * Firebase hands new tokens here. In the background Firebase shows notifications itself, and tapping
  * one opens [MainActivity] with the message's data (`url`, `ping_id`; `kind` for analytics) as extras. In the
  * foreground Firebase shows nothing, so a push whose `url` the app routes is shown here, with the same extras,
- * and a Ping's reloads Now, unless the same notification (by `notification_id`) came over the cable and
+ * and a Ping's reloads Now (a push about a chat room the user just left, whose `url` is the room's, goes in
+ * its own channel), unless the same notification (by `notification_id`) came over the cable and
  * [InAppNotifications] showed it.
  */
 class HotMessMessagingService : FirebaseMessagingService() {
@@ -42,19 +43,23 @@ class HotMessMessagingService : FirebaseMessagingService() {
         if (!graph.notifications.shouldPostSystemCopy(message.data[PushNotification.NOTIFICATION_ID])) return
         if (route is AppRoute.NowPing) graph.pingUpdated(route.pingId)
         val notification = message.notification ?: return
-        show(applicationContext, notification.title, notification.body, message.data)
+        val channel = if (route is AppRoute.Chat) CHAT_CHANNEL else PING_CHANNEL
+        show(applicationContext, notification.title, notification.body, message.data, channel)
     }
 
     companion object {
         const val PING_CHANNEL = "pings"
+        const val CHAT_CHANNEL = "chat"
 
-        private fun show(context: Context, title: String?, body: String?, data: Map<String, String>) {
+        private fun channelName(channel: String): String = if (channel == CHAT_CHANNEL) "Chat rooms" else "Pings"
+
+        private fun show(context: Context, title: String?, body: String?, data: Map<String, String>, channel: String) {
             val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
                 PackageManager.PERMISSION_GRANTED || android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU
             if (!granted) return
 
             val manager = context.getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(NotificationChannel(PING_CHANNEL, "Pings", NotificationManager.IMPORTANCE_HIGH))
+            manager.createNotificationChannel(NotificationChannel(channel, channelName(channel), NotificationManager.IMPORTANCE_HIGH))
 
             val open = Intent(context, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -62,7 +67,7 @@ class HotMessMessagingService : FirebaseMessagingService() {
             val id = (data[PingPush.URL] ?: data[PingPush.PING_ID])?.hashCode() ?: 0
             val tap = PendingIntent.getActivity(context, id, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
-            val notification = NotificationCompat.Builder(context, PING_CHANNEL)
+            val notification = NotificationCompat.Builder(context, channel)
                 .setSmallIcon(R.mipmap.ic_launcher_monochrome)
                 .setContentTitle(title)
                 .setContentText(body)
