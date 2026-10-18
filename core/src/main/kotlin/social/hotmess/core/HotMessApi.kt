@@ -122,6 +122,7 @@ class HotMessApi(val client: AudienceKitClient) {
             chatOpen = venue.chat?.open == true,
             friends = venueFriends,
             friendPings = venue.friendPings,
+            onNow = venue.people?.onNow.orEmpty(),
         )
     }
 
@@ -277,6 +278,22 @@ class HotMessApi(val client: AudienceKitClient) {
     }
 
     /**
+     * The ways the audience lets people sign in (`GET /v1/token/methods`), which AudienceKit's admin chooses, or null
+     * when the API can't say (an API from before the setting answers 404, or there's no connection). Never throws: the
+     * login screen then shows what it always has. [host] names the audience.
+     */
+    suspend fun signInMethods(host: String): SignInMethods? =
+        try {
+            val path = "/v1/token/methods?host=" + java.net.URLEncoder.encode(host, Charsets.UTF_8)
+            val bytes = client.data(APIRequest(method = "GET", path = path, authenticated = false))
+            json.decodeFromString(SignInMethods.serializer(), bytes.toString(Charsets.UTF_8))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+
+    /**
      * Sends an error report. Never throws: reporting must not cause an error of its own. Signed out it goes without
      * the session token.
      */
@@ -306,6 +323,14 @@ class HotMessApi(val client: AudienceKitClient) {
         val name = me.name ?: listOfNotNull(me.firstName, me.lastName).joinToString(" ")
         return User(id = id, name = name, avatarUrl = me.avatarUrl)
     }
+
+    /** Whether pushes about chat rooms the user left lately are on, or null when there's no signed-in user. */
+    suspend fun recentChatPush(): Boolean? = query(Documents.RECENT_CHAT_PUSH, RecentChatPushResponse.serializer()).me?.recentChatPush
+
+    /** Turns pushes about chat rooms the user left lately on or off; returns the setting as it now is. */
+    suspend fun setRecentChatPush(enabled: Boolean): Boolean =
+        mutate(Documents.SET_RECENT_CHAT_PUSH, SetRecentChatPushResponse.serializer(), graphQLVariables("enabled" to enabled))
+            .setRecentChatPush.recentChatPush
 
     // endregion
 
@@ -402,6 +427,8 @@ data class VenueOverview(
     val friends: List<Friend> = emptyList(),
     /** Friends' active Pings that pick this venue or one of its events. */
     val friendPings: List<Ping> = emptyList(),
+    /** Who's on there right now. */
+    val onNow: List<Appearance> = emptyList(),
 )
 
 /** Visible venues, those in [localeId] first, then by the audience's order and name. */
@@ -439,7 +466,11 @@ private data class LocationReport(
     val audience: AudienceNode? = null,
 ) {
     @Serializable
-    data class VenueMixins(val events: UpcomingEvents? = null, val friends: FriendsMixin? = null)
+    data class VenueMixins(
+        val events: UpcomingEvents? = null,
+        val friends: FriendsMixin? = null,
+        val people: VenuePeopleMixin? = null,
+    )
 
     @Serializable
     data class LocaleNode(
@@ -474,6 +505,7 @@ private data class LocationReport(
                 imageUrl = event?.bannerUrl ?: place.bannerUrl ?: place.photoUrl,
                 event = event,
                 venue = place,
+                onNow = mixins.people?.onNow.orEmpty(),
                 venues = nearbyVenues,
                 // The event the user is at leads the screen, so it isn't listed again.
                 events = mixins.events?.events.orEmpty().filterNot { it.id == event?.id },
@@ -515,6 +547,16 @@ private data class MeResponse(val me: UserState? = null) {
 }
 
 @Serializable
+private data class RecentChatPushResponse(val me: Me? = null) {
+    @Serializable data class Me(val recentChatPush: Boolean = false)
+}
+
+@Serializable
+private data class SetRecentChatPushResponse(val setRecentChatPush: Payload) {
+    @Serializable data class Payload(val recentChatPush: Boolean = false)
+}
+
+@Serializable
 private data class ClosestLocaleResponse(val closestLocale: LocaleSummary? = null)
 
 @Serializable
@@ -545,6 +587,7 @@ private data class VenueNode(
     @SerialName("events") val eventsMixin: UpcomingEvents? = null,
     val friends: FriendsMixin? = null,
     val ping: PingFeedMixin? = null,
+    val people: VenuePeopleMixin? = null,
 ) {
     val friendPings: List<Ping> get() = ping?.friendPings.orEmpty()
 

@@ -45,6 +45,7 @@ import social.hotmess.android.ui.theme.HotMessTheme
 import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
+import social.hotmess.core.SignInMethods
 import social.hotmess.core.VersionInfo
 
 /** While the session is restored. */
@@ -64,6 +65,11 @@ fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}) {
     val branding by graph.brand.branding.collectAsStateWithLifecycle()
     val endedNotice by graph.session.endedNotice.collectAsStateWithLifecycle()
     val signingIn = state == AuthState.SigningIn
+    // The audience's sign-in methods from AudienceKit; until they load, or when the API can't say, all of them.
+    var signInMethods by remember { mutableStateOf<SignInMethods?>(null) }
+    LaunchedEffect(Unit) { signInMethods = graph.api.signInMethods(graph.configuration.audienceHost) }
+    val offersFacebook = signInMethods?.facebook ?: true
+    val offersGoogle = signInMethods?.google ?: true
 
     HotMessTheme(branding = branding?.theme, darkTheme = true) {
         Box(Modifier.fillMaxSize().background(Color.Black)) {
@@ -103,15 +109,25 @@ fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}) {
                     if (signingIn) {
                         CircularProgressIndicator(color = Color.White)
                     } else {
-                        PrimaryButton("Continue with Facebook", onClick = onSignIn, modifier = Modifier.fillMaxWidth())
-                        SecondaryButton(
-                            "Continue with Google",
-                            onClick = onGoogleSignIn,
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
-                        )
+                        if (offersFacebook) {
+                            PrimaryButton("Continue with Facebook", onClick = onSignIn, modifier = Modifier.fillMaxWidth())
+                        }
+                        if (offersGoogle) {
+                            SecondaryButton(
+                                "Continue with Google",
+                                onClick = onGoogleSignIn,
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
+                            )
+                        }
                     }
                     Text(
-                        "We use your Facebook profile to find your friends and the nights near you. With Google, you can connect Facebook later.",
+                        when {
+                            offersFacebook && offersGoogle ->
+                                "We use your Facebook profile to find your friends and the nights near you. With Google, you can connect Facebook later."
+                            offersFacebook -> "We use your Facebook profile to find your friends and the nights near you."
+                            offersGoogle -> "Sign in with Google to find the nights near you. You can connect Facebook later to find your friends."
+                            else -> "Sign-in isn't available in this app right now. Please check back soon."
+                        },
                         style = HotMessType.bodySmall,
                         color = Color.White.copy(alpha = 0.8f),
                         textAlign = TextAlign.Center,

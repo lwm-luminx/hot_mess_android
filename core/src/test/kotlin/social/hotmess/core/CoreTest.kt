@@ -194,6 +194,30 @@ class DeepLinkTest {
     }
 
     @Test
+    fun readsChatRoomLinks() {
+        assertEquals(AppRoute.Chat(ChatRoom.venue(id)), DeepLink.route("https://hotmess.social/venues/${id.uppercase()}/chat"))
+        assertEquals(AppRoute.Chat(ChatRoom.locale(id)), DeepLink.route("https://hotmess.social/locales/$id/chat"))
+        assertEquals(AppRoute.Chat(ChatRoom.venue(id)), DeepLink.route("hotmess://venues/$id/chat"))
+        assertEquals(AppTab.VENUES, AppRoute.Chat(ChatRoom.venue(id)).tab)
+        assertEquals(AppTab.NOW, AppRoute.Chat(ChatRoom.locale(id)).tab)
+        // A venue's other pages are still its page; a locale has no page but its chat.
+        assertEquals(AppRoute.VenueDetail(id), DeepLink.route("https://hotmess.social/venues/$id/events"))
+        assertNull(DeepLink.route("https://hotmess.social/locales/$id"))
+        assertNull(DeepLink.route("https://hotmess.social/people/$id/chat"))
+    }
+
+    @Test
+    fun aRecentChatPushOpensItsRoomByUrl() {
+        val url = "https://hotmess.social/locales/$id/chat"
+        val data = mapOf("kind" to "recent_chat", "room_id" to id, "message_id" to "m-1", "url" to url, "notification_id" to "n-1")
+        val push = PushNotification("n-1", title = "Small talk", body = "Jo P.: still here?", url = url, data = data)
+        assertEquals(AppRoute.Chat(ChatRoom.locale(id)), push.route)
+        // Routed on its url, never taken for a Ping.
+        assertNull(PingPush.parse(data))
+        assertNull(push.ping)
+    }
+
+    @Test
     fun ignoresAnythingElse() {
         assertNull(DeepLink.route("https://hotmess.social/venues/not-a-uuid"))
         assertNull(DeepLink.route("https://hotmess.social/about"))
@@ -522,6 +546,52 @@ class ChatProtocolTest {
     }
 
     @Test
+    fun readsWhoWasHereRecently() {
+        val until = Instant.parse("2026-10-17T05:30:00Z")
+        assertEquals(
+            listOf(ChatProtocol.Frame.PresenceChanged("u-3", online = false, reachable = true, recentUntil = until)),
+            ChatProtocol.parse(
+                result("""{"__typename":"ChatPresenceChanged","userId":"u-3","presence":"PUSH","recentUntil":"2026-10-17T05:30:00Z"}"""),
+            ),
+        )
+        // Coming back is never "recent".
+        assertEquals(
+            listOf(ChatProtocol.Frame.PresenceChanged("u-3", online = true)),
+            ChatProtocol.parse(
+                result("""{"__typename":"ChatPresenceChanged","userId":"u-3","presence":"ONLINE","recentUntil":"2026-10-17T05:30:00Z"}"""),
+            ),
+        )
+
+        val frames = ChatProtocol.parse(
+            result(
+                """{"__typename":"ChatJoined","outOfRange":false,
+                  "roster":{
+                    "people":[{"userId":"u-1","name":"Aurora Bell","avatarUrl":null,"friend":false}],
+                    "friends":[],
+                    "recent":[{"userId":"U-4","name":"Wren Fox","avatarUrl":null,"friend":true,"presence":"PUSH",
+                               "lastSeenAt":"2026-10-17T05:00:00Z","recentUntil":"2026-10-17T05:30:00Z"},
+                              {"userId":"u-5","name":"Jo P.","presence":"OFFLINE","lastSeenAt":"2026-10-17T04:50:00.000+00:00","recentUntil":null},
+                              {"userId":"u-7","name":"DJ Host","presence":"OFFLINE","lastSeenAt":null,"recentUntil":"2026-10-17T09:00:00Z"},
+                              {"userId":"u-6","lastSeenAt":null}, "junk"]},
+                  "history":[],"pinnedMessage":null}""",
+            ),
+        )
+        val roster = assertIs<ChatProtocol.Frame.Roster>(frames[2])
+        assertEquals(setOf("u-1"), roster.online)
+        assertEquals(
+            listOf(
+                RoomPerson("u-4", "Wren Fox", friend = true, recentUntil = until, reachable = true),
+                RoomPerson("u-5", "Jo P.", recentUntil = Instant.parse("2026-10-17T05:20:00Z")),
+                // A host who posted without joining has no lastSeenAt, and stays until the event ends.
+                RoomPerson("u-7", "DJ Host", recentUntil = Instant.parse("2026-10-17T09:00:00Z")),
+            ),
+            roster.recent,
+        )
+        assertTrue(ChatProtocol.document(ChatRoom.venue(venue)).contains("recent { userId name avatarUrl friend presence lastSeenAt recentUntil }"))
+        assertTrue(ChatProtocol.document(ChatRoom.venue(venue)).contains("ChatPresenceChanged { userId presence name avatarUrl recentUntil }"))
+    }
+
+    @Test
     fun readsEditsPinsRemovalsAndClearing() {
         val updated = assertIs<ChatProtocol.Frame.Message>(
             ChatProtocol.parse(
@@ -612,7 +682,53 @@ class RoomPeopleTest {
     }
 
     @Test
-    fun hereNowPutsFriendsFirstAndLeavesOutTheViewer() {
+    fun keepsWhoLeftUntilTheirTimeIsUp() {
+        val now = Instant.parse("2026-10-17T05:00:00Z")
+        val soon = now.plusSeconds(600)
+        val later = now.plusSeconds(1_200)
+        var room = RoomPeople().roster(
+            setOf("u-1", "u-2"),
+            listOf(RoomPerson("u-2", "Jo P.")),
+            recent = listOf(RoomPerson("u-1", "Back Again", recentUntil = later), RoomPerson("u-3", "Wren Fox", recentUntil = soon)),
+        )
+        // Someone back in the room isn't recent.
+        assertEquals(setOf("u-1", "u-2"), room.online)
+        assertEquals(setOf("u-1", "u-2", "u-3"), room.ids)
+
+        room = room.left("U-2", later, reachable = true, now = now)
+        assertEquals(RoomPerson("u-2", "Jo P.", recentUntil = later, reachable = true), room["u-2"])
+        assertEquals(setOf("u-1"), room.online)
+        // No time to list them until, or a time already past: they're gone.
+        assertNull(room.left("u-1", now = now)["u-1"])
+        assertNull(room.left("u-1", now.minusSeconds(1), now = now)["u-1"])
+
+        // Coming back clears it, and keeps the name.
+        assertEquals(RoomPerson("u-2", "Jo P."), room.joined("u-2")["u-2"])
+
+        assertEquals(setOf("u-1", "u-2", "u-3"), room.pruned(now).ids)
+        assertEquals(setOf("u-1", "u-2"), room.pruned(soon).ids)
+        assertEquals(setOf("u-1"), room.pruned(later).ids)
+        // Hours away (a host until their event ends) is kept as long as it takes.
+        val host = RoomPeople().left("u-9", now.plusSeconds(4 * 3_600), now = now)
+        assertEquals(setOf("u-9"), host.pruned(now.plusSeconds(3 * 3_600)).ids)
+        assertTrue(host.pruned(now.plusSeconds(4 * 3_600)).ids.isEmpty())
+        assertTrue(room.pruned(now) === room)
+    }
+
+    @Test
+    fun hereNowPutsWhoLeftLastAfterEveryoneHere() {
+        val now = Instant.parse("2026-10-17T05:00:00Z")
+        val people = listOf(
+            RoomPerson("u-early", "Amy R.", recentUntil = now.plusSeconds(60)),
+            RoomPerson("u-late", "Zed Q.", recentUntil = now.plusSeconds(1_200)),
+            RoomPerson("u-here", "Wren Fox"),
+            RoomPerson("u-friend", "Bo Turner", friend = true),
+        )
+        assertEquals(listOf("u-friend", "u-here", "u-late", "u-early"), RoomPeople.hereNow(people, null).map { it.userId })
+    }
+
+    @Test
+    fun hereNowPutsTheViewerThenFriendsFirst() {
         val viewer = "b0f8b66a-e636-495d-9475-0f5317ea08e0"
         val people = listOf(
             RoomPerson(viewer, "Me Myself"),
@@ -624,9 +740,12 @@ class RoomPeopleTest {
         )
         val directory = mapOf("u-bo" to "Bo Turner")
         val here = RoomPeople.hereNow(people, viewer.uppercase()) { directory[it] }
-        assertEquals(listOf("Bo Turner", "Wren Fox", "Amy R.", "zed Q.", null), here.map { it.name })
-        assertEquals(listOf(true, true, false, false, false), here.map { it.friend })
-        assertTrue(RoomPeople.hereNow(listOf(RoomPerson(viewer)), viewer).isEmpty())
+        assertEquals(listOf("Me Myself", "Bo Turner", "Wren Fox", "Amy R.", "zed Q.", null), here.map { it.name })
+        assertEquals(listOf(false, true, true, false, false, false), here.map { it.friend })
+        // The viewer is in the room they're looking at, even if a stale event says they left.
+        val alone = RoomPeople.hereNow(listOf(RoomPerson(viewer, recentUntil = Instant.EPOCH)), viewer)
+        assertEquals(listOf(RoomPerson(viewer)), alone)
+        assertTrue(RoomPeople.hereNow(emptyList(), viewer).isEmpty())
     }
 }
 
@@ -695,6 +814,22 @@ class HotMessApiTest {
         val error = assertFailsWith<ApiError.Rejected> { api.sendChatMessage(ChatRoom.locale("l-1"), "hi") }
         assertEquals("You're not in that room", error.message)
         assertEquals("not_allowed", error.reason)
+    }
+
+    @Test
+    fun asksWhichSignInMethodsTheAudienceOffers() = runTest {
+        val (api, _) = api("/v1/token/methods?host=hotmess.social" to """{"methods":["apple","google"]}""")
+        val methods = api.signInMethods("hotmess.social")
+
+        assertEquals(listOf("apple", "google"), methods?.methods)
+        assertFalse(methods!!.facebook)
+        assertTrue(methods.google)
+    }
+
+    @Test
+    fun signInMethodsAreUnknownOnAnOlderApi() = runTest {
+        val (api, _) = api()
+        assertNull(api.signInMethods("hotmess.social"), "a 404 leaves the login screen as it was")
     }
 
     @Test
@@ -912,6 +1047,36 @@ class HotMessApiTest {
         assertEquals("https://m.me/4242", friend.messengerUrl)
         assertEquals(com.audiencekit.Presence.ONLINE, friend.presence)
         assertEquals("Alex Friend", api.friends.fullName("f1"), "the venue's friends are remembered for chat")
+    }
+
+    @Test
+    fun nowAtAVenueHasWhoIsOnNow() = runTest {
+        val (api, bodies) = api(
+            "ReportLocation" to """{"data":{"reportLocation":{"nearbyVenues":null,
+                "venue":{"id":"v1","name":"Nyne","events":{"upcoming":{"nodes":[]}},
+                  "people":{"onNow":{"nodes":[{"id":"a1","role":"DJ","startsAt":"2026-10-18T06:45:00Z","endsAt":null,
+                    "person":{"id":"p1","name":"Q","avatarUrl":"https://cdn.example/q.jpg"}}]}}}}}}""",
+        )
+        val now = api.now(Coordinates(47.66, -117.41))
+
+        assertTrue(bodies.single().contains("people { onNow { nodes { id role startsAt endsAt person { id name avatarUrl } } } }"))
+        val appearance = now.onNow.single()
+        assertEquals("Q", appearance.person.name)
+        assertEquals(AppearanceRole.DJ, appearance.role)
+        assertEquals("23:45 – close", appearance.hours(java.time.ZoneOffset.ofHours(-7), java.util.Locale.UK))
+    }
+
+    @Test
+    fun venueOverviewHasWhoIsOnNow() = runTest {
+        val (api, _) = api(
+            "query Venue(" to """{"data":{"venues":{"venue":{"id":"v1","name":"Nyne","events":{"upcoming":{"nodes":[]}},
+                "people":{"onNow":{"nodes":[{"id":"a1","role":"BARTENDER","startsAt":"2026-10-18T06:45:00Z","endsAt":"2026-10-18T08:00:00Z",
+                  "person":{"id":"p1","name":"Q"}},null]}}}}}}""",
+        )
+        val appearance = api.venueOverview("v1").onNow.single()
+
+        assertNull(appearance.role, "a role this build doesn't know has no label")
+        assertEquals("06:45 – 08:00", appearance.hours(java.time.ZoneOffset.UTC, java.util.Locale.UK))
     }
 
     @Test
