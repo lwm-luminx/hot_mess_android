@@ -21,6 +21,7 @@ import social.hotmess.android.push.PushRegistrar
 import social.hotmess.android.session.AuthState
 import social.hotmess.android.session.BrandStore
 import social.hotmess.android.session.FacebookAppSignIn
+import social.hotmess.android.session.SafetyStore
 import social.hotmess.android.session.SessionStore
 import social.hotmess.android.support.ErrorReporter
 import social.hotmess.core.AppRoute
@@ -38,6 +39,9 @@ class AppGraph(context: Context, val configuration: AppConfiguration = AppConfig
     val push = PushRegistrar(context, api, scope)
     val session = SessionStore(context, api, audienceKit, configuration, push, scope)
     val location = LocationProvider(context, api, configuration, scope)
+
+    /** Terms of use, blocking and reporting, as the API keeps them for the signed-in user. */
+    val safety = SafetyStore(api)
 
     /** Crash and error reports, and what "Report a problem" attaches. */
     val errors = ErrorReporter(context, api, configuration, scope)
@@ -85,9 +89,13 @@ class AppGraph(context: Context, val configuration: AppConfiguration = AppConfig
                         passes.clear()
                         api.friends.clear()
                         notifications.clear()
+                        safety.clear()
                         cable.disconnect()
                     }
-                    AuthState.SignedIn -> if (isForeground) notifications.start()
+                    AuthState.SignedIn -> {
+                        if (isForeground) notifications.start()
+                        scope.launch { safety.refresh() }
+                    }
                     else -> Unit
                 }
             }
