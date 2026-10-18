@@ -65,11 +65,22 @@ fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}) {
     val branding by graph.brand.branding.collectAsStateWithLifecycle()
     val endedNotice by graph.session.endedNotice.collectAsStateWithLifecycle()
     val signingIn = state == AuthState.SigningIn
-    // The audience's sign-in methods from AudienceKit; until they load, or when the API can't say, all of them.
+    // The audience's sign-in methods from AudienceKit; when the API can't say, all of them with no warnings. The
+    // buttons wait for the answer so nobody skips a warning by tapping early.
     var signInMethods by remember { mutableStateOf<SignInMethods?>(null) }
-    LaunchedEffect(Unit) { signInMethods = graph.api.signInMethods(graph.configuration.audienceHost) }
+    var asked by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        signInMethods = graph.api.signInMethods(graph.configuration.audienceHost)
+        asked = true
+    }
     val offersFacebook = signInMethods?.facebook ?: true
     val offersGoogle = signInMethods?.google ?: true
+    // A sign-in waiting on Cancel or Continue: the warning and what Continue does.
+    var warned by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
+    fun begin(method: String, signIn: () -> Unit) {
+        val warning = signInMethods?.warning(method)
+        if (warning == null) signIn() else warned = warning to signIn
+    }
 
     HotMessTheme(branding = branding?.theme, darkTheme = true) {
         Box(Modifier.fillMaxSize().background(Color.Black)) {
@@ -110,13 +121,19 @@ fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}) {
                         CircularProgressIndicator(color = Color.White)
                     } else {
                         if (offersFacebook) {
-                            PrimaryButton("Continue with Facebook", onClick = onSignIn, modifier = Modifier.fillMaxWidth())
+                            PrimaryButton(
+                                "Continue with Facebook",
+                                onClick = { begin("facebook", onSignIn) },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = asked,
+                            )
                         }
                         if (offersGoogle) {
                             SecondaryButton(
                                 "Continue with Google",
-                                onClick = onGoogleSignIn,
+                                onClick = { begin("google", onGoogleSignIn) },
                                 modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
+                                enabled = asked,
                             )
                         }
                     }
@@ -133,6 +150,22 @@ fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}) {
                         textAlign = TextAlign.Center,
                     )
                 }
+            }
+
+            warned?.let { (warning, signIn) ->
+                AlertDialog(
+                    onDismissRequest = { warned = null },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            warned = null
+                            signIn()
+                        }) { Text("Continue") }
+                    },
+                    dismissButton = { TextButton(onClick = { warned = null }) { Text("Cancel") } },
+                    title = { Text("Before you continue", style = HotMessType.heading) },
+                    text = { Text(warning, style = HotMessType.body) },
+                    containerColor = tokens.surfaceRaised,
+                )
             }
 
             var reportingProblem by remember { mutableStateOf(false) }

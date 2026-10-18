@@ -335,9 +335,10 @@ fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifi
 
 /** A secondary action: the grey `control-fill` button. */
 @Composable
-fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     Button(
         onClick = onClick,
+        enabled = enabled,
         shape = Radius.md,
         colors = ButtonDefaults.buttonColors(containerColor = tokens.controlFill, contentColor = tokens.ink),
         modifier = modifier.heightIn(min = 36.dp),

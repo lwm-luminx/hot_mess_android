@@ -827,6 +827,19 @@ class HotMessApiTest {
     }
 
     @Test
+    fun readsTheWarningsShownBeforeSignInMethods() = runTest {
+        val (api, _) = api(
+            "/v1/token/methods?host=hotmess.social" to
+                """{"methods":["facebook","google"],"warnings":{"facebook":"Facebook login is only for testers","google":" "}}""",
+        )
+        val methods = api.signInMethods("hotmess.social")!!
+
+        assertEquals("Facebook login is only for testers", methods.warning("facebook"))
+        assertNull(methods.warning("google"), "a blank warning is no warning")
+        assertNull(methods.warning("apple"))
+    }
+
+    @Test
     fun signInMethodsAreUnknownOnAnOlderApi() = runTest {
         val (api, _) = api()
         assertNull(api.signInMethods("hotmess.social"), "a 404 leaves the login screen as it was")
