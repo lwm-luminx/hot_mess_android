@@ -206,17 +206,22 @@ class SessionStore(
         _state.value = AuthState.SigningIn
     }
 
-    fun signInWithGoogle(idToken: String, displayName: String? = null) {
-        scope.launch { exchangeGoogle(idToken, displayName) }
+    /**
+     * [accessToken] (for the user.emails.read scope, when the person allowed it) lets the API find their account by
+     * the Google account's other emails too, not only its primary one.
+     */
+    fun signInWithGoogle(idToken: String, displayName: String? = null, accessToken: String? = null) {
+        scope.launch { exchangeGoogle(idToken, displayName, accessToken) }
     }
 
-    private suspend fun exchangeGoogle(idToken: String, displayName: String?) {
+    private suspend fun exchangeGoogle(idToken: String, displayName: String?, accessToken: String?) {
         _state.value = AuthState.SigningIn
         try {
             val result = audienceKit.signInWithGoogle(
                 idToken = idToken,
                 device = DeviceDescription.current(context),
                 name = displayName,
+                accessToken = accessToken,
             )
             val id = social.hotmess.core.RecordId.normalize(result.userId)
             _user.value = id?.let { User(it, displayName ?: "") }
@@ -275,6 +280,24 @@ class SessionStore(
         _state.value = AuthState.SignedOut
     }
 
+    /**
+     * Connects the Google account behind [idToken] to the signed-in account (see AudienceKitClient.connectGoogle). The
+     * session stays signed in either way; returns null once connected, or the reason it wasn't.
+     */
+    suspend fun connectGoogle(idToken: String): String? =
+        try {
+            audienceKit.connectGoogle(idToken, DeviceDescription.current(context))
+            refreshUser()
+            null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: com.audiencekit.AudienceKitException.SignInFailed) {
+            e.faultMessage?.takeIf { it.isNotBlank() } ?: CONNECT_GOOGLE_FAILED
+        } catch (e: Exception) {
+            Log.e("HotMess", "Connecting Google failed: ${e.message}")
+            CONNECT_GOOGLE_FAILED
+        }
+
     suspend fun refreshUser() {
         if (!isSignedIn) return
         runCatching { api.me() }.getOrNull()?.let { _user.value = it }
@@ -288,6 +311,8 @@ class SessionStore(
 
     companion object {
         const val ENDED_MESSAGE = "Your session has ended. Please sign in again."
+
+        const val CONNECT_GOOGLE_FAILED = "Google couldn't be connected. Try again."
 
         const val REFUSED_MESSAGE =
             "Facebook said no to this sign-in. Try again, or check that you're using the right Facebook account."

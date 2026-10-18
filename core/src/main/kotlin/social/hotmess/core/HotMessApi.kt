@@ -321,7 +321,7 @@ class HotMessApi(val client: AudienceKitClient) {
         val me = query(Documents.ME, MeResponse.serializer()).me?.self ?: return null
         val id = RecordId.normalize(me.id) ?: return null
         val name = me.name ?: listOfNotNull(me.firstName, me.lastName).joinToString(" ")
-        return User(id = id, name = name, avatarUrl = me.avatarUrl)
+        return User(id = id, name = name, avatarUrl = me.avatarUrl, signedInWithGoogle = me.signedInWithGoogle)
     }
 
     /** Whether pushes about chat rooms the user left lately are on, or null when there's no signed-in user. */
@@ -543,6 +543,7 @@ private data class MeResponse(val me: UserState? = null) {
         val firstName: String? = null,
         val lastName: String? = null,
         val avatarUrl: String? = null,
+        val signedInWithGoogle: Boolean? = null,
     )
 }
 
