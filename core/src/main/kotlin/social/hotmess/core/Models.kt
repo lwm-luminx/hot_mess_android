@@ -717,3 +717,10 @@ fun String.initialsForDisplay(): String =
 
 /** The first word of a name. */
 fun String.firstNameForDisplay(): String = split(' ').firstOrNull { it.isNotEmpty() } ?: this
+
+/** `GET /v1/token/methods`: `facebook`, `apple`, `google` and, only while App Review codes work, `review_code`. */
+@Serializable
+data class SignInMethods(val methods: List<String> = emptyList()) {
+    val facebook: Boolean get() = "facebook" in methods
+    val google: Boolean get() = "google" in methods
+}
