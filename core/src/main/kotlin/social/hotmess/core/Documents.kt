@@ -50,6 +50,9 @@ object Documents {
     const val EVENT_FIELDS: String =
         "id name startAt endAt facebookId bannerUrl isFeatured rsvp { mine } venue { venue { $VENUE_FIELDS } }"
 
+    /** Who's on at a venue right now, in its people mixin. */
+    const val ON_NOW_FIELDS: String = "people { onNow { nodes { id role startsAt endsAt person { id name avatarUrl } } } }"
+
     const val FRIEND_FIELDS: String = "id name facebookId avatarUrl"
 
     /** Friends out now, with whether they can be reached (in chat, or by push). */
@@ -68,6 +71,7 @@ object Documents {
             event { $EVENT_FIELDS }
             venue {
               $VENUE_FIELDS chat { $RECENT_MESSAGES } $VENUE_COVER_FIELDS
+              $ON_NOW_FIELDS
               events { upcoming { nodes { $EVENT_FIELDS } } }
               friends { list { nodes { $FRIEND_OUT_FIELDS } } }
             }
@@ -111,6 +115,7 @@ object Documents {
               $VENUE_FIELDS
               chat { open $RECENT_MESSAGES }
               tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } viewerAdmission { ${Queries.ADMISSION_FIELDS} } } }
+              $ON_NOW_FIELDS
               events { upcoming { nodes { $EVENT_FIELDS } } }
               $PROFILE_SOCIAL_LINKS
               friends { list { nodes { $FRIEND_OUT_FIELDS } } }

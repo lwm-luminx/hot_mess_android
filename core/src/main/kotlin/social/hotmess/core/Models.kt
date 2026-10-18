@@ -12,9 +12,11 @@ import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import java.time.Instant
+import java.time.ZoneId
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
+import java.time.format.FormatStyle
 import java.util.Locale
 import java.util.UUID
 
@@ -178,6 +180,51 @@ data class LocaleSummary(val id: String, val name: String? = null, val label: St
 /** A city or region of the audience, as the app remembers it. */
 @Serializable
 data class AppLocale(val id: String, val name: String)
+
+/**
+ * Someone on at a venue: hosting, DJing, performing or MCing, with or without an event. GraphQL's
+ * `Venue.people.onNow` lists the ones on right now.
+ */
+@Serializable
+data class Appearance(
+    val id: String,
+    val person: Person,
+    /** GraphQL's AppearanceRole (`DJ`); read [role]. */
+    @SerialName("role") val roleName: String? = null,
+    @Serializable(with = InstantSerializer::class) val startsAt: Instant? = null,
+    /** When they finish; null until the night ends. */
+    @Serializable(with = InstantSerializer::class) val endsAt: Instant? = null,
+) {
+    /** What they're doing; null for a role this build doesn't know. */
+    val role: AppearanceRole? get() = AppearanceRole.of(roleName)
+
+    /** Their set, "23:45 – close" until they have an end time, in the device's clock; null without a start. */
+    fun hours(zone: ZoneId = ZoneId.systemDefault(), locale: Locale = Locale.getDefault()): String? {
+        val start = startsAt ?: return null
+        val time = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).withLocale(locale).withZone(zone)
+        return "${time.format(start)} – ${endsAt?.let(time::format) ?: "close"}"
+    }
+}
+
+/** What someone on at a venue is doing, labelled as Velvet's lineup labels it. */
+enum class AppearanceRole(val label: String) {
+    HOST("Host"),
+    DJ("DJ"),
+    PERFORMER("Performer"),
+    MC("MC"),
+    ;
+
+    companion object {
+        /** GraphQL sends `DJ`, the lineup's own records `dj`. */
+        fun of(wire: String?): AppearanceRole? = entries.firstOrNull { it.name.equals(wire, ignoreCase = true) }
+    }
+}
+
+/** A venue's people mixin (`people { onNow { nodes } }`): who's on there now. Null where the module is off. */
+@Serializable
+data class VenuePeopleMixin(@SerialName("onNow") private val onNowNodes: Connection<Appearance>? = null) {
+    val onNow: List<Appearance> get() = onNowNodes?.nodes.orEmpty().filterNotNull()
+}
 
 /** A performer, DJ or promoter the audience follows. */
 @Serializable
@@ -569,6 +616,8 @@ data class Now(
     val event: Event? = null,
     /** The venue the user is in, when they're in one. */
     val venue: Venue? = null,
+    /** Who's on at [venue] right now. */
+    val onNow: List<Appearance> = emptyList(),
     /** Venues nearby, nearest first; null when the user is in a venue. */
     val venues: List<Venue>? = null,
     val events: List<Event> = emptyList(),

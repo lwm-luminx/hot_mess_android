@@ -915,6 +915,36 @@ class HotMessApiTest {
     }
 
     @Test
+    fun nowAtAVenueHasWhoIsOnNow() = runTest {
+        val (api, bodies) = api(
+            "ReportLocation" to """{"data":{"reportLocation":{"nearbyVenues":null,
+                "venue":{"id":"v1","name":"Nyne","events":{"upcoming":{"nodes":[]}},
+                  "people":{"onNow":{"nodes":[{"id":"a1","role":"DJ","startsAt":"2026-10-18T06:45:00Z","endsAt":null,
+                    "person":{"id":"p1","name":"Q","avatarUrl":"https://cdn.example/q.jpg"}}]}}}}}}""",
+        )
+        val now = api.now(Coordinates(47.66, -117.41))
+
+        assertTrue(bodies.single().contains("people { onNow { nodes { id role startsAt endsAt person { id name avatarUrl } } } }"))
+        val appearance = now.onNow.single()
+        assertEquals("Q", appearance.person.name)
+        assertEquals(AppearanceRole.DJ, appearance.role)
+        assertEquals("23:45 – close", appearance.hours(java.time.ZoneOffset.ofHours(-7), java.util.Locale.UK))
+    }
+
+    @Test
+    fun venueOverviewHasWhoIsOnNow() = runTest {
+        val (api, _) = api(
+            "query Venue(" to """{"data":{"venues":{"venue":{"id":"v1","name":"Nyne","events":{"upcoming":{"nodes":[]}},
+                "people":{"onNow":{"nodes":[{"id":"a1","role":"BARTENDER","startsAt":"2026-10-18T06:45:00Z","endsAt":"2026-10-18T08:00:00Z",
+                  "person":{"id":"p1","name":"Q"}},null]}}}}}}""",
+        )
+        val appearance = api.venueOverview("v1").onNow.single()
+
+        assertNull(appearance.role, "a role this build doesn't know has no label")
+        assertEquals("06:45 – 08:00", appearance.hours(java.time.ZoneOffset.UTC, java.util.Locale.UK))
+    }
+
+    @Test
     fun aVenueWithoutFriendsHasNone() = runTest {
         val (api, _) = api("query Venue(" to """{"data":{"venues":{"venue":{"id":"v1","name":"Nyne","events":{"upcoming":{"nodes":[]}}}}}}""")
         assertTrue(api.venueOverview("v1").friends.isEmpty())

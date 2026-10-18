@@ -62,6 +62,7 @@ import social.hotmess.android.ui.components.HeroHeader
 import social.hotmess.android.ui.components.HeroScaffold
 import social.hotmess.android.ui.components.InfoRow
 import social.hotmess.android.ui.components.LoadStateView
+import social.hotmess.android.ui.components.OnNowSection
 import social.hotmess.android.ui.components.PassCard
 import social.hotmess.android.ui.components.Presence
 import social.hotmess.android.ui.components.SkipTheLineCard
@@ -220,6 +221,11 @@ fun NowScreen(navigator: Navigator) {
                                     onPay = { checkout.pay(venue.id, venue.name) },
                                 )
                             }
+                        }
+                    }
+                    if (now.onNow.isNotEmpty()) {
+                        item(key = "on-now") {
+                            OnNowSection(now.onNow) { navigator.open(AppRoute.PersonDetail(it.person.id)) }
                         }
                     }
                     now.myPing?.let { ping ->

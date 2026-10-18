@@ -66,6 +66,7 @@ import social.hotmess.android.ui.components.HeroHeader
 import social.hotmess.android.ui.components.HeroScaffold
 import social.hotmess.android.ui.components.InfoRow
 import social.hotmess.android.ui.components.LoadStateView
+import social.hotmess.android.ui.components.OnNowSection
 import social.hotmess.android.ui.components.RowDivider
 import social.hotmess.android.ui.components.SocialLinkRow
 import social.hotmess.android.ui.components.TextRow
@@ -275,6 +276,11 @@ fun VenueScreen(id: String, navigator: Navigator) {
                                 },
                             )
                         }
+                    }
+                }
+                if (overview.onNow.isNotEmpty()) {
+                    item(key = "on-now") {
+                        OnNowSection(overview.onNow) { navigator.open(AppRoute.PersonDetail(it.person.id)) }
                     }
                 }
                 item {

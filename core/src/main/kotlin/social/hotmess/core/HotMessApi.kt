@@ -122,6 +122,7 @@ class HotMessApi(val client: AudienceKitClient) {
             chatOpen = venue.chat?.open == true,
             friends = venueFriends,
             friendPings = venue.friendPings,
+            onNow = venue.people?.onNow.orEmpty(),
         )
     }
 
@@ -402,6 +403,8 @@ data class VenueOverview(
     val friends: List<Friend> = emptyList(),
     /** Friends' active Pings that pick this venue or one of its events. */
     val friendPings: List<Ping> = emptyList(),
+    /** Who's on there right now. */
+    val onNow: List<Appearance> = emptyList(),
 )
 
 /** Visible venues, those in [localeId] first, then by the audience's order and name. */
@@ -439,7 +442,11 @@ private data class LocationReport(
     val audience: AudienceNode? = null,
 ) {
     @Serializable
-    data class VenueMixins(val events: UpcomingEvents? = null, val friends: FriendsMixin? = null)
+    data class VenueMixins(
+        val events: UpcomingEvents? = null,
+        val friends: FriendsMixin? = null,
+        val people: VenuePeopleMixin? = null,
+    )
 
     @Serializable
     data class LocaleNode(
@@ -474,6 +481,7 @@ private data class LocationReport(
                 imageUrl = event?.bannerUrl ?: place.bannerUrl ?: place.photoUrl,
                 event = event,
                 venue = place,
+                onNow = mixins.people?.onNow.orEmpty(),
                 venues = nearbyVenues,
                 // The event the user is at leads the screen, so it isn't listed again.
                 events = mixins.events?.events.orEmpty().filterNot { it.id == event?.id },
@@ -545,6 +553,7 @@ private data class VenueNode(
     @SerialName("events") val eventsMixin: UpcomingEvents? = null,
     val friends: FriendsMixin? = null,
     val ping: PingFeedMixin? = null,
+    val people: VenuePeopleMixin? = null,
 ) {
     val friendPings: List<Ping> get() = ping?.friendPings.orEmpty()
 
