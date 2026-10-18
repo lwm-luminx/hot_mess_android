@@ -44,6 +44,11 @@ data class Environment(
      * with Hot Mess's staging Facebook app. Debug runs against a local API.
      */
     val audienceKitEnvironment: String = "production",
+    /**
+     * The Facebook app's client token (its dashboard's Settings > Advanced), which the Facebook SDK needs to sign in
+     * through the Facebook app. It ships in the app, so it isn't a secret. Without one, sign-in uses the Custom Tab.
+     */
+    val facebookClientToken: String = "",
     /** The Login for Business configuration, for a Business-type Facebook app. */
     val facebookLoginConfigId: String = "",
     /**
@@ -63,12 +68,13 @@ val environments = mapOf(
     // The emulator reaches the host's localhost at 10.0.2.2.
     "debug" to Environment("debug", "http://10.0.2.2:3000", "", "842337999153841"),
     "staging" to Environment("staging", "https://api.next.audiencekit.com", "", "1660272792277019", "staging",
-        audienceHost = "hotmess.admin.next.audiencekit.com"),
+        facebookClientToken = "5d40b408dee01b2985755736fd046296", audienceHost = "hotmess.admin.next.audiencekit.com"),
     // Debug for the sign-in test: Hot Mess's development app against the local API. The app is in development
     // mode, so the test signs its account (which needs a role on the app) in to Chrome first, and sign-in shares
     // Chrome's session rather than using a private tab.
     "signInTest" to Environment("signInTest", "http://10.0.2.2:3000", "", "2967605370250663"),
-    "release" to Environment("release", "https://api.audiencekit.com", "b0f8b66a-e636-495d-9475-0f5317ea08e0", "1168782378316790"),
+    "release" to Environment("release", "https://api.audiencekit.com", "b0f8b66a-e636-495d-9475-0f5317ea08e0", "1168782378316790",
+        facebookClientToken = "ee4e193e42709c8aaf8f3aa6b383feab"),
 )
 
 android {
@@ -158,6 +164,7 @@ android {
         buildConfigField("String", "AUDIENCE_HOST", "\"${environment.audienceHost}\"")
         buildConfigField("String", "AUDIENCE_ID", "\"${environment.audienceId}\"")
         buildConfigField("String", "FACEBOOK_APP_ID", "\"${environment.facebookAppId}\"")
+        buildConfigField("String", "FACEBOOK_CLIENT_TOKEN", "\"${environment.facebookClientToken}\"")
         buildConfigField("String", "FACEBOOK_LOGIN_CONFIG_ID", "\"${environment.facebookLoginConfigId}\"")
         buildConfigField("String", "GOOGLE_SERVER_CLIENT_ID", "\"${environment.googleServerClientId.ifEmpty { secret("google.serverClientId") }}\"")
         buildConfigField("boolean", "PRIVATE_SIGN_IN", environment.privateSignIn.toString())
@@ -216,7 +223,9 @@ dependencies {
     implementation(libs.androidx.credentials)
     implementation(libs.androidx.credentials.play.services.auth)
     implementation(libs.googleid)
-    // Facebook Login brings an old Fragment; the Activity Result API needs 1.3 or later.
+    // Sign-in through the Facebook app. Facebook Login brings an old Fragment; the Activity Result API needs 1.3
+    // or later.
+    implementation(libs.facebook.login)
     implementation(libs.androidx.fragment)
     implementation(libs.maplibre)
     implementation(libs.firebase.messaging)
