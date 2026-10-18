@@ -136,10 +136,18 @@ data class ChatRoom(val kind: Kind, val id: String) {
  * range). `more: false` ends the operation. An operation the server refuses (not at the venue, banned)
  * comes back with errors and no data.
  *
+ * Someone whose last connection leaves stays listed, offline, for a while: their ChatPresenceChanged
+ * carries `recentUntil`, and ChatJoined's roster adds `recent`, who left lately (the latest first), people
+ * who aren't in `people`. `lastSeenAt` can be null (a host who posted without joining), and `recentUntil`
+ * hours away (until their event ends); without `recentUntil`, `lastSeenAt` plus [RECENT] stands in.
+ *
  * Saying something is the `sendMyChatMessage` mutation (see [SEND_MESSAGE]); the room delivers the line
  * to everyone following it, the sender included.
  */
 object ChatProtocol {
+    /** How long a room lists someone after they leave, when the event doesn't say (the server's ChatVisit::RECENT). */
+    val RECENT: java.time.Duration = java.time.Duration.ofMinutes(30)
+
     // Lenient, so an id sent as a number still reads as a string rather than dropping the line.
     private val json = Json {
         ignoreUnknownKeys = true
@@ -157,7 +165,11 @@ object ChatProtocol {
         __typename
         ... on ChatJoined {
           outOfRange
-          roster { people { userId name avatarUrl friend } friends { userId name } }
+          roster {
+            people { userId name avatarUrl friend }
+            friends { userId name }
+            recent { userId name avatarUrl friend presence lastSeenAt recentUntil }
+          }
           history { senderPresence message { $MESSAGE_FIELDS } }
           pinnedMessage { senderPresence message { $MESSAGE_FIELDS } }
         }
@@ -166,7 +178,7 @@ object ChatProtocol {
         ... on ChatMessageRemoved { messageId }
         ... on ChatPinChanged { messageId pinned announcement { $MESSAGE_FIELDS } }
         ... on ChatRoomCleared { clearedAt }
-        ... on ChatPresenceChanged { userId presence name avatarUrl }
+        ... on ChatPresenceChanged { userId presence name avatarUrl recentUntil }
         ... on ChatRangeChanged { outOfRange }
         ... on ChatLeft { reason }
     """
@@ -218,16 +230,21 @@ object ChatProtocol {
         /** Whether they're outside the room's place. Only admins get in from outside. */
         data class Range(val outOfRange: Boolean) : Frame
 
-        /** Everyone in the room now, by lowercase user id, with who they are, and all the joiner's friends. */
+        /**
+         * Everyone in the room now, by lowercase user id, with who they are, and all the joiner's friends;
+         * and [recent], who left lately, each with their [RoomPerson.recentUntil].
+         */
         data class Roster(
             val online: Set<String>,
             val people: List<RoomPerson> = emptyList(),
             val friends: List<Friend> = emptyList(),
+            val recent: List<RoomPerson> = emptyList(),
         ) : Frame
 
         /**
          * Someone (by lowercase user id) came into the room or left it; a newcomer with their [name] and
-         * [avatarUrl]. Someone who left but whom a notification reaches is [reachable].
+         * [avatarUrl]. Someone who left but whom a notification reaches is [reachable], and the room lists
+         * someone who left until [recentUntil] when sent.
          */
         data class PresenceChanged(
             val userId: String,
@@ -235,6 +252,7 @@ object ChatProtocol {
             val name: String? = null,
             val avatarUrl: String? = null,
             val reachable: Boolean = false,
+            val recentUntil: Instant? = null,
         ) : Frame
 
         /** The room's recent lines, oldest first, and its pinned announcement, sent on joining. */
@@ -321,12 +339,26 @@ object ChatProtocol {
             val id = friend.string("userId") ?: return@mapNotNull null
             Friend(id.lowercase(), friend.string("name").orEmpty())
         }
+        // Who left lately; someone with no time to be listed until is skipped.
+        val recent = (roster?.get("recent") as? JsonArray).orEmpty().mapNotNull { entry ->
+            val person = entry as? JsonObject ?: return@mapNotNull null
+            val id = person.string("userId") ?: return@mapNotNull null
+            val until = person.instant("recentUntil") ?: person.instant("lastSeenAt")?.plus(RECENT) ?: return@mapNotNull null
+            RoomPerson(
+                userId = id.lowercase(),
+                name = person.string("name"),
+                avatarUrl = person.string("avatarUrl"),
+                friend = person.boolean("friend"),
+                recentUntil = until,
+                reachable = person.string("presence").equals("PUSH", ignoreCase = true),
+            )
+        }
         // A malformed line drops only itself.
         val history = (event["history"] as? JsonArray).orEmpty().mapNotNull { posted(it as? JsonObject) }
         return listOf(
             Frame.Connected,
             Frame.Range(event.boolean("outOfRange")),
-            Frame.Roster(people.map { it.userId }.toSet(), people, friends),
+            Frame.Roster(people.map { it.userId }.toSet(), people, friends, recent),
             Frame.History(history, posted((event["pinnedMessage"] ?: event["pinned"]) as? JsonObject)),
         )
     }
@@ -352,6 +384,7 @@ object ChatProtocol {
             name = if (online) event.string("name") else null,
             avatarUrl = if (online) event.string("avatarUrl") else null,
             reachable = presence.equals("PUSH", ignoreCase = true),
+            recentUntil = if (online) null else event.instant("recentUntil"),
         )
     }
 
@@ -363,6 +396,9 @@ object ChatProtocol {
 
     /** A string field, or null when it's missing, not a string-like value, or blank. */
     private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull.blankToNull()
+
+    /** A timestamp field, or null when it's missing or unreadable. */
+    private fun JsonObject.instant(key: String): Instant? = string(key)?.let(InstantSerializer::parse)
 
     private fun JsonObject.boolean(key: String): Boolean = (this[key] as? JsonPrimitive)?.booleanOrNull ?: false
 
@@ -446,11 +482,12 @@ class VenueChatConnection(
         data object Ended : Event
         data class Range(val outOfRange: Boolean) : Event
 
-        /** Everyone in the room now, by lowercase user id, and who they are and the viewer's friends. */
+        /** Everyone in the room now, by lowercase user id, and who they are, the viewer's friends and who left lately. */
         data class Roster(
             val online: Set<String>,
             val people: List<RoomPerson> = emptyList(),
             val friends: List<Friend> = emptyList(),
+            val recent: List<RoomPerson> = emptyList(),
         ) : Event
 
         data class PresenceChanged(
@@ -459,6 +496,7 @@ class VenueChatConnection(
             val name: String? = null,
             val avatarUrl: String? = null,
             val reachable: Boolean = false,
+            val recentUntil: Instant? = null,
         ) : Event
 
         data class History(val messages: List<VenueMessage>, val pinned: VenueMessage?) : Event
@@ -492,9 +530,9 @@ class VenueChatConnection(
                     ChatProtocol.Frame.Ended -> emit(Event.Ended)
                     is ChatProtocol.Frame.Message -> emit(Event.Received(frame.message))
                     is ChatProtocol.Frame.Range -> emit(Event.Range(frame.outOfRange))
-                    is ChatProtocol.Frame.Roster -> emit(Event.Roster(frame.online, frame.people, frame.friends))
+                    is ChatProtocol.Frame.Roster -> emit(Event.Roster(frame.online, frame.people, frame.friends, frame.recent))
                     is ChatProtocol.Frame.PresenceChanged ->
-                        emit(Event.PresenceChanged(frame.userId, frame.online, frame.name, frame.avatarUrl, frame.reachable))
+                        emit(Event.PresenceChanged(frame.userId, frame.online, frame.name, frame.avatarUrl, frame.reachable, frame.recentUntil))
                     is ChatProtocol.Frame.History -> emit(Event.History(frame.messages, frame.pinned))
                     is ChatProtocol.Frame.Pin -> emit(Event.Pin(frame.id, frame.announcement))
                     is ChatProtocol.Frame.Removed -> emit(Event.Removed(frame.id))
