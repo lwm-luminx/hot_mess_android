@@ -767,9 +767,15 @@ fun String.initialsForDisplay(): String =
 /** The first word of a name. */
 fun String.firstNameForDisplay(): String = split(' ').firstOrNull { it.isNotEmpty() } ?: this
 
-/** `GET /v1/token/methods`: `facebook`, `apple`, `google` and, only while App Review codes work, `review_code`. */
+/**
+ * `GET /v1/token/methods`: `facebook`, `apple`, `google` and, only while App Review codes work, `review_code`, with
+ * the warning to show (with Cancel and Continue) before each method that has one.
+ */
 @Serializable
-data class SignInMethods(val methods: List<String> = emptyList()) {
+data class SignInMethods(val methods: List<String> = emptyList(), val warnings: Map<String, String> = emptyMap()) {
     val facebook: Boolean get() = "facebook" in methods
     val google: Boolean get() = "google" in methods
+
+    /** What to say before signing in with [method], such as "Facebook login is only for testers"; null for nothing. */
+    fun warning(method: String): String? = warnings[method]?.takeIf { it.isNotBlank() }
 }
