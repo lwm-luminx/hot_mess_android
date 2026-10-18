@@ -194,7 +194,21 @@ fun NowScreen(navigator: Navigator) {
                             }
                         }
                     }
-                    // At a venue with a cover tonight: your pass front and center, or the way to skip the line.
+                    // Small talk, then events, then venues.
+                    now.venue?.let { venue ->
+                        item { SmallTalk(venue, now.friends, navigator) }
+                    }
+                    now.locale?.takeIf { now.venue == null && it.chatOpen }?.let { locale ->
+                        item { LocaleSmallTalk(locale, navigator) }
+                    }
+                    if (now.events.isEmpty()) {
+                        item { DetailSection("Events") { EmptyRow("There's nothing coming up yet.") } }
+                    } else {
+                        cardSection("events", "Events", now.events, key = { it.id }) { event ->
+                            EventCard(event, onClick = { navigator.open(AppRoute.EventDetail(event.id)) })
+                        }
+                    }
+                    // At a venue with a cover tonight: your pass, or the way to skip the line.
                     now.venue?.let { venue ->
                         val offer = CoverOffer.of(venue)
                         val pass = offer?.pass
@@ -214,6 +228,8 @@ fun NowScreen(navigator: Navigator) {
                             }
                         }
                     }
+                    nearby(now, coordinates != null, navigator)
+                    if (now.venue == null) whereFriendsAre(now.friendVenues, navigator)
                     now.myPing?.let { ping ->
                         item(key = "my-ping") { MyPingCard(ping, onEdit = { sheetOpen = true }, onEnd = ::endPing, ending = ending) }
                     }
@@ -233,21 +249,6 @@ fun NowScreen(navigator: Navigator) {
                                         ?: target.venue?.let { navigator.open(AppRoute.VenueDetail(it.id)) }
                                 }
                             }
-                        }
-                    }
-                    nearby(now, coordinates != null, navigator)
-                    now.venue?.let { venue ->
-                        item { SmallTalk(venue, now.friends, navigator) }
-                    }
-                    now.locale?.takeIf { now.venue == null && it.chatOpen }?.let { locale ->
-                        item { LocaleSmallTalk(locale, navigator) }
-                    }
-                    if (now.venue == null) whereFriendsAre(now.friendVenues, navigator)
-                    if (now.events.isEmpty()) {
-                        item { DetailSection("Events") { EmptyRow("There's nothing coming up yet.") } }
-                    } else {
-                        cardSection("events", "Events", now.events, key = { it.id }) { event ->
-                            EventCard(event, onClick = { navigator.open(AppRoute.EventDetail(event.id)) })
                         }
                     }
                 }
