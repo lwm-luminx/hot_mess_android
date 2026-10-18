@@ -9,6 +9,7 @@ material3 = "1.4.0"
 material-icons = "1.7.8"
 activity = "1.11.0"
 fragment = "1.8.9"
+facebook = "19.0.0"
 lifecycle = "2.11.0"
 navigation = "2.9.0"
 core-ktx = "1.16.0"
@@ -40,6 +41,7 @@ androidx-browser = { module = "androidx.browser:browser", version.ref = "browser
 androidx-credentials = { module = "androidx.credentials:credentials", version.ref = "credentials" }
 androidx-credentials-play-services-auth = { module = "androidx.credentials:credentials-play-services-auth", version.ref = "credentials" }
 googleid = { module = "com.google.android.libraries.identity.googleid:googleid", version.ref = "googleid" }
+facebook-login = { module = "com.facebook.android:facebook-login", version.ref = "facebook" }
 androidx-fragment = { module = "androidx.fragment:fragment-ktx", version.ref = "fragment" }
 androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
 androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }

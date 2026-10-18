@@ -2,9 +2,11 @@ package social.hotmess.android
 
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.ActivityResultLauncher
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,11 +20,19 @@ import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
+import com.facebook.CallbackManager
+import com.facebook.FacebookCallback
+import com.facebook.FacebookException
+import com.facebook.FacebookSdk
+import com.facebook.login.LoginBehavior
+import com.facebook.login.LoginManager
+import com.facebook.login.LoginResult
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import social.hotmess.android.session.FacebookAppSignIn
 import social.hotmess.android.ui.HotMessApp
 import social.hotmess.android.ui.LocalAppGraph
 import social.hotmess.android.ui.components.NotificationBanner
@@ -36,11 +46,15 @@ class MainActivity : ComponentActivity() {
     private val links = Channel<AppRoute>(Channel.CONFLATED)
     private val linkFlow = links.receiveAsFlow()
 
+    /** Sign-in through the Facebook app, when this build's Facebook SDK started (see [FacebookAppSignIn]). */
+    private var facebookLogin: ActivityResultLauncher<Collection<String>>? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
         if (savedInstanceState == null) handle(intent)
+        registerFacebookLogin()
 
         setContent {
             val branding by graph.brand.branding.collectAsStateWithLifecycle()
@@ -75,11 +89,52 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun signIn() {
+        val facebookLogin = facebookLogin
+        if (facebookLogin != null && FacebookAppSignIn.isAvailable(this, graph.configuration)) {
+            // Forget whoever the SDK last signed in, so a different Facebook account doesn't trip it up.
+            LoginManager.getInstance().logOut()
+            facebookLogin.launch(graph.session.beginFacebookAppSignIn())
+            return
+        }
+        signInWithFacebookDialog()
+    }
+
+    /** Facebook's login dialog in a Custom Tab, for phones without the Facebook app. */
+    private fun signInWithFacebookDialog() {
         val url = graph.session.beginSignIn() ?: return
         CustomTabsIntent.Builder()
             .setEphemeralBrowsingEnabled(graph.configuration.privateSignIn)
             .build()
             .launchUrl(this, url.toUri())
+    }
+
+    /** Registers sign-in through the Facebook app, which has to happen before the activity starts. */
+    private fun registerFacebookLogin() {
+        if (!FacebookSdk.isInitialized()) return
+        val callbacks = CallbackManager.Factory.create()
+        val loginManager = LoginManager.getInstance().setLoginBehavior(LoginBehavior.NATIVE_ONLY)
+        loginManager.registerCallback(callbacks, object : FacebookCallback<LoginResult> {
+            override fun onSuccess(result: LoginResult) {
+                graph.session.signInWithFacebookToken(result.accessToken.token)
+            }
+
+            override fun onCancel() {
+                graph.session.signInCancelled()
+            }
+
+            override fun onError(error: FacebookException) {
+                Log.e("HotMess", "Facebook app sign-in failed: ${error.message}")
+                // Test builds show why (such as a key hash missing from the Facebook app), so it gets fixed; people
+                // get the dialog instead.
+                if (graph.configuration.isTestBuild) {
+                    graph.session.signInFailed(error.message ?: "The Facebook app couldn't sign you in.")
+                } else {
+                    signInWithFacebookDialog()
+                }
+            }
+        })
+        // The contract hands Facebook's result to the callbacks itself.
+        facebookLogin = registerForActivityResult(loginManager.createLogInActivityResultContract(callbacks)) {}
     }
 
     private fun signInWithGoogle() {

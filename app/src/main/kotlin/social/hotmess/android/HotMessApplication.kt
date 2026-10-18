@@ -20,6 +20,7 @@ import social.hotmess.android.push.InAppNotifications
 import social.hotmess.android.push.PushRegistrar
 import social.hotmess.android.session.AuthState
 import social.hotmess.android.session.BrandStore
+import social.hotmess.android.session.FacebookAppSignIn
 import social.hotmess.android.session.SessionStore
 import social.hotmess.android.support.ErrorReporter
 import social.hotmess.core.AppRoute
@@ -112,6 +113,7 @@ class HotMessApplication : Application() {
         MapLibre.getInstance(this)
         graph = AppGraph(this)
         graph.errors.start()
+        FacebookAppSignIn.initialize(this, graph.configuration)
 
         graph.brand.load()
         graph.scope.launch { graph.session.start() }

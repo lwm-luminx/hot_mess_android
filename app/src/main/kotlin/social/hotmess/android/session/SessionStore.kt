@@ -32,9 +32,10 @@ sealed interface AuthState {
 /**
  * Signs people in with Facebook through AudienceKit and keeps track of the session.
  *
- * Sign-in opens Facebook's Login for Business dialog in a Custom Tab (see [FacebookLoginDialog]);
- * the activity hands the redirect back here, and the SDK exchanges its code for an AudienceKit
- * session kept in the Android Keystore. When the API ends the session, the app goes back to sign-in.
+ * With the Facebook app installed, sign-in goes through it (see [FacebookAppSignIn]) and the AudienceKit SDK
+ * exchanges its access token. Otherwise it opens Facebook's login dialog in a Custom Tab (see [FacebookLoginDialog]);
+ * the activity hands the redirect back here, and the SDK exchanges its code. Either way the AudienceKit session is
+ * kept in the Android Keystore. When the API ends the session, the app goes back to sign-in.
  */
 class SessionStore(
     private val context: Context,
@@ -126,12 +127,36 @@ class SessionStore(
         return dialog.url(state)
     }
 
+    /** Starts sign-in through the Facebook app and returns the permissions to ask it for. */
+    fun beginFacebookAppSignIn(): List<String> {
+        _state.value = AuthState.SigningIn
+        return PERMISSIONS
+    }
+
+    /** The Facebook app signed the person in: exchanges its access token for an AudienceKit session. */
+    fun signInWithFacebookToken(accessToken: String) {
+        scope.launch {
+            exchange {
+                audienceKit.signIn(facebookAccessToken = accessToken, device = DeviceDescription.current(context))
+            }
+        }
+    }
+
     /** Takes the dialog's redirect, if [url] is one. */
     fun handleRedirect(url: String): Boolean {
         val (dialog, state) = pendingLogin?.takeIf { it.first.isRedirect(url) } ?: return false
         pendingLogin = null
         when (val result = dialog.result(url, state)) {
-            is FacebookLoginDialog.Result.Code -> scope.launch { exchange(result.code, dialog) }
+            is FacebookLoginDialog.Result.Code -> scope.launch {
+                exchange {
+                    audienceKit.signIn(
+                        facebookCode = result.code,
+                        redirectUri = dialog.redirectUri,
+                        device = DeviceDescription.current(context),
+                        facebookAppId = dialog.appId,
+                    )
+                }
+            }
             FacebookLoginDialog.Result.Cancelled -> signInCancelled()
             is FacebookLoginDialog.Result.Failed -> {
                 Log.e("HotMess", "Facebook sign-in failed: ${result.reason}")
@@ -157,19 +182,14 @@ class SessionStore(
     }
 
     /**
-     * Exchanges the dialog's code for an AudienceKit session, with the app the dialog was for. The token JSON
-     * (`userId`, `audienceId`, `role`, `endpoint`) says who signed in; the SDK keeps the token and the audience,
-     * and nothing here decodes the JWT. Their name and picture come from Me.
+     * Exchanges what Facebook gave (the dialog's code, or the Facebook app's access token) for an AudienceKit
+     * session. The token JSON (`userId`, `audienceId`, `role`, `endpoint`) says who signed in; the SDK keeps the
+     * token and the audience, and nothing here decodes the JWT. Their name and picture come from Me.
      */
-    private suspend fun exchange(code: String, dialog: FacebookLoginDialog) {
+    private suspend fun exchange(signIn: suspend () -> com.audiencekit.SignInResult) {
         _state.value = AuthState.SigningIn
         try {
-            val result = audienceKit.signIn(
-                facebookCode = code,
-                redirectUri = dialog.redirectUri,
-                device = DeviceDescription.current(context),
-                facebookAppId = dialog.appId,
-            )
+            val result = signIn()
             val id = social.hotmess.core.RecordId.normalize(result.userId)
             _user.value = id?.let { User(it, "") }
             _user.value = runCatching { api.me() }.getOrNull() ?: _user.value
