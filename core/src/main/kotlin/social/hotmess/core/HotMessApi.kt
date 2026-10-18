@@ -278,6 +278,22 @@ class HotMessApi(val client: AudienceKitClient) {
     }
 
     /**
+     * The ways the audience lets people sign in (`GET /v1/token/methods`), which AudienceKit's admin chooses, or null
+     * when the API can't say (an API from before the setting answers 404, or there's no connection). Never throws: the
+     * login screen then shows what it always has. [host] names the audience.
+     */
+    suspend fun signInMethods(host: String): SignInMethods? =
+        try {
+            val path = "/v1/token/methods?host=" + java.net.URLEncoder.encode(host, Charsets.UTF_8)
+            val bytes = client.data(APIRequest(method = "GET", path = path, authenticated = false))
+            json.decodeFromString(SignInMethods.serializer(), bytes.toString(Charsets.UTF_8))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+
+    /**
      * Sends an error report. Never throws: reporting must not cause an error of its own. Signed out it goes without
      * the session token.
      */

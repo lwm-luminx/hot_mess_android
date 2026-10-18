@@ -817,6 +817,22 @@ class HotMessApiTest {
     }
 
     @Test
+    fun asksWhichSignInMethodsTheAudienceOffers() = runTest {
+        val (api, _) = api("/v1/token/methods?host=hotmess.social" to """{"methods":["apple","google"]}""")
+        val methods = api.signInMethods("hotmess.social")
+
+        assertEquals(listOf("apple", "google"), methods?.methods)
+        assertFalse(methods!!.facebook)
+        assertTrue(methods.google)
+    }
+
+    @Test
+    fun signInMethodsAreUnknownOnAnOlderApi() = runTest {
+        val (api, _) = api()
+        assertNull(api.signInMethods("hotmess.social"), "a 404 leaves the login screen as it was")
+    }
+
+    @Test
     fun nowWithoutAPositionMakesNoRequest() = runTest {
         val (api, bodies) = api()
         assertEquals(Now(), api.now(null))
