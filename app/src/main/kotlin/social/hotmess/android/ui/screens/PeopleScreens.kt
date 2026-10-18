@@ -12,9 +12,12 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
+import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Paid
 import androidx.compose.material.icons.rounded.People
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -67,6 +70,8 @@ import social.hotmess.core.Event
 import social.hotmess.core.Person
 import social.hotmess.core.PersonDetail
 import social.hotmess.core.PhotoTone
+import social.hotmess.core.ReportSubject
+import social.hotmess.core.ReportTarget
 import social.hotmess.core.SocialLink
 
 /** The DJs, hosts and performers. */
@@ -111,11 +116,20 @@ fun PersonScreen(id: String, navigator: Navigator) {
     val listState = rememberLazyListState()
     val scrolled by rememberHeroCollapsed(listState)
     var heroTone by remember { mutableStateOf(PhotoTone.PLACEHOLDER) }
+    var reporting by remember { mutableStateOf<ReportSubject?>(null) }
+    reporting?.let { ReportDialog(it) { reporting = null } }
     HeroScaffold(
         title = current?.name ?: "Person",
         tone = heroTone,
         collapsed = current == null || scrolled,
         onBack = navigator::back,
+        actions = {
+            if (current != null) {
+                IconButton(onClick = { reporting = ReportSubject(ReportTarget.PERSON, id) }) {
+                    Icon(Icons.Rounded.Flag, contentDescription = "Report")
+                }
+            }
+        },
     ) { topInset ->
         LoadStateView(state, onRetry = { loader.load(id) { graph.api.person(id) } }) { detail ->
             val open = { person: Person -> navigator.open(AppRoute.PersonDetail(person.id)) }

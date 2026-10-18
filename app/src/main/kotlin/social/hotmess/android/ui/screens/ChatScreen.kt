@@ -10,6 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Chat
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -44,9 +45,12 @@ import social.hotmess.android.ui.components.RichContent
 import social.hotmess.android.ui.components.RoomBanner
 import social.hotmess.android.ui.components.RoomBannerKind
 import social.hotmess.core.AppRoute
+import social.hotmess.core.BlockedUser
 import social.hotmess.core.ChatRoom
 import social.hotmess.core.FriendDirectory
 import social.hotmess.core.RecordId
+import social.hotmess.core.ReportSubject
+import social.hotmess.core.ReportTarget
 import social.hotmess.core.RoomPeople
 import social.hotmess.core.VenueChatConnection
 import social.hotmess.core.VenueMessage
@@ -292,7 +296,15 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
     val people by model.people.collectAsStateWithLifecycle()
     val reachable by model.reachable.collectAsStateWithLifecycle()
     val user by graph.session.user.collectAsStateWithLifecycle()
+    val safety by graph.safety.state.collectAsStateWithLifecycle()
     var draft by rememberSaveable { mutableStateOf("") }
+    // Reporting and blocking from a long press on someone's line, and the terms asked before the first message.
+    var acting by remember { mutableStateOf<VenueMessage?>(null) }
+    var reporting by remember { mutableStateOf<ReportSubject?>(null) }
+    var blocking by remember { mutableStateOf<BlockedUser?>(null) }
+    var askingTerms by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) { if (graph.safety.state.value == null) graph.safety.refresh() }
 
     DisposableEffect(model) {
         model.connect()
@@ -302,6 +314,10 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
     val sending by model.sending.collectAsStateWithLifecycle()
 
     fun send() {
+        if (graph.safety.needsTerms) {
+            askingTerms = true
+            return
+        }
         val text = draft
         // Clears only what was sent, not anything typed while it went.
         model.send(text) { sent -> if (sent && draft == text) draft = "" }
@@ -334,11 +350,14 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
             val userId = user?.id
             val friends = graph.api.friends
             // Who's here, the viewer then friends first; a roster can add friends' full names, so it redraws the thread too.
-            val hereNow = remember(people, userId) {
+            val hereNow = remember(people, userId, safety) {
                 RoomPeople.hereNow(people.byId.values, userId) { friends.fullName(it) }
+                    .filterNot { safety?.isBlocked(it.userId) == true }
             }
             HereNowStrip(hereNow, reachable, viewerId = userId)
-            val thread = remember(messages, userId, people) { messages.map { it.threadMessage(userId, friends) } }
+            // Blocked people's lines leave the room at once; the API stops sending new ones.
+            val shown = remember(messages, safety) { messages.filterNot { !it.isFromListing && safety?.isBlocked(it.userId) == true } }
+            val thread = remember(shown, userId, people) { shown.map { it.threadMessage(userId, friends) } }
             // Green for everyone in the room, yellow for friends outside it whom a notification reaches.
             val presence = remember(people, reachable) {
                 val push = reachable + people.byId.values.filter { it.isRecent && it.reachable }.map { it.userId }
@@ -351,6 +370,7 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
                 presence = presence,
                 isLocale = isLocale,
                 onOpenEvent = { id -> navigator.open(AppRoute.EventDetail(RecordId.normalize(id) ?: id.lowercase())) },
+                onMessageActions = { line -> acting = shown.firstOrNull { it.id == line.id } },
             )
             ChatComposer(
                 value = draft,
@@ -359,6 +379,36 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
                 sendEnabled = draft.isNotBlank() && !sending && status == VenueChatModel.Status.CONNECTED,
             )
         }
+    }
+
+    acting?.let { line ->
+        // A post as the venue or a listing has no sender to block; it can still be reported.
+        val sender = if (line.isFromListing) null else BlockedUser(line.userId, line.name.orEmpty(), line.avatarUrl)
+        ReportOrBlockDialog(
+            title = line.name?.takeIf { it.isNotBlank() }?.let { "Message from $it" } ?: "Message",
+            reportLabel = "Report message",
+            person = sender,
+            onReport = {
+                acting = null
+                reporting = ReportSubject(ReportTarget.MESSAGE, line.id, sender)
+            },
+            onBlock = {
+                acting = null
+                blocking = it
+            },
+            onDismiss = { acting = null },
+        )
+    }
+    reporting?.let { ReportDialog(it) { reporting = null } }
+    blocking?.let { BlockDialog(it) { blocking = null } }
+    if (askingTerms) {
+        TermsDialog(
+            onAgreed = {
+                askingTerms = false
+                send()
+            },
+            onDismiss = { askingTerms = false },
+        )
     }
 }
 

@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.LocationOff
 import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.NearMe
@@ -89,6 +90,8 @@ import social.hotmess.core.Event
 import social.hotmess.core.Formatting
 import social.hotmess.core.PhotoTone
 import social.hotmess.core.PingPick
+import social.hotmess.core.ReportSubject
+import social.hotmess.core.ReportTarget
 import social.hotmess.core.Venue
 import social.hotmess.core.VenueOverview
 import social.hotmess.core.isIn
@@ -229,6 +232,8 @@ fun VenueScreen(id: String, navigator: Navigator) {
     val listState = rememberLazyListState()
     val scrolled by rememberHeroCollapsed(listState)
     var heroTone by remember { mutableStateOf(PhotoTone.PLACEHOLDER) }
+    var reporting by remember { mutableStateOf<ReportSubject?>(null) }
+    reporting?.let { ReportDialog(it) { reporting = null } }
     HeroScaffold(
         title = venue?.name ?: "Venue",
         tone = heroTone,
@@ -238,6 +243,9 @@ fun VenueScreen(id: String, navigator: Navigator) {
             if (venue != null) {
                 IconButton(onClick = { context.share(venue.shareUrl, venue.name) }) {
                     Icon(Icons.Rounded.Share, contentDescription = "Share")
+                }
+                IconButton(onClick = { reporting = ReportSubject(ReportTarget.VENUE, venue.id) }) {
+                    Icon(Icons.Rounded.Flag, contentDescription = "Report venue")
                 }
             }
         },
