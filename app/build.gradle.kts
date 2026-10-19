@@ -133,7 +133,11 @@ android {
             // The Play listing's package.
             applicationIdSuffix = ".app"
             signingConfigs.findByName("upload")?.let { signingConfig = it }
-            isMinifyEnabled = false
+            // R8 shrinks, optimizes and obfuscates the code (Google Play flags apps under 25% obfuscation) and drops
+            // unused resources. The bundle carries R8's mapping file, which Play uses to deobfuscate crash reports;
+            // app/build/outputs/mapping/release/mapping.txt retraces an error report's stack trace by hand.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         create("staging") {
@@ -147,6 +151,9 @@ android {
             initWith(getByName("staging"))
             applicationIdSuffix = ".signintest"
             versionNameSuffix = "-signintest"
+            // The UI tests' build: instrumentation tests run against unminified code.
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 

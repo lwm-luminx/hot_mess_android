@@ -26,6 +26,9 @@ jobs:
       - uses: gradle/actions/setup-gradle@v5
       - name: Build and run unit tests
         run: ./gradlew assembleDebug test
+      # Staging is built like Release, through R8, so this catches missing keep rules and missing-class errors.
+      - name: Build Staging with R8
+        run: ./gradlew assembleStaging
 
       # The app's GraphQL documents (core/ and app/, with the SDK's fragments they interpolate) against the
       # consumer schema. The dumps and the checker publish from audience-kit's main (see
