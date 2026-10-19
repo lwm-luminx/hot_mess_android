@@ -203,7 +203,12 @@ fun NowScreen(navigator: Navigator) {
                             }
                         }
                     }
-                    // Small talk, then events, then venues.
+                    // Who's on, small talk, the next three events, then venues.
+                    if (now.onNow.isNotEmpty()) {
+                        item(key = "on-now") {
+                            OnNowSection(now.onNow) { navigator.open(AppRoute.PersonDetail(it.person.id)) }
+                        }
+                    }
                     now.venue?.let { venue ->
                         item { SmallTalk(venue, now.event, now.friends, navigator) }
                     }
@@ -213,7 +218,7 @@ fun NowScreen(navigator: Navigator) {
                     if (now.events.isEmpty()) {
                         item { DetailSection("Events") { EmptyRow("There's nothing coming up yet.") } }
                     } else {
-                        cardSection("events", "Events", now.events, key = { it.id }) { event ->
+                        cardSection("events", "Events", now.events.take(3), key = { it.id }) { event ->
                             EventCard(event, onClick = { navigator.open(AppRoute.EventDetail(event.id)) })
                         }
                     }
@@ -235,11 +240,6 @@ fun NowScreen(navigator: Navigator) {
                                     onPay = { checkout.pay(venue.id, venue.name) },
                                 )
                             }
-                        }
-                    }
-                    if (now.onNow.isNotEmpty()) {
-                        item(key = "on-now") {
-                            OnNowSection(now.onNow) { navigator.open(AppRoute.PersonDetail(it.person.id)) }
                         }
                     }
                     nearby(now, coordinates != null, navigator)
