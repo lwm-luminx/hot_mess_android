@@ -284,7 +284,7 @@ fun SocialLinkRow(link: SocialLink, onClick: (() -> Unit)?) {
             SocialLink.Network.INSTAGRAM -> R.drawable.social_instagram
             SocialLink.Network.SOUNDCLOUD -> R.drawable.social_soundcloud
             SocialLink.Network.X -> R.drawable.social_x
-            SocialLink.Network.SPOTIFY, SocialLink.Network.APPLE_MUSIC, null -> null
+            SocialLink.Network.SPOTIFY, SocialLink.Network.APPLE_MUSIC, SocialLink.Network.APPLE_PODCASTS, SocialLink.Network.PODCAST_RSS, null -> null
         }
         val music = link.network == SocialLink.Network.SPOTIFY || link.network == SocialLink.Network.APPLE_MUSIC
         if (glyph != null) {
@@ -335,9 +335,10 @@ fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifi
 
 /** A secondary action: the grey `control-fill` button. */
 @Composable
-fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     Button(
         onClick = onClick,
+        enabled = enabled,
         shape = Radius.md,
         colors = ButtonDefaults.buttonColors(containerColor = tokens.controlFill, contentColor = tokens.ink),
         modifier = modifier.heightIn(min = 36.dp),

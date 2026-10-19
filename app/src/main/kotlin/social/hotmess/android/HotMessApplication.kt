@@ -16,11 +16,17 @@ import kotlinx.coroutines.launch
 import org.maplibre.android.MapLibre
 import social.hotmess.android.location.LocationProvider
 import social.hotmess.android.payments.SquareCardEntry
+import social.hotmess.android.push.InAppNotifications
 import social.hotmess.android.push.PushRegistrar
 import social.hotmess.android.session.AuthState
 import social.hotmess.android.session.BrandStore
+import social.hotmess.android.session.FacebookAppSignIn
+import social.hotmess.android.session.SafetyStore
 import social.hotmess.android.session.SessionStore
 import social.hotmess.android.support.ErrorReporter
+import social.hotmess.core.AppRoute
+import social.hotmess.core.CableConnection
+import social.hotmess.core.GraphQLCable
 import social.hotmess.core.HotMessApi
 import social.hotmess.core.PassBook
 
@@ -34,6 +40,9 @@ class AppGraph(context: Context, val configuration: AppConfiguration = AppConfig
     val session = SessionStore(context, api, audienceKit, configuration, push, scope)
     val location = LocationProvider(context, api, configuration, scope)
 
+    /** Terms of use, blocking and reporting, as the API keeps them for the signed-in user. */
+    val safety = SafetyStore(api)
+
     /** Crash and error reports, and what "Report a problem" attaches. */
     val errors = ErrorReporter(context, api, configuration, scope)
 
@@ -43,12 +52,51 @@ class AppGraph(context: Context, val configuration: AppConfiguration = AppConfig
     /** Square's card entry, for Square venues' cover; MainActivity passes it card entry's result. */
     val squareCardEntry = SquareCardEntry()
 
+    /**
+     * The one Action Cable socket every GraphQL subscription shares (chat rooms, your notifications). It's
+     * open while something is subscribed: the app in front and signed in, or a chat room on screen.
+     */
+    val cable = CableConnection(
+        url = checkNotNull(GraphQLCable.realtimeUrl(configuration.baseUrl)) { "No realtime URL for ${configuration.baseUrl}" },
+        token = { session.sessionToken },
+    )
+
+    /** Your notifications over the cable while the app is in front, shown in the app. */
+    val notifications = InAppNotifications(
+        scope = scope,
+        cable = cable,
+        audienceId = { api.client.audienceId() },
+        onShown = { notification -> (notification.route as? AppRoute.NowPing)?.let { pingUpdated(it.pingId) } },
+    )
+
+    /** Whether the app is on screen, from the process lifecycle. */
+    @Volatile var isForeground: Boolean = false
+        private set
+
+    fun setForeground(foreground: Boolean) {
+        isForeground = foreground
+        notifications.setForeground(foreground)
+        if (foreground && session.isSignedIn) notifications.start() else notifications.stop()
+    }
+
     init {
+        // A socket the server refused as unauthorized ends the session as a 401 does.
+        cable.onUnauthorized = { token -> scope.launch { session.sessionRejected(token) } }
         scope.launch {
             session.state.collect {
-                if (it == AuthState.SignedOut) {
-                    passes.clear()
-                    api.friends.clear()
+                when (it) {
+                    AuthState.SignedOut -> {
+                        passes.clear()
+                        api.friends.clear()
+                        notifications.clear()
+                        safety.clear()
+                        cable.disconnect()
+                    }
+                    AuthState.SignedIn -> {
+                        if (isForeground) notifications.start()
+                        scope.launch { safety.refresh() }
+                    }
+                    else -> Unit
                 }
             }
         }
@@ -73,6 +121,7 @@ class HotMessApplication : Application() {
         MapLibre.getInstance(this)
         graph = AppGraph(this)
         graph.errors.start()
+        FacebookAppSignIn.initialize(this, graph.configuration)
 
         graph.brand.load()
         graph.scope.launch { graph.session.start() }
@@ -81,10 +130,13 @@ class HotMessApplication : Application() {
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onStart(owner: LifecycleOwner) {
                 if (graph.session.isSignedIn) graph.location.start()
+                // Your notifications come over the cable while the app is in front (and signed in).
+                graph.setForeground(true)
             }
 
             override fun onStop(owner: LifecycleOwner) {
                 graph.location.stop()
+                graph.setForeground(false)
             }
         })
     }

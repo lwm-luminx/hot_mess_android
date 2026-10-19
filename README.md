@@ -14,11 +14,30 @@ AudienceKit Kotlin SDK, styled with the AudienceKit design system's `hot_mess` p
   and paying cover with Stripe's payment sheet (`payments`).
 - `design/`: the script that draws the launcher icons (the iOS "misprint" mark: Production blue, staging green, debug purple; `python3 design/make_launcher_icons.py`, needs cairosvg and Pillow).
 
+## API contract
+
+The app speaks the AudienceKit API as the SDK's `AudienceKitSDK.API_VERSION` names it. Its GraphQL documents live in
+`core/.../Documents.kt`, `VenueChat.kt` and `Notifications.kt` as string constants, so they can be checked against
+the schema before anything runs: CI fetches `check.mjs` and `schema.graphql` from developer.audiencekit.com and runs
+the check over `core/src/main`, `app/src/main` and the SDK's `Queries.kt` (whose fragments the documents
+interpolate). Locally, from an audience-kit checkout where this app is `apps/hot_mess/android`:
+
+```sh
+node scripts/graphql-documents/check.mjs --schema api/schema.graphql --endpoint consumer \
+  apps/hot_mess/android/core/src/main apps/hot_mess/android/app/src/main sdk/audience_kit/android/audiencekit/src/main
+```
+
+Before sign-in the app reads `GET /v1/status` for the oldest version Google Play still serves
+(`clients.android.minimumVersion`) and asks to update when this build is older. Sign-in keeps what the token JSON
+says (`userId`, `audienceId`, `role`, `endpoint`); nothing decodes the JWT. API errors are classified by their
+`extensions.code`, never their wording, and pushes are opened by the `url` they carry.
+
 ## Setup
 
-1. Clone [audience-kit](https://github.com/audience-kit/audience-kit) next to this repository
-   (`../audience-kit`). The SDK in `sdk/kotlin` is included as a Gradle composite build. To keep it
-   somewhere else, set `audiencekit.dir` in `local.properties` or `AUDIENCEKIT_DIR`.
+1. Clone [audience-kit-sdk-android](https://github.com/audience-kit/audience-kit-sdk-android) next to
+   this repository (`../audience-kit-sdk-android`); it's included as a Gradle composite build. In the
+   AudienceKit monorepo, where this app is `apps/hot_mess/android`, its `sdk/audience_kit/android` is used.
+   To keep it somewhere else, set `audiencekit.dir` in `local.properties` or `AUDIENCEKIT_DIR`.
 2. Optionally, add Firebase's settings to `local.properties` for push (never commit them):
 
    ```properties
@@ -41,17 +60,28 @@ AudienceKit Kotlin SDK, styled with the AudienceKit design system's `hot_mess` p
 
 4. Open the project in Android Studio, or run `./gradlew installDebug`.
 
+## Version and build numbers
+
+The app version is **2.0**. Each Gradle invocation defaults to a build number (`versionCode`)
+computed from the seconds since 2026-01-01 UTC, so later builds automatically get higher numbers
+on both developer machines and CI. Builds started in the same second share a number; APK and AAB
+built together also share it. The clock is rechecked when Gradle reuses its configuration cache.
+
+For a reproducible rebuild, pass `-Photmess.buildNumber=12345678` or set `BUILD_NUMBER` (the Gradle
+property takes precedence). Overrides must be integers from 1 through 2,100,000,000, and published
+builds must use a number higher than the previous release.
+
 ## Environments
 
 | Build type | API | Facebook app | Application id |
 | --- | --- | --- | --- |
 | `debug` | `http://10.0.2.2:3000` (the API on your machine, from the emulator) | 842337999153841 | `social.hotmess.android.development` |
-| `staging` | `https://api-staging.audiencekit.com` | 1660272792277019 | `social.hotmess.android.staging` |
+| `staging` | `https://api.next.audiencekit.com` | 1660272792277019 | `social.hotmess.android.staging` |
 | `release` | `https://api.audiencekit.com` | 1168782378316790 | `social.hotmess.android.app` |
-| `signInTest` | `https://api-staging.audiencekit.com` | 713525445368431 (AudienceKit platform) | `social.hotmess.android.signintest` |
+| `signInTest` | `http://10.0.2.2:3000` | 2967605370250663 (Hot Mess development) | `social.hotmess.android.signintest` |
 
 Hot Mess is a consumer app: sign-in is classic Facebook Login on the build's Facebook app, asking
-for `public_profile`, `email` and `user_friends`, like the iOS app. It opens Facebook's OAuth dialog
+only for `public_profile` until App Review is approved, like the iOS app. It opens Facebook's OAuth dialog
 in a Custom Tab, which redirects to `fbconnect://cct.<application id>` with a code that the API
 exchanges. Each Facebook app needs an Android platform listing this app's package names and key
 hashes, and the redirect has to be accepted as a Valid OAuth Redirect URI.
@@ -69,21 +99,20 @@ door. Passes are on the Me tab. Scanning passes at the door is the separate Velv
 `FacebookSignInTest` (`app/src/androidTest`) signs in on a connected phone as a Facebook test user and
 checks the Me tab shows them. `scripts/facebook-signin-test.sh` loads `FB_TEST_ANDROID_EMAIL`,
 `FB_TEST_ANDROID_PASSWORD` and `FB_TEST_ANDROID_NAME` from `~/.config/audience-kit/fb_test_users.env`;
-without them it's skipped. The test users belong to the AudienceKit platform app (713525445368431),
-and Meta won't add them to another app or make new ones, so connected tests run on `signInTest`:
-Staging, signing in with that app. It's a Business-type app, so that build opens the dialog with its
-Login for Business configuration and redirects to `fb713525445368431://authorize/`, like the iOS app. With `FB_TEST_APP_ID` set to the app the users belong to, the test stops
-early when that isn't the build's.
+without them it's skipped. Connected tests run on `signInTest`: Debug, signing in with Hot Mess's
+development app (2967605370250663) through classic Facebook Login against the local API on port 3000,
+which has to be running with that app's credentials. The account needs a role on that app (Facebook
+test users of another app can't sign in to it). The AudienceKit service app isn't used for testing. With `FB_TEST_APP_ID` set to the app the users belong to, the test stops early when
+that isn't the build's.
 That build signs in through an ephemeral Custom Tab, which doesn't share Chrome's cookies, so it
 doesn't matter who is signed in to facebook.com in Chrome (Chrome 136 or later). Like any
 connected test run, it uninstalls the app when it finishes.
 
 ## CI
 
-`.github/workflows/build.yml` checks out audience-kit beside the app. audience-kit is private, so
-the repository has an `AUDIENCE_KIT_SSH_KEY` secret: the private half of a read-only deploy key on
-audience-kit/audience-kit ("hot_mess_android CI (read-only)"). An `AUDIENCE_KIT_TOKEN` with read
-access works too.
+`.github/workflows/build.yml` checks out the public audience-kit-sdk-android beside the app, so it needs
+no secrets. The `AUDIENCE_KIT_SSH_KEY` secret, and the read-only deploy key on audience-kit/audience-kit it
+belonged to, are no longer used.
 
 ## Credits
 

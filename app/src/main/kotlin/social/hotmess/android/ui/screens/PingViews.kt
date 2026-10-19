@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Campaign
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -29,6 +30,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -48,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
@@ -75,6 +78,7 @@ import social.hotmess.android.ui.theme.Radius
 import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.ApiError
+import social.hotmess.core.BlockedUser
 import social.hotmess.core.Formatting
 import social.hotmess.core.Friend
 import social.hotmess.core.HotMessApi
@@ -86,6 +90,8 @@ import social.hotmess.core.PingReach
 import social.hotmess.core.PingSelection
 import social.hotmess.core.PingStrip
 import social.hotmess.core.PingTarget
+import social.hotmess.core.ReportSubject
+import social.hotmess.core.ReportTarget
 
 // Ping: "I want to go out tonight". The send sheet, your own Ping and friends' Pings on Now, and the
 // strip on venue and event pages. Pings are tonight only and clear at 5am.
@@ -282,6 +288,10 @@ fun MyPingCard(ping: Ping, onEdit: () -> Unit, onEnd: () -> Unit, ending: Boolea
 @Composable
 fun FriendPingCard(ping: Ping, userId: String?, actions: PingActions, onOpenTarget: (PingTarget) -> Unit) {
     val busy = actions.busy != null
+    var acting by remember { mutableStateOf(false) }
+    var reporting by remember { mutableStateOf<ReportSubject?>(null) }
+    var blocking by remember { mutableStateOf<BlockedUser?>(null) }
+    val sender = BlockedUser(ping.user.id, ping.user.name, ping.user.avatarUrl)
     Card {
         Row(
             Modifier.fillMaxWidth().padding(Space.s4),
@@ -299,6 +309,9 @@ fun FriendPingCard(ping: Ping, userId: String?, actions: PingActions, onOpenTarg
                 if (detail.isNotEmpty()) {
                     Text(detail, style = HotMessType.bodySmall, color = tokens.inkMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
+            }
+            IconButton(onClick = { acting = true }, modifier = Modifier.testTag("ping.more")) {
+                Icon(Icons.Rounded.MoreVert, contentDescription = "Report or block", tint = tokens.inkMuted)
             }
         }
         if (ping.isAnywhere) {
@@ -342,6 +355,24 @@ fun FriendPingCard(ping: Ping, userId: String?, actions: PingActions, onOpenTarg
             }
         }
     }
+    if (acting) {
+        ReportOrBlockDialog(
+            title = "${ping.user.firstName}'s ping",
+            reportLabel = "Report ping",
+            person = sender,
+            onReport = {
+                acting = false
+                reporting = ReportSubject(ReportTarget.PING, ping.id, sender)
+            },
+            onBlock = {
+                acting = false
+                blocking = it
+            },
+            onDismiss = { acting = false },
+        )
+    }
+    reporting?.let { ReportDialog(it) { reporting = null } }
+    blocking?.let { BlockDialog(it) { blocking = null } }
 }
 
 /**
@@ -409,6 +440,13 @@ fun PingSheet(preselect: PingPick?, onDismiss: () -> Unit, onSent: (Ping) -> Uni
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var attempt by remember { mutableIntStateOf(0) }
     var state by remember { mutableStateOf<LoadState<PingChoices>>(LoadState.Loading) }
+
+    // Pings are seen by others, so the terms come first, once.
+    var agreed by remember { mutableStateOf(!graph.safety.needsTerms) }
+    if (!agreed) {
+        TermsDialog(onAgreed = { agreed = true }, onDismiss = onDismiss)
+        return
+    }
 
     LaunchedEffect(Unit) { graph.location.refreshLocale() }
     LaunchedEffect(localeId, attempt) {

@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.LocationOff
 import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.NearMe
@@ -66,6 +67,7 @@ import social.hotmess.android.ui.components.HeroHeader
 import social.hotmess.android.ui.components.HeroScaffold
 import social.hotmess.android.ui.components.InfoRow
 import social.hotmess.android.ui.components.LoadStateView
+import social.hotmess.android.ui.components.OnNowSection
 import social.hotmess.android.ui.components.RowDivider
 import social.hotmess.android.ui.components.SocialLinkRow
 import social.hotmess.android.ui.components.TextRow
@@ -84,9 +86,12 @@ import social.hotmess.android.ui.theme.Sizes
 import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.AppRoute
 import social.hotmess.core.CoverOffer
+import social.hotmess.core.Event
 import social.hotmess.core.Formatting
 import social.hotmess.core.PhotoTone
 import social.hotmess.core.PingPick
+import social.hotmess.core.ReportSubject
+import social.hotmess.core.ReportTarget
 import social.hotmess.core.Venue
 import social.hotmess.core.VenueOverview
 import social.hotmess.core.isIn
@@ -227,6 +232,8 @@ fun VenueScreen(id: String, navigator: Navigator) {
     val listState = rememberLazyListState()
     val scrolled by rememberHeroCollapsed(listState)
     var heroTone by remember { mutableStateOf(PhotoTone.PLACEHOLDER) }
+    var reporting by remember { mutableStateOf<ReportSubject?>(null) }
+    reporting?.let { ReportDialog(it) { reporting = null } }
     HeroScaffold(
         title = venue?.name ?: "Venue",
         tone = heroTone,
@@ -237,6 +244,9 @@ fun VenueScreen(id: String, navigator: Navigator) {
                 IconButton(onClick = { context.share(venue.shareUrl, venue.name) }) {
                     Icon(Icons.Rounded.Share, contentDescription = "Share")
                 }
+                IconButton(onClick = { reporting = ReportSubject(ReportTarget.VENUE, venue.id) }) {
+                    Icon(Icons.Rounded.Flag, contentDescription = "Report venue")
+                }
             }
         },
     ) { topInset ->
@@ -245,7 +255,7 @@ fun VenueScreen(id: String, navigator: Navigator) {
             HeroFeed(
                 listState,
                 hero = {
-                    HeroHeader(loaded.heroUrl ?: loaded.photoUrl, topInset, onTone = { heroTone = it }) {
+                    HeroHeader(loaded.bannerUrl ?: loaded.photoUrl, topInset, onTone = { heroTone = it }) {
                         Text(
                             loaded.name,
                             style = HotMessType.title,
@@ -274,6 +284,11 @@ fun VenueScreen(id: String, navigator: Navigator) {
                                 },
                             )
                         }
+                    }
+                }
+                if (overview.onNow.isNotEmpty()) {
+                    item(key = "on-now") {
+                        OnNowSection(overview.onNow) { navigator.open(AppRoute.PersonDetail(it.person.id)) }
                     }
                 }
                 item {
@@ -350,7 +365,11 @@ fun VenueScreen(id: String, navigator: Navigator) {
                     item { DetailSection("Events") { EmptyRow("There's nothing coming up here yet.") } }
                 } else {
                     cardSection("events", "Events", overview.events, key = { it.id }) { event ->
-                        EventCard(event, onClick = { navigator.open(AppRoute.EventDetail(event.id)) })
+                        EventCard(
+                            event,
+                            onClick = { navigator.open(AppRoute.EventDetail(event.id)) },
+                            photoUrl = event.photoUrl(Event.PhotoPriority.PERSON_FIRST, venueFallback = venue),
+                        )
                     }
                 }
             }

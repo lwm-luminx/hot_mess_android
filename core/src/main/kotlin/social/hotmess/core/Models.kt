@@ -3,66 +3,173 @@ package social.hotmess.core
 import com.audiencekit.Admission
 import com.audiencekit.Coordinate
 import com.audiencekit.CoverCharge
-import com.audiencekit.GlobalID
 import com.audiencekit.Presence
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.descriptors.PrimitiveKind
 import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
-import kotlinx.serialization.descriptors.nullable
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import java.time.Instant
+import java.time.ZoneId
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
+import java.time.format.FormatStyle
 import java.util.Locale
 import java.util.UUID
 
 // The app's models, decoded straight from the audience's GraphQL. Every field the screens can do
 // without is optional, so a null from the API leaves a gap on screen instead of failing the payload.
+// Image fields (`bannerUrl`, `avatarUrl`, `photoUrl`) are the API's PhotoURL scalar: absolute, and null
+// when there's no image, never "".
 
 /** A venue: a bar, club or space the audience lists. */
 @Serializable
 data class Venue(
     val id: String,
     val name: String = "",
-    val address: String? = null,
     /** A line about the place; list rows fall back to the address. */
     val description: String? = null,
-    val phone: String? = null,
-    val facebookId: String? = null,
     /** Metres from the position the venues were looked up near. */
     val distance: Double? = null,
-    @Serializable(with = BlankAsNullSerializer::class) val photoUrl: String? = null,
-    @Serializable(with = BlankAsNullSerializer::class) val heroUrl: String? = null,
+    /** Its own photo of the place; null when it has none (the API never sends an empty URL). */
+    val photoUrl: String? = null,
+    /** Its wide image: its first banner, else [photoUrl], else its Facebook Page's cover; null when it has none. */
+    val bannerUrl: String? = null,
     /** Where it is, as WKT: `POINT (<longitude> <latitude>)`. */
     val point: String? = null,
-    val isLiked: Boolean = false,
     val locale: LocaleSummary? = null,
     val hidden: Boolean = false,
     val order: Int = 0,
-    /** The last few lines of its chat room, oldest first; Now and the venue screen ask, and only people there (or admins) get them. */
-    val recentMessages: List<ChatLine> = emptyList(),
-    /** Where else to find it, like its Instagram; only the venue screen asks. */
-    val socialLinks: List<SocialLink> = emptyList(),
-    /** Tonight's cover, or null when there's none; only the venue screen, the event screen and Now ask. */
-    val coverCharge: CoverCharge? = null,
-    /** The user's cover for tonight, paid or being paid; asked for alongside [coverCharge]. */
-    val viewerAdmission: Admission? = null,
-    /** Whether the user can scan passes at its door; only the venue screen asks. */
-    val canWorkDoor: Boolean = false,
+    /** Its chat mixin; read through [recentMessages]. */
+    private val chat: ChatMixin? = null,
+    /** Its profile mixin: address, phone, links and Facebook Page. Read through [address] and friends. */
+    private val profile: ListingProfile? = null,
+    /**
+     * Its tickets mixin, holding the cover mixin (`tickets { cover }`); null when not asked for or the audience doesn't
+     * take cover. Read through [coverCharge] and friends.
+     */
+    private val tickets: VenueTicketsMixin? = null,
 ) {
+    private val cover: VenueCoverMixin? get() = tickets?.cover
+
+    /** The last few lines of its chat room, oldest first; Now and the venue screen ask, and only people there (or admins) get them. */
+    val recentMessages: List<ChatLine> get() = chat?.lines.orEmpty()
+
+    val address: String? get() = profile?.address
+
+    val phone: String? get() = profile?.phone
+
+    val facebookId: String? get() = profile?.facebook?.facebookId
+
+    val isLiked: Boolean get() = profile?.facebook?.isLiked == true
+
+    /** Where else to find it, like its Instagram; only the venue screen asks. */
+    val socialLinks: List<SocialLink> get() = profile?.links.orEmpty()
+
+    /** Tonight's cover, or null when there's none; only the venue screen, the event screen and Now ask. */
+    val coverCharge: CoverCharge? get() = cover?.charge
+
+    /** The user's cover for tonight, paid or being paid; asked for alongside [coverCharge]. */
+    val viewerAdmission: Admission? get() = cover?.viewerAdmission
+
     val coordinate: Coordinate? get() = point?.let(Coordinate::fromWkt)
 
     /** What goes under the name in a list row. */
     val summary: String? get() = description?.takeIf { it.isNotBlank() } ?: address?.takeIf { it.isNotBlank() }
 
-    val facebookUrl: String? get() = facebookId?.let { "https://facebook.com/$it" }
+    val facebookUrl: String? get() = profile?.facebook?.link ?: facebookId?.let { "https://facebook.com/$it" }
 
     val shareUrl: String get() = "https://hotmess.social/venues/${id.lowercase()}"
 }
+
+/** A venue's tickets mixin (`Venue.tickets`), read for the cover mixin the cover module nests in it. */
+@Serializable
+data class VenueTicketsMixin(val cover: VenueCoverMixin? = null)
+
+/** A venue's cover mixin (`Venue.tickets.cover`), as much of it as the app asks for. */
+@Serializable
+data class VenueCoverMixin(
+    val charge: CoverCharge? = null,
+    val viewerAdmission: Admission? = null,
+)
+
+/** An event's tickets mixin (`Event.tickets`), read for the cover mixin the cover module nests in it. */
+@Serializable
+data class EventTicketsMixin(val cover: EventCoverMixin? = null)
+
+/** An event's cover mixin (`Event.tickets.cover`). */
+@Serializable
+data class EventCoverMixin(val charge: CoverCharge? = null)
+
+/** An event's rsvp mixin (`Event.rsvp`): the signed-in user's own answer (`mine`). */
+@Serializable
+data class EventRsvpMixin(val mine: Rsvp = Rsvp.UNSURE)
+
+/** An event's venue mixin (`Event.venue`): its venue, if it has one yet. */
+@Serializable
+data class EventVenueMixin(val venue: Venue? = null)
+
+/** A venue's or event's ping mixin (`Venue.ping`, `Event.ping`): friends' active Pings that pick it. */
+@Serializable
+data class PingFeedMixin(val friendPings: List<Ping> = emptyList())
+
+/**
+ * A venue's or locale's chat mixin (`chat { open recentMessages }`): whether the user can join its room, and the
+ * room's last few lines, oldest first (a connection, asked for as `nodes`).
+ */
+@Serializable
+data class ChatMixin(val open: Boolean = false, private val recentMessages: Connection<ChatLine>? = null) {
+    val lines: List<ChatLine> get() = recentMessages?.nodes.orEmpty().filterNotNull()
+}
+
+/** An event's people mixin (`people { lineup }`): who's hosting or playing, a connection asked for as `nodes`. */
+@Serializable
+data class EventPeopleMixin(private val lineup: Connection<Person>? = null) {
+    val people: List<Person> get() = lineup?.nodes.orEmpty().filterNotNull()
+}
+
+/**
+ * An events mixin's upcoming events (`Venue.events`, `Locale.events`, `Person.events`): `upcoming` is a
+ * connection, asked for as `nodes` (every event, since no `first` is given).
+ */
+@Serializable
+data class UpcomingEvents(private val upcoming: Connection<Event>? = null) {
+    val events: List<Event> get() = upcoming?.nodes.orEmpty().filterNotNull()
+}
+
+/**
+ * A person's music mixin (`Person.music`): their newest tracks, a connection asked for as `nodes`.
+ */
+@Serializable
+data class PersonMusic(private val tracks: Connection<Track>? = null) {
+    val trackList: List<Track> get() = tracks?.nodes.orEmpty().filterNotNull()
+}
+
+/**
+ * A venue's or person's profile mixin (`Venue.profile`, `Person.profile`), as much of it as the app asks
+ * for. `socialLinks` is a connection asked for as `nodes`; [facebook] is the facebook module's mixin.
+ */
+@Serializable
+data class ListingProfile(
+    val address: String? = null,
+    val phone: String? = null,
+    private val socialLinks: Connection<SocialLink>? = null,
+    val facebook: FacebookProfile? = null,
+) {
+    /** Its social links, dropping null nodes; empty when not asked for. */
+    val links: List<SocialLink> get() = socialLinks?.nodes.orEmpty().filterNotNull()
+}
+
+/** A listing's Facebook Page ID and whether the user likes it (`profile.facebook`). */
+@Serializable
+data class FacebookProfile(val facebookId: String? = null, val isLiked: Boolean = false, val link: String? = null)
+
+/** A Relay connection's `nodes`, which GraphQL types as nullable items. */
+@Serializable
+data class Connection<T>(val nodes: List<T?> = emptyList())
 
 /** The locale a venue belongs to, as much of it as the lists need. */
 @Serializable
@@ -74,19 +181,68 @@ data class LocaleSummary(val id: String, val name: String? = null, val label: St
 @Serializable
 data class AppLocale(val id: String, val name: String)
 
+/**
+ * Someone on at a venue: hosting, DJing, performing or MCing, with or without an event. GraphQL's
+ * `Venue.people.onNow` lists the ones on right now.
+ */
+@Serializable
+data class Appearance(
+    val id: String,
+    val person: Person,
+    /** GraphQL's AppearanceRole (`DJ`); read [role]. */
+    @SerialName("role") val roleName: String? = null,
+    @Serializable(with = InstantSerializer::class) val startsAt: Instant? = null,
+    /** When they finish; null until the night ends. */
+    @Serializable(with = InstantSerializer::class) val endsAt: Instant? = null,
+) {
+    /** What they're doing; null for a role this build doesn't know. */
+    val role: AppearanceRole? get() = AppearanceRole.of(roleName)
+
+    /** Their set, "23:45 – close" until they have an end time, in the device's clock; null without a start. */
+    fun hours(zone: ZoneId = ZoneId.systemDefault(), locale: Locale = Locale.getDefault()): String? {
+        val start = startsAt ?: return null
+        val time = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).withLocale(locale).withZone(zone)
+        return "${time.format(start)} – ${endsAt?.let(time::format) ?: "close"}"
+    }
+}
+
+/** What someone on at a venue is doing, labelled as Velvet's lineup labels it. */
+enum class AppearanceRole(val label: String) {
+    HOST("Host"),
+    DJ("DJ"),
+    PERFORMER("Performer"),
+    MC("MC"),
+    ;
+
+    companion object {
+        /** GraphQL sends `DJ`, the lineup's own records `dj`. */
+        fun of(wire: String?): AppearanceRole? = entries.firstOrNull { it.name.equals(wire, ignoreCase = true) }
+    }
+}
+
+/** A venue's people mixin (`people { onNow { nodes } }`): who's on there now. Null where the module is off. */
+@Serializable
+data class VenuePeopleMixin(@SerialName("onNow") private val onNowNodes: Connection<Appearance>? = null) {
+    val onNow: List<Appearance> get() = onNowNodes?.nodes.orEmpty().filterNotNull()
+}
+
 /** A performer, DJ or promoter the audience follows. */
 @Serializable
 data class Person(
     val id: String,
     val name: String = "",
-    val facebookId: String? = null,
     val role: String? = null,
-    val isLiked: Boolean = false,
-    @Serializable(with = BlankAsNullSerializer::class) val pictureUrl: String? = null,
-    @Serializable(with = BlankAsNullSerializer::class) val coverUrl: String? = null,
+    val avatarUrl: String? = null,
+    val bannerUrl: String? = null,
     val order: Int = 0,
+    /** Their profile mixin, for the Facebook Page. Read through [facebookId] and [isLiked]. */
+    private val profile: ListingProfile? = null,
 ) {
-    val facebookUrl: String? get() = facebookId?.let { "https://facebook.com/$it" }
+    val facebookId: String? get() = profile?.facebook?.facebookId
+
+    val isLiked: Boolean get() = profile?.facebook?.isLiked == true
+
+    val facebookUrl: String? get() = profile?.facebook?.link ?: facebookId?.let { "https://facebook.com/$it" }
 }
 
 /**
@@ -97,18 +253,30 @@ data class Person(
 data class PersonDetail(
     val id: String,
     val name: String = "",
-    val facebookId: String? = null,
-    val isLiked: Boolean = false,
-    @Serializable(with = BlankAsNullSerializer::class) val pictureUrl: String? = null,
-    @Serializable(with = BlankAsNullSerializer::class) val coverUrl: String? = null,
-    val events: List<Event> = emptyList(),
-    val socialLinks: List<SocialLink> = emptyList(),
-    val tracks: List<Track> = emptyList(),
+    val avatarUrl: String? = null,
+    val bannerUrl: String? = null,
+    @SerialName("events") private val eventsMixin: UpcomingEvents? = null,
+    /** Their profile mixin: links and Facebook Page. Read through [socialLinks], [facebookId] and [isLiked]. */
+    private val profile: ListingProfile? = null,
+    @SerialName("music") private val musicMixin: PersonMusic? = null,
     val members: List<Person> = emptyList(),
     val groups: List<Person> = emptyList(),
 ) {
+    /** Their upcoming events, from the events mixin; empty when the audience has no events. */
+    val events: List<Event> get() = eventsMixin?.events.orEmpty()
+
+    /** Their newest tracks, from the music mixin; empty when the audience has no music. */
+    val tracks: List<Track> get() = musicMixin?.trackList.orEmpty()
+
+    /** Where else to find them, from the profile mixin. */
+    val socialLinks: List<SocialLink> get() = profile?.links.orEmpty()
+
+    val facebookId: String? get() = profile?.facebook?.facebookId
+
+    val isLiked: Boolean get() = profile?.facebook?.isLiked == true
+
     val person: Person
-        get() = Person(id = id, name = name, facebookId = facebookId, isLiked = isLiked, pictureUrl = pictureUrl, coverUrl = coverUrl)
+        get() = Person(id = id, name = name, avatarUrl = avatarUrl, bannerUrl = bannerUrl, profile = profile)
 
     /** Where fans can tip them (Cash App, Venmo), each opening that app. */
     val tipLinks: List<SocialLink>
@@ -124,7 +292,7 @@ data class SocialLink(
     val id: String,
     val handle: String = "",
     val provider: String = "",
-    @Serializable(with = BlankAsNullSerializer::class) val url: String? = null,
+    val url: String? = null,
 ) {
     /** The network, for picking a glyph: facebook, instagram, soundcloud, spotify, apple music, x, or null for anything else. */
     val network: Network?
@@ -134,6 +302,8 @@ data class SocialLink(
             "soundcloud" -> Network.SOUNDCLOUD
             "spotify" -> Network.SPOTIFY
             "apple_music" -> Network.APPLE_MUSIC
+            "apple_podcasts" -> Network.APPLE_PODCASTS
+            "podcast_rss" -> Network.PODCAST_RSS
             "twitter", "x" -> Network.X
             else -> null
         }
@@ -143,10 +313,12 @@ data class SocialLink(
         get() = when (network) {
             Network.SPOTIFY -> "Spotify"
             Network.APPLE_MUSIC -> "Apple Music"
+            Network.APPLE_PODCASTS -> "Apple Podcasts"
+            Network.PODCAST_RSS -> "Podcast RSS"
             else -> "/$handle"
         }
 
-    enum class Network { FACEBOOK, INSTAGRAM, SOUNDCLOUD, SPOTIFY, APPLE_MUSIC, X }
+    enum class Network { FACEBOOK, INSTAGRAM, SOUNDCLOUD, SPOTIFY, APPLE_MUSIC, APPLE_PODCASTS, PODCAST_RSS, X }
 
     /** The app fans tip them with, for a Cash App or Venmo link; null for a social profile. */
     val tipApp: String?
@@ -162,9 +334,9 @@ data class Track(
     val id: String,
     val title: String = "",
     val provider: String? = null,
-    @Serializable(with = BlankAsNullSerializer::class) val providerUrl: String? = null,
-    @Serializable(with = BlankAsNullSerializer::class) val waveformUrl: String? = null,
-    @Serializable(with = BlankAsNullSerializer::class) val artworkUrl: String? = null,
+    val providerUrl: String? = null,
+    val waveformUrl: String? = null,
+    val artworkUrl: String? = null,
 )
 
 /** Whether the signed-in user is going. GraphQL sends the enum's names. */
@@ -185,20 +357,66 @@ data class Event(
     @Serializable(with = InstantSerializer::class) val startAt: Instant,
     @Serializable(with = InstantSerializer::class) val endAt: Instant? = null,
     val facebookId: String? = null,
-    @Serializable(with = BlankAsNullSerializer::class) val coverPhotoUrl: String? = null,
+    val bannerUrl: String? = null,
     val isFeatured: Boolean = false,
-    @SerialName("viewerRsvp") val rsvp: Rsvp = Rsvp.UNSURE,
-    val venue: Venue? = null,
-    /** Who's hosting or playing; only the event screen asks for it. */
-    val people: List<Person> = emptyList(),
-    /** The cover at its venue that night; null when there's none or it sells tickets. Only the event screen asks. */
-    val coverCharge: CoverCharge? = null,
-    /** Friends' active Pings that pick this event; only the event screen asks for it. */
-    val friendPings: List<Ping> = emptyList(),
+    /** Its rsvp mixin (`rsvp { mine }`); read the signed-in user's answer through [rsvp]. */
+    @SerialName("rsvp") private val rsvpMixin: EventRsvpMixin? = null,
+    /** Its venue mixin; read the venue through [venue]. */
+    @SerialName("venue") private val venueMixin: EventVenueMixin? = null,
+    /** Its people mixin; read through [people]. Only the event screen asks for it. */
+    @SerialName("people") private val peopleMixin: EventPeopleMixin? = null,
+    /** Its tickets mixin, holding the cover mixin; read through [coverCharge]. Only the event screen asks. */
+    private val tickets: EventTicketsMixin? = null,
+    /** Its ping mixin; read through [friendPings]. Only the event screen asks for it. */
+    @SerialName("ping") private val pingFeed: PingFeedMixin? = null,
 ) {
+    /** Whether the signed-in user is going, from the rsvp mixin; undecided when the event wasn't asked for it. */
+    val rsvp: Rsvp get() = rsvpMixin?.mine ?: Rsvp.UNSURE
+
+    /** With the signed-in user's answer set to [rsvp], as the picker shows it before the API answers. */
+    fun withRsvp(rsvp: Rsvp): Event = copy(rsvpMixin = EventRsvpMixin(mine = rsvp))
+
+    /** Where it is; null when it has no venue yet ("To be announced"). */
+    val venue: Venue? get() = venueMixin?.venue
+
+    /** Who's hosting or playing; only the event screen asks for it. */
+    val people: List<Person> get() = peopleMixin?.people.orEmpty()
+
+    /** Friends' active Pings that pick this event; only the event screen asks for it. */
+    val friendPings: List<Ping> get() = pingFeed?.friendPings.orEmpty()
+
+    /** With [ping] in place of the copy among its friends' Pings. */
+    fun replacingFriendPing(ping: Ping): Event =
+        copy(pingFeed = PingFeedMixin(friendPings.map { if (it.id == ping.id) ping else it }))
+
+    /** The cover at its venue that night; null when there's none or it sells tickets. Only the event screen asks. */
+    val coverCharge: CoverCharge? get() = tickets?.cover?.charge
+
     val facebookUrl: String? get() = facebookId?.let { "https://facebook.com/events/$it" }
 
     val shareUrl: String get() = "https://hotmess.social/events/${id.lowercase()}"
+
+    enum class PhotoPriority { STANDARD, VENUE_FIRST, PERSON_FIRST }
+
+    /**
+     * Background photo for an event card:
+     * In a person view, event -> venue -> person (VENUE_FIRST)
+     * In a venue view, event -> person -> venue (PERSON_FIRST)
+     */
+    fun photoUrl(
+        priority: PhotoPriority = PhotoPriority.STANDARD,
+        venueFallback: Venue? = null,
+        personFallback: Person? = null,
+    ): String? {
+        val venueBg = venue?.bannerUrl ?: venue?.photoUrl ?: venueFallback?.bannerUrl ?: venueFallback?.photoUrl
+        val person = people.firstOrNull() ?: personFallback
+        val personBg = person?.bannerUrl ?: person?.avatarUrl
+        return when (priority) {
+            PhotoPriority.VENUE_FIRST -> bannerUrl ?: venueBg ?: personBg
+            PhotoPriority.PERSON_FIRST -> bannerUrl ?: personBg ?: venueBg
+            PhotoPriority.STANDARD -> bannerUrl ?: venueBg ?: personBg
+        }
+    }
 }
 
 /**
@@ -211,16 +429,26 @@ data class Friend(
     val name: String = "",
     val facebookId: String? = null,
     val presence: Presence? = null,
-    /**
-     * Their profile photo. The API's Friend type has no `avatarUrl` yet, so [Documents.FRIEND_FIELDS]
-     * doesn't ask for it and friends show their initials until it does.
-     */
+    /** Their picture; null when they have none, and friends then show their initials. */
     val avatarUrl: String? = null,
 ) {
     val firstName: String get() = name.firstNameForDisplay()
 
     /** Opens a Messenger thread with them, when they have a Facebook ID. */
     val messengerUrl: String? get() = facebookId?.let { "https://m.me/$it" }
+}
+
+/**
+ * The friends module's mixin on a venue or locale (`friends { list { nodes } venues { nodes } }`): your
+ * friends out there lately and, on a locale, how many at each of its venues. Null where the module is off.
+ */
+@Serializable
+data class FriendsMixin(
+    @SerialName("list") private val listNodes: Connection<Friend>? = null,
+    @SerialName("venues") private val venueNodes: Connection<FriendVenue>? = null,
+) {
+    val list: List<Friend> get() = listNodes?.nodes.orEmpty().filterNotNull()
+    val venues: List<FriendVenue> get() = venueNodes?.nodes.orEmpty().filterNotNull()
 }
 
 /** A venue where some of your friends have been lately, with how many. */
@@ -238,7 +466,7 @@ data class ChatLine(
     /** The name the room showed for the sender: in full for friends, "First L." for anyone else, or the venue's. */
     val name: String? = null,
     val userId: String = "",
-    @Serializable(with = BlankAsNullSerializer::class) val avatarUrl: String? = null,
+    val avatarUrl: String? = null,
     @Serializable(with = InstantSerializer::class) val sentAt: Instant? = null,
     /** Whether the sender can be reached now; OFFLINE unless they're a friend (or the viewer is an admin). */
     val presence: Presence? = null,
@@ -250,8 +478,13 @@ data class ChatLine(
     @Serializable(with = InstantSerializer::class) val endsAt: Instant? = null,
     /** Posted as the venue: [name] and [avatarUrl] are the venue's. */
     val postedAsVenue: Boolean = false,
+    /** Posted by talent as their listing (role HOST): [name] and [avatarUrl] are the person's. */
+    val postedAsPerson: Boolean = false,
 ) {
     val role: ChatRole? get() = ChatRole.parse(roleName)
+
+    /** Posted as the venue or as a person: a listing, so no presence and no friend's name for the sender. */
+    val isFromListing: Boolean get() = postedAsVenue || postedAsPerson
     val kind: ChatKind get() = ChatKind.parse(kindName)
 
     /** Whether the room still shows it: a special stops at its end time. */
@@ -375,9 +608,16 @@ data class PingJoin(val id: String, val user: Friend, val targetId: String? = nu
 @Serializable
 data class Now(
     val title: String = "",
-    @Serializable(with = BlankAsNullSerializer::class) val imageUrl: String? = null,
+    val imageUrl: String? = null,
+    /**
+     * The event the user is at, from an hour before it starts to an hour after it ends. Now leads with it
+     * rather than its venue, which may be a host that isn't listed as a venue at all.
+     */
+    val event: Event? = null,
     /** The venue the user is in, when they're in one. */
     val venue: Venue? = null,
+    /** Who's on at [venue] right now. */
+    val onNow: List<Appearance> = emptyList(),
     /** Venues nearby, nearest first; null when the user is in a venue. */
     val venues: List<Venue>? = null,
     val events: List<Event> = emptyList(),
@@ -416,29 +656,59 @@ data class NowLocale(
     val recentMessages: List<ChatLine> = emptyList(),
 )
 
-/** The oldest build the API still serves, from `POST /`. */
+/**
+ * What `GET /v1/status` says about this app (`clients.android`): the oldest version still served, the
+ * newest one, and where to get it. Versions are dotted numbers (`1.0.15`), compared part by part.
+ */
 @Serializable
 data class VersionInfo(
-    @SerialName("minimum_build") val minimumBuild: Int = 0,
-    @SerialName("current_version") val currentVersion: String? = null,
-    @SerialName("minimum_version") val minimumVersion: String? = null,
-)
+    val minimumVersion: String? = null,
+    val latestVersion: String? = null,
+    val storeUrl: String? = null,
+) {
+    /** Whether a build whose version name is [version] is still served. Unknown or unparseable versions are. */
+    fun supports(version: String): Boolean {
+        val minimum = parse(minimumVersion ?: return true) ?: return true
+        val current = parse(version) ?: return true
+        return compare(current, minimum) >= 0
+    }
+
+    companion object {
+        /** The numeric parts of `1.2.3-staging`: `[1, 2, 3]`; null when it doesn't start with a number. */
+        fun parse(version: String): List<Int>? {
+            val numeric = version.trim().takeWhile { it.isDigit() || it == '.' }.trimEnd('.')
+            val parts = numeric.split('.').map { it.toIntOrNull() ?: return null }
+            return parts.takeIf { it.isNotEmpty() }
+        }
+
+        /** Compares part by part, a missing part counting as 0 (`1.2` equals `1.2.0`). */
+        fun compare(a: List<Int>, b: List<Int>): Int {
+            for (i in 0 until maxOf(a.size, b.size)) {
+                val difference = a.getOrElse(i) { 0 } - b.getOrElse(i) { 0 }
+                if (difference != 0) return difference
+            }
+            return 0
+        }
+    }
+}
 
 /** The signed-in user, as the app shows them, with their profile photo when they have one. */
-data class User(val id: String, val name: String, val avatarUrl: String? = null) {
+/** [signedInWithGoogle] is null when unknown (an older API, or a user read from somewhere other than `me`). */
+data class User(
+    val id: String,
+    val name: String,
+    val avatarUrl: String? = null,
+    val signedInWithGoogle: Boolean? = null,
+) {
     val firstName: String get() = name.firstNameForDisplay()
     val initials: String get() = name.initialsForDisplay()
 }
 
-/** Record IDs come as UUIDs, or as Relay global IDs wrapping one. Normalizes both to a lowercase UUID. */
+/** Record IDs are UUIDs, in whichever case they arrive. Normalizes one to a lowercase UUID. */
 object RecordId {
-    fun normalize(id: String): String? {
-        runCatching { return UUID.fromString(id).toString() }
-        val global = GlobalID.parse(id) ?: return null
-        return runCatching { UUID.fromString(global.modelId).toString() }.getOrNull()
-    }
+    fun normalize(id: String): String? = runCatching { UUID.fromString(id).toString() }.getOrNull()
 
-    /** Whether two IDs name the same record, whatever form each comes in. False when either is null. */
+    /** Whether two IDs name the same record, whatever case each comes in. False when either is null. */
     fun same(a: String?, b: String?): Boolean {
         if (a == null || b == null) return false
         if (a.equals(b, ignoreCase = true)) return true
@@ -496,24 +766,22 @@ object PingReachSerializer : KSerializer<PingReach> {
     override fun serialize(encoder: Encoder, value: PingReach) = encoder.encodeString(value.name)
 }
 
-/** A URL field where the API sometimes sends an empty string for "none". */
-object BlankAsNullSerializer : KSerializer<String?> {
-    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
-    override val descriptor = PrimitiveSerialDescriptor("social.hotmess.BlankAsNull", PrimitiveKind.STRING).nullable
-
-    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
-    override fun deserialize(decoder: Decoder): String? =
-        if (decoder.decodeNotNullMark()) decoder.decodeString().takeIf { it.isNotBlank() } else decoder.decodeNull()
-
-    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
-    override fun serialize(encoder: Encoder, value: String?) {
-        if (value == null) encoder.encodeNull() else encoder.encodeString(value)
-    }
-}
-
 /** Up to two initials, for an avatar placeholder. */
 fun String.initialsForDisplay(): String =
     split(' ').filter { it.isNotEmpty() }.take(2).map { it.first().uppercaseChar() }.joinToString("")
 
 /** The first word of a name. */
 fun String.firstNameForDisplay(): String = split(' ').firstOrNull { it.isNotEmpty() } ?: this
+
+/**
+ * `GET /v1/token/methods`: `facebook`, `apple`, `google` and, only while App Review codes work, `review_code`, with
+ * the warning to show (with Cancel and Continue) before each method that has one.
+ */
+@Serializable
+data class SignInMethods(val methods: List<String> = emptyList(), val warnings: Map<String, String> = emptyMap()) {
+    val facebook: Boolean get() = "facebook" in methods
+    val google: Boolean get() = "google" in methods
+
+    /** What to say before signing in with [method], such as "Facebook login is only for testers"; null for nothing. */
+    fun warning(method: String): String? = warnings[method]?.takeIf { it.isNotBlank() }
+}

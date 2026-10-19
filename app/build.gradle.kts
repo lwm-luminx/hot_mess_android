@@ -44,6 +44,11 @@ data class Environment(
      * with Hot Mess's staging Facebook app. Debug runs against a local API.
      */
     val audienceKitEnvironment: String = "production",
+    /**
+     * The Facebook app's client token (its dashboard's Settings > Advanced), which the Facebook SDK needs to sign in
+     * through the Facebook app. It ships in the app, so it isn't a secret. Without one, sign-in uses the Custom Tab.
+     */
+    val facebookClientToken: String = "",
     /** The Login for Business configuration, for a Business-type Facebook app. */
     val facebookLoginConfigId: String = "",
     /**
@@ -56,18 +61,20 @@ data class Environment(
      * hotmess.admin.audiencekit.com resolves by subdomain; switch to hotmess.social once that domain is verified.
      */
     val audienceHost: String = "hotmess.admin.audiencekit.com",
+    val googleServerClientId: String = "",
 )
 
 val environments = mapOf(
     // The emulator reaches the host's localhost at 10.0.2.2.
     "debug" to Environment("debug", "http://10.0.2.2:3000", "", "842337999153841"),
     "staging" to Environment("staging", "https://api.next.audiencekit.com", "", "1660272792277019", "staging",
-        audienceHost = "hotmess.admin.next.audiencekit.com"),
-    // Staging, signing in with the AudienceKit platform app instead: Meta won't make new Facebook test users or
-    // add the ones there are to another app, so this is the only app the sign-in test's users work on.
-    "signInTest" to Environment("signInTest", "https://api.next.audiencekit.com", "", "713525445368431", "staging", "4085560021745660", privateSignIn = true,
-        audienceHost = "hotmess.admin.next.audiencekit.com"),
-    "release" to Environment("release", "https://api.audiencekit.com", "b0f8b66a-e636-495d-9475-0f5317ea08e0", "1168782378316790"),
+        facebookClientToken = "5d40b408dee01b2985755736fd046296", audienceHost = "hotmess.admin.next.audiencekit.com"),
+    // Debug for the sign-in test: Hot Mess's development app against the local API. The app is in development
+    // mode, so the test signs its account (which needs a role on the app) in to Chrome first, and sign-in shares
+    // Chrome's session rather than using a private tab.
+    "signInTest" to Environment("signInTest", "http://10.0.2.2:3000", "", "2967605370250663"),
+    "release" to Environment("release", "https://api.audiencekit.com", "b0f8b66a-e636-495d-9475-0f5317ea08e0", "1168782378316790",
+        facebookClientToken = "ee4e193e42709c8aaf8f3aa6b383feab"),
 )
 
 android {
@@ -126,7 +133,11 @@ android {
             // The Play listing's package.
             applicationIdSuffix = ".app"
             signingConfigs.findByName("upload")?.let { signingConfig = it }
-            isMinifyEnabled = false
+            // R8 shrinks, optimizes and obfuscates the code (Google Play flags apps under 25% obfuscation) and drops
+            // unused resources. The bundle carries R8's mapping file, which Play uses to deobfuscate crash reports;
+            // app/build/outputs/mapping/release/mapping.txt retraces an error report's stack trace by hand.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         create("staging") {
@@ -140,22 +151,29 @@ android {
             initWith(getByName("staging"))
             applicationIdSuffix = ".signintest"
             versionNameSuffix = "-signintest"
+            // The UI tests' build: instrumentation tests run against unminified code.
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 
-    // UI tests sign in against the real API as Facebook test users, which only work on the platform
-    // app, so they run on Sign-in Test: Staging on that app.
+    // UI tests sign in against the real API, so they run on Sign-in Test: Staging in a private Custom Tab.
     testBuildType = "signInTest"
     // It looks like Staging.
     sourceSets.getByName("signInTest").res.srcDir("src/staging/res")
 
     buildTypes.configureEach {
         val environment = environments.getValue(name)
-        buildConfigField("String", "API_BASE_URL", "\"${environment.apiBaseUrl}\"")
+        // scripts/ui-tests.py runs the sign-in test against the API it starts: `-Photmess.testApiUrl=…`.
+        val apiBaseUrl = providers.gradleProperty("hotmess.testApiUrl").orNull?.takeIf { name == "signInTest" }
+            ?: environment.apiBaseUrl
+        buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
         buildConfigField("String", "AUDIENCE_HOST", "\"${environment.audienceHost}\"")
         buildConfigField("String", "AUDIENCE_ID", "\"${environment.audienceId}\"")
         buildConfigField("String", "FACEBOOK_APP_ID", "\"${environment.facebookAppId}\"")
+        buildConfigField("String", "FACEBOOK_CLIENT_TOKEN", "\"${environment.facebookClientToken}\"")
         buildConfigField("String", "FACEBOOK_LOGIN_CONFIG_ID", "\"${environment.facebookLoginConfigId}\"")
+        buildConfigField("String", "GOOGLE_SERVER_CLIENT_ID", "\"${environment.googleServerClientId.ifEmpty { secret("google.serverClientId") }}\"")
         buildConfigField("boolean", "PRIVATE_SIGN_IN", environment.privateSignIn.toString())
         buildConfigField("String", "AUDIENCEKIT_ENVIRONMENT", "\"${environment.audienceKitEnvironment}\"")
         resValue(
@@ -169,7 +187,7 @@ android {
             },
         )
         manifestPlaceholders["facebookAppId"] = environment.facebookAppId
-        manifestPlaceholders["usesCleartextTraffic"] = (environment.name == "debug").toString()
+        manifestPlaceholders["usesCleartextTraffic"] = apiBaseUrl.startsWith("http:").toString()
     }
 
     buildFeatures {
@@ -209,7 +227,14 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
     implementation(libs.androidx.browser)
-    // Facebook Login brings an old Fragment; the Activity Result API needs 1.3 or later.
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services.auth)
+    implementation(libs.googleid)
+    // Google's AuthorizationClient, for the scope that reads a Google account's other emails.
+    implementation(libs.play.services.auth)
+    // Sign-in through the Facebook app. Facebook Login brings an old Fragment; the Activity Result API needs 1.3
+    // or later.
+    implementation(libs.facebook.login)
     implementation(libs.androidx.fragment)
     implementation(libs.maplibre)
     implementation(libs.firebase.messaging)

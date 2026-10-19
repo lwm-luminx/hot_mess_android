@@ -5,13 +5,9 @@ import com.audiencekit.Admission
 import com.audiencekit.AudienceKitClient
 import com.audiencekit.AudienceKitException
 import com.audiencekit.Coordinates
-import com.audiencekit.CoverCharge
 import com.audiencekit.CoverPurchase
-import com.audiencekit.DeviceDescription
-import com.audiencekit.DoorNight
-import com.audiencekit.DoorVenue
+import com.audiencekit.GraphQLError
 import com.audiencekit.RSVPState
-import com.audiencekit.ScanResult
 import com.audiencekit.graphQLVariables
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -21,19 +17,19 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.serialization.KSerializer
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonObject
 import kotlin.coroutines.ContinuationInterceptor
 import kotlin.coroutines.EmptyCoroutineContext
 
 /**
  * The typed surface of the Hot Mess API, all of it on the AudienceKit SDK.
  *
- * Everything goes through the audience's GraphQL endpoint except the version manifest, which is
- * read before sign-in and isn't part of any audience. Failures surface as [ApiError].
+ * Everything goes through the audience's GraphQL endpoint except `GET /v1/status`, which is read before
+ * sign-in and isn't part of any audience. Failures surface as [ApiError].
  */
 class HotMessApi(val client: AudienceKitClient) {
     /** Friends seen in Now's reports, so chat can show them by their full names. */
@@ -65,7 +61,7 @@ class HotMessApi(val client: AudienceKitClient) {
                     Documents.REPORT_LOCATION,
                     ReportLocationResponse.serializer(),
                     mapOf("position" to near.toGraphQLValue()),
-                ).reportLocation.now
+                ).reportLocation.now(json)
             }.also { request ->
                 reports[near] = request
                 request.invokeOnCompletion { synchronized(reports) { if (reports[near] === request) reports.remove(near) } }
@@ -118,13 +114,15 @@ class HotMessApi(val client: AudienceKitClient) {
     suspend fun venueOverview(id: String): VenueOverview {
         val venue = query(Documents.VENUE, VenueResponse.serializer(), graphQLVariables("id" to id)).venue
             ?: throw ApiError.NotFound
-        friends.record(venue.friends)
+        val venueFriends = venue.friends?.list.orEmpty()
+        friends.record(venueFriends)
         return VenueOverview(
             venue = venue.venue(),
             events = venue.events,
-            chatOpen = venue.chatOpen,
-            friends = venue.friends,
+            chatOpen = venue.chat?.open == true,
+            friends = venueFriends,
             friendPings = venue.friendPings,
+            onNow = venue.people?.onNow.orEmpty(),
         )
     }
 
@@ -185,14 +183,20 @@ class HotMessApi(val client: AudienceKitClient) {
     /** The user's passes, newest first. */
     suspend fun admissions(): List<Admission> = call { client.admissions() }
 
-    /** Venues whose door the user can work; empty for almost everyone. */
-    suspend fun doorVenues(): List<DoorVenue> = call { client.doorVenues() }
+    // endregion
 
-    /** Tonight's counts at a venue's door. */
-    suspend fun door(venueId: String): DoorNight? = call { client.venueDoor(venueId) }?.door
+    // region Chat
 
-    /** Checks a scanned pass at a venue's door. */
-    suspend fun scan(venueId: String, code: String): ScanResult = mutate { client.scanAdmission(venueId, code) }
+    /**
+     * Says [body] in [room] as the signed-in user (`sendMyChatMessage`), returning the line as the room
+     * sees it, or null if the response didn't carry one. The room also delivers it to everyone following,
+     * the sender included. Errors written for people ("You're not at the venue") come through as they are.
+     */
+    suspend fun sendChatMessage(room: ChatRoom, body: String): VenueMessage? {
+        val data = mutate(ChatProtocol.SEND_MESSAGE, JsonObject.serializer(), mapOf("input" to ChatProtocol.sendInput(room, body)))
+        val payload = data["sendMyChatMessage"] as? JsonObject
+        return ChatProtocol.message(payload?.get("message"))
+    }
 
     // endregion
 
@@ -252,11 +256,13 @@ class HotMessApi(val client: AudienceKitClient) {
 
     // region Session
 
-    /** The oldest Android build the API still serves, or null when it doesn't say. */
-    suspend fun minimumVersion(device: DeviceDescription): VersionInfo? {
-        val body = json.encodeToString(ManifestRequest.serializer(), ManifestRequest(device)).toByteArray()
-        val bytes = call { client.data(APIRequest(method = "POST", path = "/", body = body, authenticated = false)) }
-        return parseManifest(bytes.toString(Charsets.UTF_8))
+    /**
+     * What `GET /v1/status` says about the Android app: the oldest version still served, the latest, and the
+     * store link; null when it says nothing about Android. Read-only and open, so it works before sign-in.
+     */
+    suspend fun clientVersions(): VersionInfo? {
+        val bytes = call("GET /v1/status") { client.data(APIRequest(path = "/v1/status", authenticated = false)) }
+        return parseStatus(bytes.toString(Charsets.UTF_8))
     }
 
     /**
@@ -270,6 +276,22 @@ class HotMessApi(val client: AudienceKitClient) {
             graphQLVariables("notificationToken" to token, "appId" to appId, "sandbox" to false),
         )
     }
+
+    /**
+     * The ways the audience lets people sign in (`GET /v1/token/methods`), which AudienceKit's admin chooses, or null
+     * when the API can't say (an API from before the setting answers 404, or there's no connection). Never throws: the
+     * login screen then shows what it always has. [host] names the audience.
+     */
+    suspend fun signInMethods(host: String): SignInMethods? =
+        try {
+            val path = "/v1/token/methods?host=" + java.net.URLEncoder.encode(host, Charsets.UTF_8)
+            val bytes = client.data(APIRequest(method = "GET", path = path, authenticated = false))
+            json.decodeFromString(SignInMethods.serializer(), bytes.toString(Charsets.UTF_8))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
 
     /**
      * Sends an error report. Never throws: reporting must not cause an error of its own. Signed out it goes without
@@ -294,12 +316,12 @@ class HotMessApi(val client: AudienceKitClient) {
         return json.decodeFromString(BugReportResponse.serializer(), bytes.toString(Charsets.UTF_8))
     }
 
-    /** The signed-in user, with the photo the API has for them (the old `/users/<id>/picture` is gone). */
+    /** The signed-in user, with the picture the API has for them (`avatarUrl`, null when they have none). */
     suspend fun me(): User? {
-        val me = query(Documents.ME, MeResponse.serializer()).me ?: return null
+        val me = query(Documents.ME, MeResponse.serializer()).me?.self ?: return null
         val id = RecordId.normalize(me.id) ?: return null
         val name = me.name ?: listOfNotNull(me.firstName, me.lastName).joinToString(" ")
-        return User(id = id, name = name, avatarUrl = me.photo?.cdnUrl)
+        return User(id = id, name = name, avatarUrl = me.avatarUrl, signedInWithGoogle = me.signedInWithGoogle)
     }
 
     /** Whether pushes about chat rooms the user left lately are on, or null when there's no signed-in user. */
@@ -312,6 +334,44 @@ class HotMessApi(val client: AudienceKitClient) {
 
     // endregion
 
+    // region Safety
+
+    /** When the user agreed to the terms (null if they haven't) and who they block, or null signed out. */
+    suspend fun safety(): SafetyState? {
+        val me = query(Documents.SAFETY, SafetyResponse.serializer()).me ?: return null
+        return SafetyState(termsAccepted = me.termsAcceptedAt != null, blockedUsers = me.blockedUsers)
+    }
+
+    /** Records that the user agreed to the terms of use, which chat and Pings need first. */
+    suspend fun acceptTerms() {
+        mutate(Documents.ACCEPT_TERMS, JsonObject.serializer())
+    }
+
+    /** Blocks someone by user id; returns everyone the user now blocks. The audience's admins are told. */
+    suspend fun block(userId: String): List<BlockedUser> =
+        mutate(Documents.BLOCK_USER, BlockUserResponse.serializer(), graphQLVariables("userId" to userId)).blockUser.blockedUsers
+
+    /** Unblocks someone; returns everyone the user still blocks. */
+    suspend fun unblock(userId: String): List<BlockedUser> =
+        mutate(Documents.UNBLOCK_USER, UnblockUserResponse.serializer(), graphQLVariables("userId" to userId)).unblockUser.blockedUsers
+
+    /**
+     * Reports something to the audience's admins (`reportContent`), who see it at once. With [block], the person
+     * behind it is blocked too when there is one; the result says whether they were.
+     */
+    suspend fun report(target: ReportTarget, targetId: String, reason: String?, block: Boolean): ReportResult =
+        mutate(
+            Documents.REPORT_CONTENT,
+            ReportContentResponse.serializer(),
+            graphQLVariables("targetType" to target.name, "targetId" to targetId, "reason" to reason, "block" to block),
+        ).reportContent
+
+    /** Deletes the user's account and everything recorded about them, and ends every session. */
+    suspend fun deleteAccount(): Boolean =
+        mutate(Documents.DELETE_ACCOUNT, DeleteAccountResponse.serializer()).deleteAccount.deleted
+
+    // endregion
+
     private suspend fun <T> query(
         document: String,
         serializer: KSerializer<T>,
@@ -319,8 +379,8 @@ class HotMessApi(val client: AudienceKitClient) {
     ): T = call(operationName(document)) { client.graphQL(document, serializer, variables, json = json) }
 
     /**
-     * [call] for the cover mutations, whose errors are written for people ("The Wildrose doesn't take
-     * cover in the app yet"), so they're shown as they are.
+     * [call] for the cover mutations. An error the API wrote for people ("The Wildrose doesn't take cover in
+     * the app yet"; one with an `extensions.code`) is shown as it is; see [ApiError.fromGraphQL].
      */
     private suspend fun <T> mutate(block: suspend () -> T): T =
         try {
@@ -328,12 +388,12 @@ class HotMessApi(val client: AudienceKitClient) {
         } catch (e: CancellationException) {
             throw e
         } catch (e: AudienceKitException.GraphQL) {
-            throw ApiError.Other(e.errors.firstOrNull()?.message ?: "Something went wrong.")
+            throw rejection(e.errors) ?: failed(ApiError.from(e), "cover")
         } catch (e: AudienceKitException) {
             throw failed(ApiError.from(e), "cover")
         }
 
-    /** A mutation whose GraphQL errors are written for people ("That ping has ended"), so they're shown as they are. */
+    /** A mutation whose refusals ("That ping has ended", an INVALID or CONFLICT error) are shown as written. */
     private suspend fun <T> mutate(
         document: String,
         serializer: KSerializer<T>,
@@ -344,10 +404,13 @@ class HotMessApi(val client: AudienceKitClient) {
         } catch (e: CancellationException) {
             throw e
         } catch (e: AudienceKitException.GraphQL) {
-            throw userFacingMessage(e.errors.map { it.message })?.let { ApiError.Other(it) } ?: ApiError.from(e)
+            throw rejection(e.errors) ?: failed(ApiError.from(e), operationName(document))
         } catch (e: AudienceKitException) {
             throw failed(ApiError.from(e), operationName(document))
         }
+
+    /** The refusal in [errors] to show as written, or null when they aren't one (and are reported as a failure). */
+    private fun rejection(errors: List<GraphQLError>): ApiError.Rejected? = ApiError.fromGraphQL(errors) as? ApiError.Rejected
 
     private suspend fun <T> call(operation: String = "api", block: suspend () -> T): T =
         try {
@@ -372,22 +435,21 @@ class HotMessApi(val client: AudienceKitClient) {
         }
 
         /**
-         * The first error message when it's one written for people, or null for schema and validation
-         * errors ("Field 'x' doesn't exist on type 'Mutation'"), which get the generic message instead.
+         * The first error's message when the API wrote it for people: a refusal with an `extensions.code` of
+         * INVALID, CONFLICT, FORBIDDEN or RATE_LIMITED ("That ping has ended"). Null for anything else: an error
+         * graphql-ruby raised itself has no code ("Field 'x' doesn't exist on type 'Mutation'"), and an INTERNAL
+         * or UNAVAILABLE one isn't about the request. The code decides, never the message's wording.
          */
-        fun userFacingMessage(messages: List<String>): String? {
-            val message = messages.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-            val technical = listOf("Field '", "doesn't exist", "Variable ", "Argument '", "Expected type", "Parse error", "undefined method")
-            return message.takeIf { text -> technical.none { text.contains(it) } }
+        fun userFacingMessage(errors: List<GraphQLError>): String? {
+            val error = errors.firstOrNull() ?: return null
+            val code = error.code ?: return null
+            if (code !in ApiError.REJECTION_CODES) return null
+            return error.message.trim().takeIf { it.isNotEmpty() }
         }
 
-        /** The manifest's `client.mobile.android`; the API only lists `apple` so far. */
-        fun parseManifest(text: String): VersionInfo? {
-            val root = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return null
-            val android = ((root["client"] as? JsonObject)?.get("mobile") as? JsonObject)?.get("android") as? JsonObject
-                ?: return null
-            return runCatching { json.decodeFromJsonElement(VersionInfo.serializer(), android) }.getOrNull()
-        }
+        /** `clients.android` of `GET /v1/status`; null when the status says nothing about Android. */
+        fun parseStatus(text: String): VersionInfo? =
+            runCatching { json.decodeFromString(StatusResponse.serializer(), text) }.getOrNull()?.clients?.android
     }
 }
 
@@ -403,6 +465,8 @@ data class VenueOverview(
     val friends: List<Friend> = emptyList(),
     /** Friends' active Pings that pick this venue or one of its events. */
     val friendPings: List<Ping> = emptyList(),
+    /** Who's on there right now. */
+    val onNow: List<Appearance> = emptyList(),
 )
 
 /** Visible venues, those in [localeId] first, then by the audience's order and name. */
@@ -416,26 +480,109 @@ fun Venue.isIn(localeId: String?): Boolean {
     return locale?.id?.let(RecordId::normalize) == local
 }
 
+/** `GET /v1/status`: `clients.<platform>` is each app's versions; `api` (the contract version and SDK minimums) isn't read. */
 @Serializable
-private data class ManifestRequest(val device: DeviceDescription)
-
-@Serializable
-private data class ReportLocationResponse(val reportLocation: Payload) {
-    @Serializable data class Payload(val now: Now)
+private data class StatusResponse(val clients: Clients? = null) {
+    @Serializable data class Clients(val android: VersionInfo? = null)
 }
 
 @Serializable
-private data class MeResponse(val me: Me? = null) {
+private data class ReportLocationResponse(val reportLocation: LocationReport)
+
+/**
+ * What reportLocation says about where the user is: the [event] they're at, the [venue] they're in, else
+ * their [locale] and its [nearbyVenues]. Friends, events and Pings come from those objects' mixins; [now]
+ * shapes it all for the Now screen, with the title and hero taken from the event, venue or locale.
+ */
+@Serializable
+private data class LocationReport(
+    val event: Event? = null,
+    /** Read twice: as the [Venue] and for its [VenueMixins]. */
+    val venue: JsonObject? = null,
+    val nearbyVenues: List<Venue>? = null,
+    val locale: LocaleNode? = null,
+    val audience: AudienceNode? = null,
+) {
+    @Serializable
+    data class VenueMixins(
+        val events: UpcomingEvents? = null,
+        val friends: FriendsMixin? = null,
+        val people: VenuePeopleMixin? = null,
+    )
+
+    @Serializable
+    data class LocaleNode(
+        val id: String,
+        val name: String? = null,
+        /** Its location's photo; null when there's none. */
+        val bannerUrl: String? = null,
+        val chat: ChatMixin? = null,
+        val events: UpcomingEvents? = null,
+        val friends: FriendsMixin? = null,
+    )
+
+    /** The audience the report is in, read for the viewer's pings: `audience { me { ping } }`. */
+    @Serializable
+    data class AudienceNode(val me: MeNode? = null)
+
+    @Serializable
+    data class MeNode(val ping: PingFeed? = null)
+
+    @Serializable
+    data class PingFeed(val myPing: Ping? = null, val friendPings: List<Ping> = emptyList())
+
+    fun now(json: Json): Now {
+        val node = venue
+        val nowLocale = locale?.let { NowLocale(it.id, it.name, it.chat?.open == true, it.chat?.lines.orEmpty()) }
+        val ping = audience?.me?.ping
+        if (node != null) {
+            val place = json.decodeFromJsonElement(Venue.serializer(), node)
+            val mixins = json.decodeFromJsonElement(VenueMixins.serializer(), node)
+            return Now(
+                title = event?.name ?: place.name,
+                imageUrl = event?.bannerUrl ?: place.bannerUrl ?: place.photoUrl,
+                event = event,
+                venue = place,
+                onNow = mixins.people?.onNow.orEmpty(),
+                venues = nearbyVenues,
+                // The event the user is at leads the screen, so it isn't listed again.
+                events = mixins.events?.events.orEmpty().filterNot { it.id == event?.id },
+                friends = mixins.friends?.list.orEmpty(),
+                locale = nowLocale,
+                myPing = ping?.myPing,
+                friendPings = ping?.friendPings.orEmpty(),
+            )
+        }
+        return Now(
+            title = event?.name ?: locale?.name?.let { "Happening Now in $it" } ?: "Happening Now",
+            imageUrl = event?.bannerUrl ?: locale?.bannerUrl,
+            event = event,
+            venues = nearbyVenues,
+            events = locale?.events?.events.orEmpty().filterNot { it.id == event?.id }.take(Documents.LOCALE_EVENT_LIMIT),
+            friends = locale?.friends?.list.orEmpty(),
+            friendVenues = locale?.friends?.venues.orEmpty(),
+            locale = nowLocale,
+            myPing = ping?.myPing,
+            friendPings = ping?.friendPings.orEmpty(),
+        )
+    }
+}
+
+/** `me { self }`: the viewer's state, and their own profile in it. */
+@Serializable
+private data class MeResponse(val me: UserState? = null) {
+    @Serializable
+    data class UserState(val self: Me? = null)
+
     @Serializable
     data class Me(
         val id: String,
         val name: String? = null,
         val firstName: String? = null,
         val lastName: String? = null,
-        val photo: Photo? = null,
+        val avatarUrl: String? = null,
+        val signedInWithGoogle: Boolean? = null,
     )
-
-    @Serializable data class Photo(val cdnUrl: String? = null)
 }
 
 @Serializable
@@ -452,74 +599,111 @@ private data class SetRecentChatPushResponse(val setRecentChatPush: Payload) {
 private data class ClosestLocaleResponse(val closestLocale: LocaleSummary? = null)
 
 @Serializable
-private data class VenuesResponse(val venues: List<Venue> = emptyList())
+private data class VenuesResponse(@SerialName("venues") val venuesMixin: VenuesMixin? = null) {
+    @Serializable data class VenuesMixin(val list: Nodes<Venue> = Nodes())
+
+    /** `venues { list { nodes } }` on the root, the audience; a missing venues mixin reads as none. */
+    val venues: List<Venue> get() = venuesMixin?.list?.nodes.orEmpty()
+}
+
+/** A connection's `nodes`. */
+@Serializable
+private data class Nodes<T>(val nodes: List<T> = emptyList())
 
 /** A venue plus its events, which GraphQL nests in one object. */
 @Serializable
 private data class VenueNode(
     val id: String,
     val name: String = "",
-    val address: String? = null,
     val description: String? = null,
-    val phone: String? = null,
-    val facebookId: String? = null,
     val distance: Double? = null,
-    @Serializable(with = BlankAsNullSerializer::class) val photoUrl: String? = null,
-    @Serializable(with = BlankAsNullSerializer::class) val heroUrl: String? = null,
+    val photoUrl: String? = null,
+    val bannerUrl: String? = null,
     val point: String? = null,
-    val isLiked: Boolean = false,
-    val chatOpen: Boolean = false,
-    val canWorkDoor: Boolean = false,
-    val coverCharge: CoverCharge? = null,
-    val viewerAdmission: Admission? = null,
-    val recentMessages: List<ChatLine> = emptyList(),
-    val events: List<Event> = emptyList(),
-    val socialLinks: List<SocialLink> = emptyList(),
-    val friends: List<Friend> = emptyList(),
-    val friendPings: List<Ping> = emptyList(),
+    val profile: ListingProfile? = null,
+    val chat: ChatMixin? = null,
+    val tickets: VenueTicketsMixin? = null,
+    @SerialName("events") val eventsMixin: UpcomingEvents? = null,
+    val friends: FriendsMixin? = null,
+    val ping: PingFeedMixin? = null,
+    val people: VenuePeopleMixin? = null,
 ) {
+    val friendPings: List<Ping> get() = ping?.friendPings.orEmpty()
+
     fun venue() = Venue(
         id = id,
         name = name,
-        address = address,
         description = description,
-        phone = phone,
-        facebookId = facebookId,
         distance = distance,
         photoUrl = photoUrl,
-        heroUrl = heroUrl,
+        bannerUrl = bannerUrl,
         point = point,
-        isLiked = isLiked,
-        socialLinks = socialLinks,
-        recentMessages = recentMessages,
-        coverCharge = coverCharge,
-        viewerAdmission = viewerAdmission,
-        canWorkDoor = canWorkDoor,
+        profile = profile,
+        chat = chat,
+        tickets = tickets,
     )
+
+    val events: List<Event> get() = eventsMixin?.events.orEmpty()
 }
 
 @Serializable
-private data class VenueResponse(val venue: VenueNode? = null)
+private data class VenueResponse(val venues: Venues? = null) {
+    @Serializable data class Venues(val venue: VenueNode? = null)
+
+    /** `venues { venue(id:) }`. */
+    val venue: VenueNode? get() = venues?.venue
+}
 
 @Serializable
-private data class PeopleResponse(val people: List<Person> = emptyList())
+private data class PeopleResponse(@SerialName("people") val peopleMixin: PeopleMixin? = null) {
+    @Serializable data class PeopleMixin(val list: Nodes<Person> = Nodes())
+
+    /** `people { list { nodes } }` on the root, the audience; a missing people mixin reads as none. */
+    val people: List<Person> get() = peopleMixin?.list?.nodes.orEmpty()
+}
 
 @Serializable
-private data class PersonResponse(val person: PersonDetail? = null)
+private data class PersonResponse(val people: People? = null) {
+    @Serializable data class People(val person: PersonDetail? = null)
+
+    /** `people { person(id:) }`. */
+    val person: PersonDetail? get() = people?.person
+}
 
 @Serializable
 private data class LocaleEventsResponse(val locale: Locale? = null) {
-    @Serializable data class Locale(val events: List<Event> = emptyList())
+    @Serializable data class Locale(@SerialName("events") val eventsMixin: UpcomingEvents? = null) {
+        val events: List<Event> get() = eventsMixin?.events.orEmpty()
+    }
 }
 
 @Serializable
-private data class EventResponse(val event: Event? = null)
+private data class EventResponse(val events: Events? = null) {
+    @Serializable data class Events(val event: Event? = null)
+
+    /** `events { event(id:) }`. */
+    val event: Event? get() = events?.event
+}
 
 @Serializable
-private data class MyPingResponse(val myPing: Ping? = null)
+private data class MyPingResponse(val me: ViewerPings? = null) {
+    /** `me { ping { myPing } }`: the viewer's own Ping is theirs, under `me`. */
+    val myPing: Ping? get() = me?.ping?.myPing
+}
 
 @Serializable
-private data class FriendPingsResponse(val friendPings: List<Ping> = emptyList())
+private data class FriendPingsResponse(val me: ViewerPings? = null) {
+    /** `me { ping { friendPings } }`; signed out or a missing ping mixin reads as none. */
+    val friendPings: List<Ping> get() = me?.ping?.friendPings.orEmpty()
+}
+
+/** `me { ping }`: the viewer's ping mixin. */
+@Serializable
+private data class ViewerPings(val ping: AudiencePings? = null)
+
+/** The viewer's ping mixin: the user's own Ping and friends' active ones. */
+@Serializable
+private data class AudiencePings(val myPing: Ping? = null, val friendPings: List<Ping> = emptyList())
 
 @Serializable
 private data class PingPayload(val ping: Ping)
@@ -532,6 +716,28 @@ private data class JoinPingResponse(val joinPing: PingPayload)
 
 @Serializable
 private data class LeavePingResponse(val leavePing: PingPayload)
+
+@Serializable
+private data class SafetyResponse(val me: Me? = null) {
+    @Serializable
+    data class Me(val termsAcceptedAt: String? = null, val blockedUsers: List<BlockedUser> = emptyList())
+}
+
+@Serializable
+private data class BlockUserResponse(val blockUser: Payload) {
+    @Serializable data class Payload(val blockedUsers: List<BlockedUser> = emptyList())
+}
+
+@Serializable
+private data class UnblockUserResponse(val unblockUser: BlockUserResponse.Payload)
+
+@Serializable
+private data class ReportContentResponse(val reportContent: ReportResult)
+
+@Serializable
+private data class DeleteAccountResponse(val deleteAccount: Payload) {
+    @Serializable data class Payload(val deleted: Boolean = false)
+}
 
 @Serializable
 private data class EndPingResponse(val endPing: Payload) {

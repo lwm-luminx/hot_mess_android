@@ -3,6 +3,7 @@ package social.hotmess.core
 import com.audiencekit.AudienceKitClient
 import com.audiencekit.AudienceKitConfiguration
 import com.audiencekit.Coordinates
+import com.audiencekit.GraphQLError
 import com.audiencekit.HttpTransport
 import com.audiencekit.InMemoryTokenStore
 import kotlinx.coroutines.async
@@ -21,6 +22,17 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ModelDecodingTest {
+    @Test
+    fun preservesPublicGroupLinksForPeopleAndVenues() {
+        val link = "https://www.facebook.com/groups/123456789"
+        val venue = HotMessApi.json.decodeFromString(Venue.serializer(),
+            """{"id":"v-1","name":"Community","profile":{"facebook":{"facebookId":"123456789","link":"$link"}}}""")
+        val person = HotMessApi.json.decodeFromString(Person.serializer(),
+            """{"id":"p-1","name":"Community","profile":{"facebook":{"facebookId":"123456789","link":"$link"}}}""")
+        assertEquals(link, venue.facebookUrl)
+        assertEquals(link, person.facebookUrl)
+    }
+
     private val json = HotMessApi.json
 
     @Test
@@ -32,7 +44,7 @@ class ModelDecodingTest {
         assertEquals(Rsvp.MAYBE, event.rsvp)
         assertEquals("The Wildrose", event.venue?.name)
         assertEquals(47.6145, event.venue?.coordinate?.latitude)
-        assertNull(event.coverPhotoUrl, "an empty URL is no URL")
+        assertNull(event.bannerUrl, "no banner is null")
         assertEquals("https://facebook.com/events/1234", event.facebookUrl)
     }
 
@@ -54,6 +66,8 @@ class ModelDecodingTest {
 
         assertEquals("DJ Glitter", person.name)
         assertEquals(SocialLink.Network.INSTAGRAM, person.socialLinks.single().network)
+        assertEquals("https://facebook.com/99", person.person.facebookUrl, "the Page comes through the profile mixin")
+        assertFalse(person.isLiked)
         assertEquals("Late Night", person.tracks.single().title)
         assertEquals(1, person.events.size)
     }
@@ -63,8 +77,8 @@ class ModelDecodingTest {
         val troupe = json.decodeFromString(PersonDetail.serializer(), Fixtures.TROUPE)
 
         assertEquals(listOf("Anita Cocktail", "Ella Vator"), troupe.members.map { it.name })
-        assertEquals("https://img/anita", troupe.members.first().pictureUrl)
-        assertNull(troupe.members.last().pictureUrl, "an empty URL is no URL")
+        assertEquals("https://img/anita", troupe.members.first().avatarUrl)
+        assertNull(troupe.members.last().avatarUrl, "no picture is null")
         assertEquals("p-2", troupe.groups.single().id)
         assertEquals("House of Glitter", troupe.groups.single().name)
     }
@@ -93,10 +107,14 @@ class ModelDecodingTest {
     fun splitsTipLinksFromProfiles() {
         val person = PersonDetail(
             id = "p-1",
-            socialLinks = listOf(
-                SocialLink("s-1", "glitter", "instagram", "https://instagram.com/glitter"),
-                SocialLink("s-2", "GlitterTips", "cashapp", "https://cash.app/\$GlitterTips"),
-                SocialLink("s-3", "glitter-tips", "venmo", "https://venmo.com/u/glitter-tips"),
+            profile = ListingProfile(
+                socialLinks = Connection(
+                    listOf(
+                        SocialLink("s-1", "glitter", "instagram", "https://instagram.com/glitter"),
+                        SocialLink("s-2", "GlitterTips", "cashapp", "https://cash.app/\$GlitterTips"),
+                        SocialLink("s-3", "glitter-tips", "venmo", "https://venmo.com/u/glitter-tips"),
+                    ),
+                ),
             ),
         )
 
@@ -105,13 +123,11 @@ class ModelDecodingTest {
     }
 
     @Test
-    fun recordIdsNormalizeGlobalIds() {
+    fun recordIdsNormalizeToLowercaseUuids() {
         val uuid = "B0F8B66A-E636-495D-9475-0F5317EA08E0"
-        val global = java.util.Base64.getUrlEncoder().withoutPadding()
-            .encodeToString("gid://audience-kit/Venue/${uuid.lowercase()}".toByteArray())
 
         assertEquals(uuid.lowercase(), RecordId.normalize(uuid))
-        assertEquals(uuid.lowercase(), RecordId.normalize(global))
+        assertEquals(uuid.lowercase(), RecordId.normalize(uuid.lowercase()))
         assertNull(RecordId.normalize("not-an-id"))
     }
 
@@ -124,7 +140,7 @@ class ModelDecodingTest {
 
 class ListingTest {
     private fun event(id: String, start: String, cover: String? = null) =
-        Event(id = id, name = id, startAt = Instant.parse(start), coverPhotoUrl = cover)
+        Event(id = id, name = id, startAt = Instant.parse(start), bannerUrl = cover)
 
     @Test
     fun featuresUpToTwoEventsWithCovers() {
@@ -139,7 +155,8 @@ class ListingTest {
 
         assertEquals(listOf("featured", "upcoming"), listing.sections.map { it.id })
         assertEquals(listOf("a", "c"), listing.sections[0].events.map { it.id })
-        assertEquals(listOf("a", "b", "c", "d"), listing.sections[1].events.map { it.id })
+        assertEquals(listOf("b", "d"), listing.sections[1].events.map { it.id })
+        assertEquals(listOf("a", "b", "c", "d"), listing.allEvents.map { it.id })
     }
 
     @Test
@@ -173,6 +190,7 @@ class DeepLinkTest {
         assertEquals(AppRoute.VenueDetail(id), DeepLink.route("hotmess://venues/$id"))
         assertEquals(AppRoute.EventDetail(id), DeepLink.route("https://hotmess.social/events/${id.uppercase()}"))
         assertEquals(AppRoute.PersonDetail(id), DeepLink.route("https://hotmess.social/people/$id"))
+        assertEquals(AppRoute.NowPing(id), DeepLink.route("https://hotmess.social/pings/$id"), "a push's url")
         assertEquals(AppTab.EVENTS, AppRoute.EventDetail(id).tab)
     }
 
@@ -190,16 +208,14 @@ class DeepLinkTest {
     }
 
     @Test
-    fun readsRecentChatPushes() {
+    fun aRecentChatPushOpensItsRoomByUrl() {
         val url = "https://hotmess.social/locales/$id/chat"
-        val push = RecentChatPush.parse(
-            mapOf("kind" to "recent_chat", "room_id" to id, "message_id" to "m-1", "url" to url, "notification_id" to "n-1"),
-        )
-        assertEquals(RecentChatPush(url, id, "m-1"), push)
-        assertEquals(AppRoute.Chat(ChatRoom.locale(id)), push?.route)
-        assertNull(RecentChatPush.parse(mapOf("kind" to "recent_chat", "url" to "")))
-        assertNull(RecentChatPush.parse(mapOf("kind" to "recent_chat", "url" to "https://hotmess.social/about")))
-        assertNull(RecentChatPush.parse(mapOf("kind" to "ping", "url" to url)))
+        val data = mapOf("kind" to "recent_chat", "room_id" to id, "message_id" to "m-1", "url" to url, "notification_id" to "n-1")
+        val push = PushNotification("n-1", title = "Small talk", body = "Jo P.: still here?", url = url, data = data)
+        assertEquals(AppRoute.Chat(ChatRoom.locale(id)), push.route)
+        // Routed on its url, never taken for a Ping.
+        assertNull(PingPush.parse(data))
+        assertNull(push.ping)
     }
 
     @Test
@@ -211,64 +227,120 @@ class DeepLinkTest {
 }
 
 class ChatProtocolTest {
+    @Test
+    fun buildsTheIdentifierWithSortedKeys() {
+        assertEquals(
+            """{"audience_id":"a0f8b66a-e636-495d-9475-0f5317ea08e0","channel":"GraphQLChannel","channelId":"c-1"}""",
+            GraphQLCable.identifier("A0F8B66A-E636-495D-9475-0F5317EA08E0", "c-1"),
+        )
+    }
+
     private val venue = "b0f8b66a-e636-495d-9475-0f5317ea08e0"
+    private val audience = "A0F8B66A-E636-495D-9475-0F5317EA08E0"
+
+    /** A subscription result carrying one ChatRoomEvent, as GraphQLChannel transmits it. */
+    private fun result(event: String, more: Boolean = true) =
+        """{"identifier":"x","message":{"result":{"data":{"venueChat":$event}},"more":$more}}"""
+
+    /** A ChatMessagePosted with [fields] as its message. */
+    private fun posted(fields: String, presence: String? = null) =
+        result("""{"__typename":"ChatMessagePosted","senderPresence":${presence?.let { "\"$it\"" } ?: "null"},"message":{$fields}}""")
+
+    private fun line(fields: String): VenueMessage =
+        assertIs<ChatProtocol.Frame.Message>(ChatProtocol.parse(posted(fields)).single()).message
 
     @Test
-    fun subscribesWithAStringIdentifier() {
-        val frame = HotMessApi.json.parseToJsonElement(ChatProtocol.subscribe(venue)).toString()
-        assertTrue(frame.contains("\"command\":\"subscribe\""))
-        assertTrue(frame.contains("venue_id\\\":\\\"$venue"), frame)
-        assertTrue(frame.contains("\"identifier\":\"{"), "the identifier is a JSON string")
+    fun subscribesToTheGraphQLChannelWithAStringIdentifier() {
+        val identifier = ChatProtocol.identifier(audience, "c-1")
+        val fields = HotMessApi.json.parseToJsonElement(identifier).jsonObject
+        assertEquals("GraphQLChannel", fields["channel"]!!.jsonPrimitive.content)
+        assertEquals(audience.lowercase(), fields["audience_id"]!!.jsonPrimitive.content)
+        assertEquals("c-1", fields["channelId"]!!.jsonPrimitive.content)
+
+        val frame = HotMessApi.json.parseToJsonElement(ChatProtocol.subscribe(identifier)).jsonObject
+        assertEquals("subscribe", frame["command"]!!.jsonPrimitive.content)
+        assertEquals(identifier, frame["identifier"]!!.jsonPrimitive.content, "the identifier is a JSON string")
+        assertTrue(ChatProtocol.newChannelId() != ChatProtocol.newChannelId())
     }
 
     @Test
-    fun subscribesToALocaleRoom() {
+    fun executesTheRoomsSubscriptionOnTheChannel() {
+        val identifier = ChatProtocol.identifier(audience, "c-1")
+        val frame = HotMessApi.json.parseToJsonElement(ChatProtocol.execute(identifier, ChatRoom.venue(venue.uppercase()))).jsonObject
+        assertEquals("message", frame["command"]!!.jsonPrimitive.content)
+        assertEquals(identifier, frame["identifier"]!!.jsonPrimitive.content)
+        val data = HotMessApi.json.parseToJsonElement(frame["data"]!!.jsonPrimitive.content).jsonObject
+        assertEquals("execute", data["action"]!!.jsonPrimitive.content)
+        val query = data["query"]!!.jsonPrimitive.content
+        assertTrue(query.startsWith("subscription"), query)
+        assertTrue(query.contains("venueChat(venueId: \$id)"), query)
+        assertTrue(query.contains("pinnedMessage {"), query)
+        assertEquals(venue, data["variables"]!!.jsonObject["id"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun followsALocaleRoom() {
         val locale = "4e5f6071-8293-4A41-8d5e-6f7a8b9c0d1e"
-        val identifier = HotMessApi.json.parseToJsonElement(ChatProtocol.identifier(ChatRoom.locale(locale))).jsonObject
-        assertEquals("LocaleChannel", identifier["channel"]!!.jsonPrimitive.content)
-        assertEquals(locale.lowercase(), identifier["locale_id"]!!.jsonPrimitive.content)
-        assertNull(identifier["venue_id"])
+        val query = ChatProtocol.document(ChatRoom.locale(locale))
+        assertTrue(query.contains("localeChat(localeId: \$id)"), query)
+        assertFalse(query.contains("venueChat"))
+        assertEquals(
+            """{"localeId":"${locale.lowercase()}","message":"hi"}""",
+            ChatProtocol.sendInput(ChatRoom.locale(locale), "hi").toString(),
+        )
     }
 
     @Test
     fun readsServerFrames() {
-        assertEquals(ChatProtocol.Frame.Connected, ChatProtocol.parse("""{"type":"welcome"}"""))
-        assertEquals(ChatProtocol.Frame.Connected, ChatProtocol.parse("""{"type":"confirm_subscription","identifier":"x"}"""))
-        assertNull(ChatProtocol.parse("""{"type":"ping","message":1700000000}"""))
-        assertNull(ChatProtocol.parse("""{"message":1700000000}"""))
+        assertEquals(emptyList(), ChatProtocol.parse("""{"type":"welcome"}"""))
+        assertEquals(listOf(ChatProtocol.Frame.Subscribed), ChatProtocol.parse("""{"type":"confirm_subscription","identifier":"x"}"""))
+        assertEquals(listOf(ChatProtocol.Frame.Disconnected), ChatProtocol.parse("""{"type":"disconnect"}"""))
+        assertEquals(emptyList(), ChatProtocol.parse("""{"type":"ping","message":1700000000}"""))
+        assertEquals(emptyList(), ChatProtocol.parse("""{"message":1700000000}"""))
+        assertEquals(emptyList(), ChatProtocol.parse("not json"))
+        assertEquals(emptyList(), ChatProtocol.parse(result("""{"__typename":"ChatSomethingNew"}""")), "an unknown event is skipped")
 
-        val line = ChatProtocol.parse("""{"identifier":"x","message":{"message":"hi","user_id":"U-1","avatar_url":null}}""")
-        val message = assertIs<ChatProtocol.Frame.Message>(line).message
+        val message = line(""""message":"hi","userId":"U-1","avatarUrl":null""")
         assertEquals("hi", message.body)
         assertTrue(message.isOutgoing("u-1"))
     }
 
     @Test
     fun readsBeingTurnedAwayAndLeaving() {
-        assertEquals(ChatProtocol.Frame.Rejected, ChatProtocol.parse("""{"type":"reject_subscription","identifier":"x"}"""))
-        assertEquals(ChatProtocol.Frame.Left, ChatProtocol.parse("""{"identifier":"x","message":{"type":"left"}}"""))
+        assertEquals(listOf(ChatProtocol.Frame.Rejected), ChatProtocol.parse("""{"type":"reject_subscription","identifier":"x"}"""))
+        // Refused: errors and no data.
+        assertEquals(
+            listOf(ChatProtocol.Frame.Rejected),
+            ChatProtocol.parse("""{"identifier":"x","message":{"result":{"data":null,"errors":[{"message":"You're not at the venue"}]},"more":false}}"""),
+        )
+        assertEquals(listOf(ChatProtocol.Frame.Left), ChatProtocol.parse(result("""{"__typename":"ChatLeft","reason":"AWAY"}""")))
+        assertEquals(
+            listOf(ChatProtocol.Frame.Left, ChatProtocol.Frame.Ended),
+            ChatProtocol.parse(result("""{"__typename":"ChatLeft","reason":"BANNED"}""", more = false)),
+        )
+        // The server ending the operation with nothing more to say.
+        assertEquals(listOf(ChatProtocol.Frame.Ended), ChatProtocol.parse("""{"identifier":"x","message":{"more":false}}"""))
     }
 
     @Test
     fun readsWhetherAnAdminIsOutOfRange() {
         assertEquals(
-            ChatProtocol.Frame.Range(outOfRange = true),
-            ChatProtocol.parse("""{"identifier":"x","message":{"type":"range","out_of_range":true}}"""),
+            listOf(ChatProtocol.Frame.Range(outOfRange = true)),
+            ChatProtocol.parse(result("""{"__typename":"ChatRangeChanged","outOfRange":true}""")),
         )
         assertEquals(
-            ChatProtocol.Frame.Range(outOfRange = false),
-            ChatProtocol.parse("""{"identifier":"x","message":{"type":"range","out_of_range":false}}"""),
+            listOf(ChatProtocol.Frame.Range(outOfRange = false)),
+            ChatProtocol.parse(result("""{"__typename":"ChatRangeChanged","outOfRange":false}""")),
         )
     }
 
     @Test
     fun readsTheSenderAndTimeOfALine() {
-        val line = ChatProtocol.parse(
-            """{"identifier":"x","message":{"type":"incoming","id":"m-1","message":"hi","user_id":"U-1",
-              "name":"Aurora B.","avatar_url":"https://cdn/a.jpg","sent_at":"2026-10-10T04:02:00Z","role":null,
-              "kind":"text","title":null,"body":"hi","photo_url":null,"event":null,"ends_at":null,"pinned":false}}""",
+        val message = line(
+            """"id":"m-1","message":"hi","userId":"U-1","name":"Aurora B.","avatarUrl":"https://cdn/a.jpg",
+              "sentAt":"2026-10-10T04:02:00Z","role":null,"kind":"TEXT","title":null,"body":"hi","photoUrl":null,
+              "event":null,"endsAt":null,"pinned":false,"postedAsVenue":false,"postedAsPerson":false,"person":null""",
         )
-        val message = assertIs<ChatProtocol.Frame.Message>(line).message
         assertEquals("m-1", message.id)
         assertEquals("hi", message.body)
         assertEquals("Aurora B.", message.name)
@@ -278,55 +350,66 @@ class ChatProtocolTest {
         assertEquals(ChatKind.TEXT, message.kind)
         assertFalse(message.pinned)
         assertFalse(message.isPostedAsVenue)
+        assertFalse(message.reachable)
+        assertNull(message.personId)
     }
 
     @Test
-    fun anOlderLineStillReadsAsPlainText() {
-        val message = assertIs<ChatProtocol.Frame.Message>(
-            ChatProtocol.parse("""{"identifier":"x","message":{"message":"hi","user_id":"u-1","avatar_url":""}}"""),
-        ).message
+    fun aBareLineStillReadsAsPlainText() {
+        val message = line(""""message":"hi","userId":"u-1","avatarUrl":"" """)
         assertNull(message.name)
         assertNull(message.sentAt)
         assertNull(message.avatarUrl, "an empty URL is no URL")
         assertEquals(ChatKind.TEXT, message.kind)
         assertTrue(message.id.isNotEmpty())
+        // A line with no sender is dropped.
+        assertEquals(emptyList(), ChatProtocol.parse(posted(""""message":"no sender"""")))
     }
 
     @Test
     fun readsRolesInAnyCase() {
-        fun role(raw: String) = assertIs<ChatProtocol.Frame.Message>(
-            ChatProtocol.parse("""{"identifier":"x","message":{"message":"hi","user_id":"u-1","role":"$raw"}}"""),
-        ).message.role
+        fun role(raw: String) = line(""""message":"hi","userId":"u-1","role":"$raw"""").role
 
-        assertEquals(ChatRole.VENUE, role("venue"))
-        assertEquals(ChatRole.HOST, role("host"))
-        assertEquals(ChatRole.STAFF, role("STAFF"))
-        assertNull(role("bouncer"))
+        assertEquals(ChatRole.VENUE, role("VENUE"))
+        assertEquals(ChatRole.HOST, role("HOST"))
+        assertEquals(ChatRole.STAFF, role("staff"))
+        assertNull(role("BOUNCER"))
         assertEquals("Host", ChatRole.HOST.label)
     }
 
     @Test
     fun aPostAsTheVenueCarriesTheVenuesNameAndPhoto() {
-        val message = assertIs<ChatProtocol.Frame.Message>(
-            ChatProtocol.parse(
-                """{"identifier":"x","message":{"message":"Doors at 9","user_id":"u-1","role":"venue",
-                  "name":"Neighbours","avatar_url":"https://cdn/venue.jpg"}}""",
-            ),
-        ).message
+        val message = line(
+            """"message":"Doors at 9","userId":"u-1","role":"VENUE","postedAsVenue":true,
+              "name":"Neighbours","avatarUrl":"https://cdn/venue.jpg"""",
+        )
         assertTrue(message.isPostedAsVenue)
         assertEquals("Neighbours", message.name)
         assertEquals("https://cdn/venue.jpg", message.avatarUrl)
     }
 
     @Test
+    fun aPostAsAPersonIsTheirListingNotTheSender() {
+        val message = line(
+            """"message":"Doors at 9","userId":"u-1","role":"HOST","name":"Miss Texas",
+              "postedAsPerson":true,"person":{"id":"P-1"}""",
+        )
+        assertEquals("p-1", message.personId)
+        assertTrue(message.isFromListing)
+        assertFalse(message.isPostedAsVenue)
+        assertEquals(ChatRole.HOST, message.role)
+
+        // A person on a line someone posted as themself doesn't make it a listing's.
+        assertNull(line(""""message":"hi","userId":"u-1","postedAsPerson":false,"person":{"id":"P-1"}""").personId)
+    }
+
+    @Test
     fun readsAnAnnouncement() {
-        val message = assertIs<ChatProtocol.Frame.Message>(
-            ChatProtocol.parse(
-                """{"identifier":"x","message":{"type":"incoming","id":"m-2","message":"Announcement: Coat check closes at midnight\nGrab your things",
-                  "user_id":"u-1","role":"venue","kind":"announcement","title":"Coat check closes at midnight",
-                  "body":"Grab your things","photo_url":"https://cdn/p.jpg","pinned":true}}""",
-            ),
-        ).message
+        val message = line(
+            """"id":"m-2","message":"Announcement: Coat check closes at midnight\nGrab your things",
+              "userId":"u-1","role":"VENUE","kind":"ANNOUNCEMENT","title":"Coat check closes at midnight",
+              "body":"Grab your things","photoUrl":"https://cdn/p.jpg","pinned":true""",
+        )
         assertEquals(ChatKind.ANNOUNCEMENT, message.kind)
         assertTrue(message.kind.isRich)
         assertEquals("Coat check closes at midnight", message.title)
@@ -338,22 +421,18 @@ class ChatProtocolTest {
 
     @Test
     fun readsASharedEventAndAPhoto() {
-        val event = assertIs<ChatProtocol.Frame.Message>(
-            ChatProtocol.parse(
-                """{"identifier":"x","message":{"message":"Shared an event: Sunset Social","user_id":"u-1","role":"host",
-                  "kind":"event","body":"","event":{"id":"E-1","name":"Sunset Social","start_at":"2026-10-18T02:00:00Z"}}}""",
-            ),
-        ).message
+        val event = line(
+            """"message":"Shared an event: Sunset Social","userId":"u-1","role":"HOST",
+              "kind":"EVENT","body":"","event":{"id":"E-1","name":"Sunset Social","startAt":"2026-10-18T02:00:00Z"}""",
+        )
         assertEquals(ChatKind.EVENT, event.kind)
         assertEquals(SharedEvent("E-1", "Sunset Social", Instant.parse("2026-10-18T02:00:00Z")), event.event)
         assertNull(event.caption, "an empty caption is none")
 
-        val photo = assertIs<ChatProtocol.Frame.Message>(
-            ChatProtocol.parse(
-                """{"identifier":"x","message":{"message":"Shared a photo: Full house","user_id":"u-1","role":"venue",
-                  "kind":"photo","body":"Full house","photo_url":"https://cdn/crowd.jpg"}}""",
-            ),
-        ).message
+        val photo = line(
+            """"message":"Shared a photo: Full house","userId":"u-1","role":"VENUE",
+              "kind":"PHOTO","body":"Full house","photoUrl":"https://cdn/crowd.jpg"""",
+        )
         assertEquals(ChatKind.PHOTO, photo.kind)
         assertEquals("Full house", photo.caption)
         assertEquals("https://cdn/crowd.jpg", photo.photoUrl)
@@ -361,12 +440,10 @@ class ChatProtocolTest {
 
     @Test
     fun aSpecialStopsShowingAtItsEnd() {
-        val special = assertIs<ChatProtocol.Frame.Message>(
-            ChatProtocol.parse(
-                """{"identifier":"x","message":{"message":"Special: Two for one","user_id":"u-1","role":"venue",
-                  "kind":"special","title":"Two for one","body":"Well drinks","ends_at":"2026-10-10T06:00:00Z"}}""",
-            ),
-        ).message
+        val special = line(
+            """"message":"Special: Two for one","userId":"u-1","role":"VENUE",
+              "kind":"SPECIAL","title":"Two for one","body":"Well drinks","endsAt":"2026-10-10T06:00:00Z"""",
+        )
         assertEquals(ChatKind.SPECIAL, special.kind)
         assertEquals(Instant.parse("2026-10-10T06:00:00Z"), special.endsAt)
         assertTrue(special.isShowing(Instant.parse("2026-10-10T05:59:00Z")))
@@ -375,39 +452,42 @@ class ChatProtocolTest {
 
     @Test
     fun anUnknownKindReadsAsText() {
-        val message = assertIs<ChatProtocol.Frame.Message>(
-            ChatProtocol.parse("""{"identifier":"x","message":{"message":"Shared a poll","user_id":"u-1","kind":"poll"}}"""),
-        ).message
+        val message = line(""""message":"Shared a poll","userId":"u-1","kind":"POLL"""")
         assertEquals(ChatKind.TEXT, message.kind)
         assertEquals("Shared a poll", message.body)
     }
 
     @Test
-    fun readsTheRosterAndPresence() {
-        assertEquals(
-            ChatProtocol.Frame.Roster(setOf("u-1", "u-2")),
-            ChatProtocol.parse("""{"identifier":"x","message":{"type":"roster","online":["U-1","u-2"]}}"""),
-        )
-        assertEquals(
-            ChatProtocol.Frame.PresenceChanged("u-3", online = true),
-            ChatProtocol.parse("""{"identifier":"x","message":{"type":"presence","user_id":"U-3","presence":"online"}}"""),
-        )
-        assertEquals(
-            ChatProtocol.Frame.PresenceChanged("u-3", online = false),
-            ChatProtocol.parse("""{"identifier":"x","message":{"type":"presence","user_id":"u-3","presence":"offline"}}"""),
-        )
-        assertNull(ChatProtocol.parse("""{"identifier":"x","message":{"type":"presence","presence":"online"}}"""))
+    fun aLineFromSomeoneANotificationReachesIsReachable() {
+        fun reachable(presence: String?) = assertIs<ChatProtocol.Frame.Message>(
+            ChatProtocol.parse(posted(""""message":"hi","userId":"u-1"""", presence)).single(),
+        ).message.reachable
+
+        assertTrue(reachable("PUSH"))
+        assertFalse(reachable("ONLINE"))
+        assertFalse(reachable(null))
     }
 
     @Test
-    fun readsWhoIsInTheRoomAndTheViewersFriends() {
-        val frame = ChatProtocol.parse(
-            """{"identifier":"x","message":{"type":"roster","online":["U-1","u-2"],
-              "people":[{"user_id":"U-1","name":"Aurora Bell","avatar_url":"https://a/1.jpg","friend":true},
-                        {"user_id":"u-2","name":"Jo P.","avatar_url":null},
-                        {"name":"No Id"}, "junk"],
-              "friends":[{"user_id":"U-1","name":"Aurora Bell"},{"user_id":"f-9","name":"Sam Chatter"},{"name":"x"}]}}""",
+    fun joiningSaysWhoIsHereWhatWasSaidAndWhatsPinned() {
+        val frames = ChatProtocol.parse(
+            result(
+                """{"__typename":"ChatJoined","outOfRange":true,
+                  "roster":{
+                    "people":[{"userId":"U-1","name":"Aurora Bell","avatarUrl":"https://a/1.jpg","friend":true},
+                              {"userId":"u-2","name":"Jo P.","avatarUrl":null,"friend":false},
+                              {"name":"No Id"}, "junk"],
+                    "friends":[{"userId":"U-1","name":"Aurora Bell"},{"userId":"f-9","name":"Sam Chatter"},{"name":"x"}]},
+                  "history":[
+                    {"senderPresence":"PUSH","message":{"id":"m-1","message":"first","userId":"u-1"}},
+                    {"senderPresence":null,"message":{"message":"no sender"}},
+                    {"senderPresence":"ONLINE","message":{"id":"m-2","message":"second","userId":"u-2","role":"STAFF"}}],
+                  "pinnedMessage":{"senderPresence":null,"message":{"id":"m-0","message":"Announcement: Doors","userId":"u-3",
+                    "kind":"ANNOUNCEMENT","title":"Doors","pinned":true}}}""",
+            ),
         )
+        assertEquals(ChatProtocol.Frame.Connected, frames[0])
+        assertEquals(ChatProtocol.Frame.Range(outOfRange = true), frames[1])
         assertEquals(
             ChatProtocol.Frame.Roster(
                 setOf("u-1", "u-2"),
@@ -417,99 +497,141 @@ class ChatProtocolTest {
                 ),
                 friends = listOf(Friend("u-1", "Aurora Bell"), Friend("f-9", "Sam Chatter")),
             ),
-            frame,
+            frames[2],
         )
-        // A newcomer comes with their name and photo; leaving carries neither.
-        assertEquals(
-            ChatProtocol.Frame.PresenceChanged("u-3", online = true, name = "Kiko M.", avatarUrl = "https://a/3.jpg"),
-            ChatProtocol.parse("""{"identifier":"x","message":{"type":"presence","user_id":"u-3","presence":"online","name":"Kiko M.","avatar_url":"https://a/3.jpg"}}"""),
+        val history = assertIs<ChatProtocol.Frame.History>(frames[3])
+        assertEquals(listOf("first", "second"), history.messages.map { it.body })
+        assertTrue(history.messages.first().reachable)
+        assertFalse(history.messages.last().reachable)
+        assertEquals(ChatRole.STAFF, history.messages.last().role)
+        assertEquals("Doors", history.pinned?.title)
+        assertEquals(4, frames.size)
+    }
+
+    @Test
+    fun joiningAnEmptyRoomOrAMalformedRosterStillJoins() {
+        val frames = ChatProtocol.parse(
+            result("""{"__typename":"ChatJoined","outOfRange":false,"roster":{"people":"nope","friends":7},"history":[],"pinnedMessage":null}"""),
         )
-        // Malformed extras don't cost the roster.
         assertEquals(
-            ChatProtocol.Frame.Roster(setOf("u-1")),
-            ChatProtocol.parse("""{"identifier":"x","message":{"type":"roster","online":["u-1"],"people":"nope","friends":7}}"""),
+            listOf(
+                ChatProtocol.Frame.Connected,
+                ChatProtocol.Frame.Range(false),
+                ChatProtocol.Frame.Roster(emptySet()),
+                ChatProtocol.Frame.History(emptyList(), null),
+            ),
+            frames,
         )
     }
 
     @Test
-    fun readsHistoryPinsAndPushPresence() {
-        val history = ChatProtocol.parse(
-            """{"identifier":"x","message":{"type":"history","messages":[
-                {"id":"m-1","message":"first","user_id":"u-1","presence":"push"},
-                {"message":"no sender"},
-                {"id":"m-2","message":"second","user_id":"u-2","role":"staff"}],
-              "pinned":{"id":"m-0","message":"Announcement: Doors","user_id":"u-3","kind":"announcement","title":"Doors","pinned":true}}}""",
-        ) as ChatProtocol.Frame.History
-        assertEquals(listOf("first", "second"), history.messages.map { it.body })
-        assertEquals(true, history.messages.first().reachable)
-        assertEquals(ChatRole.STAFF, history.messages.last().role)
-        assertEquals("Doors", history.pinned?.title)
-
-        val pin = ChatProtocol.parse(
-            """{"identifier":"x","message":{"type":"pin","id":"m-0","pinned":true,
-              "announcement":{"id":"m-0","message":"Announcement: Doors","user_id":"u-3","kind":"announcement","title":"Doors","pinned":true}}}""",
-        ) as ChatProtocol.Frame.Pin
-        assertEquals("m-0", pin.id)
-        assertEquals("Doors", pin.announcement?.title)
+    fun readsPresence() {
+        // A newcomer comes with their name and photo; leaving carries neither.
         assertEquals(
-            ChatProtocol.Frame.Pin("m-0", null),
-            ChatProtocol.parse("""{"identifier":"x","message":{"type":"pin","id":"m-0","pinned":false}}"""),
-        )
-
-        assertEquals(
-            ChatProtocol.Frame.Removed("m-1"),
-            ChatProtocol.parse("""{"identifier":"x","message":{"type":"removed","id":"m-1"}}"""),
+            listOf(ChatProtocol.Frame.PresenceChanged("u-3", online = true, name = "Kiko M.", avatarUrl = "https://a/3.jpg")),
+            ChatProtocol.parse(
+                result("""{"__typename":"ChatPresenceChanged","userId":"U-3","presence":"ONLINE","name":"Kiko M.","avatarUrl":"https://a/3.jpg"}"""),
+            ),
         )
         assertEquals(
-            ChatProtocol.Frame.Cleared,
-            ChatProtocol.parse("""{"identifier":"x","message":{"type":"cleared","cleared_at":"2026-10-09T04:00:00.123Z"}}"""),
+            listOf(ChatProtocol.Frame.PresenceChanged("u-3", online = false)),
+            ChatProtocol.parse(
+                result("""{"__typename":"ChatPresenceChanged","userId":"u-3","presence":"OFFLINE","name":"Kiko M.","avatarUrl":null}"""),
+            ),
         )
-        assertEquals(null, ChatProtocol.parse("""{"identifier":"x","message":{"type":"removed"}}"""))
-
         assertEquals(
-            ChatProtocol.Frame.PresenceChanged("u-3", online = false, reachable = true),
-            ChatProtocol.parse("""{"identifier":"x","message":{"type":"presence","user_id":"u-3","presence":"push"}}"""),
+            listOf(ChatProtocol.Frame.PresenceChanged("u-3", online = false, reachable = true)),
+            ChatProtocol.parse(result("""{"__typename":"ChatPresenceChanged","userId":"u-3","presence":"PUSH"}""")),
         )
+        assertEquals(emptyList(), ChatProtocol.parse(result("""{"__typename":"ChatPresenceChanged","presence":"ONLINE"}""")))
     }
 
     @Test
     fun readsWhoWasHereRecently() {
         val until = Instant.parse("2026-10-17T05:30:00Z")
         assertEquals(
-            ChatProtocol.Frame.PresenceChanged("u-3", online = false, reachable = true, recentUntil = until),
+            listOf(ChatProtocol.Frame.PresenceChanged("u-3", online = false, reachable = true, recentUntil = until)),
             ChatProtocol.parse(
-                """{"identifier":"x","message":{"type":"presence","user_id":"u-3","presence":"push","recent_until":"2026-10-17T05:30:00Z"}}""",
+                result("""{"__typename":"ChatPresenceChanged","userId":"u-3","presence":"PUSH","recentUntil":"2026-10-17T05:30:00Z"}"""),
             ),
         )
         // Coming back is never "recent".
         assertEquals(
-            ChatProtocol.Frame.PresenceChanged("u-3", online = true),
-            ChatProtocol.parse("""{"identifier":"x","message":{"type":"presence","user_id":"u-3","presence":"online","recent_until":"2026-10-17T05:30:00Z"}}"""),
+            listOf(ChatProtocol.Frame.PresenceChanged("u-3", online = true)),
+            ChatProtocol.parse(
+                result("""{"__typename":"ChatPresenceChanged","userId":"u-3","presence":"ONLINE","recentUntil":"2026-10-17T05:30:00Z"}"""),
+            ),
         )
 
-        val frame = ChatProtocol.parse(
-            """{"identifier":"x","message":{"type":"roster","online":["u-1"],
-              "recent":[{"user_id":"U-4","name":"Wren Fox","friend":true,"presence":"push",
-                         "last_seen_at":"2026-10-17T05:00:00Z","recent_until":"2026-10-17T05:30:00Z"},
-                        {"user_id":"u-5","name":"Jo P.","presence":"offline","last_seen_at":"2026-10-17T04:50:00.000+00:00"},
-                        {"user_id":"u-7","name":"DJ Host","presence":"offline","last_seen_at":null,"recent_until":"2026-10-17T09:00:00Z"},
-                        {"user_id":"u-6","last_seen_at":null}, "junk"]}}""",
-        ) as ChatProtocol.Frame.Roster
+        val frames = ChatProtocol.parse(
+            result(
+                """{"__typename":"ChatJoined","outOfRange":false,
+                  "roster":{
+                    "people":[{"userId":"u-1","name":"Aurora Bell","avatarUrl":null,"friend":false}],
+                    "friends":[],
+                    "recent":[{"userId":"U-4","name":"Wren Fox","avatarUrl":null,"friend":true,"presence":"PUSH",
+                               "lastSeenAt":"2026-10-17T05:00:00Z","recentUntil":"2026-10-17T05:30:00Z"},
+                              {"userId":"u-5","name":"Jo P.","presence":"OFFLINE","lastSeenAt":"2026-10-17T04:50:00.000+00:00","recentUntil":null},
+                              {"userId":"u-7","name":"DJ Host","presence":"OFFLINE","lastSeenAt":null,"recentUntil":"2026-10-17T09:00:00Z"},
+                              {"userId":"u-6","lastSeenAt":null}, "junk"]},
+                  "history":[],"pinnedMessage":null}""",
+            ),
+        )
+        val roster = assertIs<ChatProtocol.Frame.Roster>(frames[2])
+        assertEquals(setOf("u-1"), roster.online)
         assertEquals(
             listOf(
                 RoomPerson("u-4", "Wren Fox", friend = true, recentUntil = until, reachable = true),
                 RoomPerson("u-5", "Jo P.", recentUntil = Instant.parse("2026-10-17T05:20:00Z")),
-                // A host who posted without joining has no last_seen_at, and stays until the event ends.
+                // A host who posted without joining has no lastSeenAt, and stays until the event ends.
                 RoomPerson("u-7", "DJ Host", recentUntil = Instant.parse("2026-10-17T09:00:00Z")),
             ),
-            frame.recent,
+            roster.recent,
+        )
+        assertTrue(ChatProtocol.document(ChatRoom.venue(venue)).contains("recent { userId name avatarUrl friend presence lastSeenAt recentUntil }"))
+        assertTrue(ChatProtocol.document(ChatRoom.venue(venue)).contains("ChatPresenceChanged { userId presence name avatarUrl recentUntil }"))
+    }
+
+    @Test
+    fun readsEditsPinsRemovalsAndClearing() {
+        val updated = assertIs<ChatProtocol.Frame.Message>(
+            ChatProtocol.parse(
+                result("""{"__typename":"ChatMessageUpdated","message":{"id":"m-0","message":"Special: Two for one","userId":"u-3","kind":"SPECIAL","title":"Two for one"}}"""),
+            ).single(),
+        ).message
+        assertEquals("m-0", updated.id)
+        assertEquals("Two for one", updated.title)
+
+        val pin = assertIs<ChatProtocol.Frame.Pin>(
+            ChatProtocol.parse(
+                result(
+                    """{"__typename":"ChatPinChanged","messageId":"m-0","pinned":true,
+                      "announcement":{"id":"m-0","message":"Announcement: Doors","userId":"u-3","kind":"ANNOUNCEMENT","title":"Doors","pinned":true}}""",
+                ),
+            ).single(),
+        )
+        assertEquals("m-0", pin.id)
+        assertEquals("Doors", pin.announcement?.title)
+        assertEquals(
+            listOf(ChatProtocol.Frame.Pin("m-0", null)),
+            ChatProtocol.parse(result("""{"__typename":"ChatPinChanged","messageId":"m-0","pinned":false,"announcement":null}""")),
+        )
+
+        assertEquals(
+            listOf(ChatProtocol.Frame.Removed("m-1")),
+            ChatProtocol.parse(result("""{"__typename":"ChatMessageRemoved","messageId":"m-1"}""")),
+        )
+        assertEquals(emptyList(), ChatProtocol.parse(result("""{"__typename":"ChatMessageRemoved"}""")))
+        assertEquals(
+            listOf(ChatProtocol.Frame.Cleared),
+            ChatProtocol.parse(result("""{"__typename":"ChatRoomCleared","clearedAt":"2026-10-09T04:00:00.123Z"}""")),
         )
     }
 
     @Test
-    fun sendsOnlyTheText() {
-        val frame = HotMessApi.json.parseToJsonElement(ChatProtocol.message(venue, "hi")).jsonObject
-        assertEquals("""{"message":"hi"}""", frame["data"]!!.jsonPrimitive.content)
+    fun sendsOnlyTheTextWithTheRoom() {
+        assertEquals("""{"venueId":"$venue","message":"hi"}""", ChatProtocol.sendInput(ChatRoom.venue(venue.uppercase()), "hi").toString())
+        assertTrue(ChatProtocol.SEND_MESSAGE.contains("sendMyChatMessage(input: \$input)"))
     }
 
     @Test
@@ -577,7 +699,7 @@ class RoomPeopleTest {
         room = room.left("U-2", later, reachable = true, now = now)
         assertEquals(RoomPerson("u-2", "Jo P.", recentUntil = later, reachable = true), room["u-2"])
         assertEquals(setOf("u-1"), room.online)
-        // An older server says nothing about how long, and a time already past is no time: they're gone.
+        // No time to list them until, or a time already past: they're gone.
         assertNull(room.left("u-1", now = now)["u-1"])
         assertNull(room.left("u-1", now.minusSeconds(1), now = now)["u-1"])
 
@@ -621,7 +743,7 @@ class RoomPeopleTest {
         val here = RoomPeople.hereNow(people, viewer.uppercase()) { directory[it] }
         assertEquals(listOf("Me Myself", "Bo Turner", "Wren Fox", "Amy R.", "zed Q.", null), here.map { it.name })
         assertEquals(listOf(false, true, true, false, false, false), here.map { it.friend })
-        // The viewer is in the room they're looking at, even if a stale frame says they left.
+        // The viewer is in the room they're looking at, even if a stale event says they left.
         val alone = RoomPeople.hereNow(listOf(RoomPerson(viewer, recentUntil = Instant.EPOCH)), viewer)
         assertEquals(listOf(RoomPerson(viewer)), alone)
         assertTrue(RoomPeople.hereNow(emptyList(), viewer).isEmpty())
@@ -639,9 +761,9 @@ class FormattingTest {
 
     @Test
     fun eventSubtitleJoinsWithAMiddleDot() {
-        val event = Event(id = "e", startAt = Instant.parse("2026-10-10T04:00:00Z"), venue = Venue(id = "v", name = "The Wildrose"))
+        val event = Event(id = "e", startAt = Instant.parse("2026-10-10T04:00:00Z"), venueMixin = EventVenueMixin(Venue(id = "v", name = "The Wildrose")))
         assertEquals("Fri 9pm · The Wildrose", Formatting.eventSubtitle(event, zone, Locale.US))
-        assertEquals("Fri 9pm · To be announced", Formatting.eventSubtitle(event.copy(venue = null), zone, Locale.US))
+        assertEquals("Fri 9pm · To be announced", Formatting.eventSubtitle(event.copy(venueMixin = null), zone, Locale.US))
     }
 
     @Test
@@ -673,6 +795,58 @@ class HotMessApiTest {
     }
 
     @Test
+    fun sendsAChatLineWithTheMutation() = runTest {
+        val (api, bodies) = api(
+            "SendMyChatMessage" to """{"data":{"sendMyChatMessage":{"message":{"id":"m-9","message":"hi","userId":"u-1","name":"Aurora B.","kind":"TEXT","sentAt":"2026-10-10T04:02:00Z"}}}}""",
+        )
+        val line = api.sendChatMessage(ChatRoom.venue("V-1"), "hi")
+
+        assertEquals("m-9", line?.id)
+        assertEquals("hi", line?.body)
+        val body = HotMessApi.json.parseToJsonElement(bodies.single()).jsonObject
+        assertEquals("""{"input":{"venueId":"v-1","message":"hi"}}""", body["variables"].toString())
+    }
+
+    @Test
+    fun aRefusedChatLineSaysWhy() = runTest {
+        val (api, _) = api(
+            "SendMyChatMessage" to """{"data":{"sendMyChatMessage":null},"errors":[{"message":"You're not in that room","extensions":{"code":"FORBIDDEN","reason":"not_allowed"}}]}""",
+        )
+        val error = assertFailsWith<ApiError.Rejected> { api.sendChatMessage(ChatRoom.locale("l-1"), "hi") }
+        assertEquals("You're not in that room", error.message)
+        assertEquals("not_allowed", error.reason)
+    }
+
+    @Test
+    fun asksWhichSignInMethodsTheAudienceOffers() = runTest {
+        val (api, _) = api("/v1/token/methods?host=hotmess.social" to """{"methods":["apple","google"]}""")
+        val methods = api.signInMethods("hotmess.social")
+
+        assertEquals(listOf("apple", "google"), methods?.methods)
+        assertFalse(methods!!.facebook)
+        assertTrue(methods.google)
+    }
+
+    @Test
+    fun readsTheWarningsShownBeforeSignInMethods() = runTest {
+        val (api, _) = api(
+            "/v1/token/methods?host=hotmess.social" to
+                """{"methods":["facebook","google"],"warnings":{"facebook":"Facebook login is only for testers","google":" "}}""",
+        )
+        val methods = api.signInMethods("hotmess.social")!!
+
+        assertEquals("Facebook login is only for testers", methods.warning("facebook"))
+        assertNull(methods.warning("google"), "a blank warning is no warning")
+        assertNull(methods.warning("apple"))
+    }
+
+    @Test
+    fun signInMethodsAreUnknownOnAnOlderApi() = runTest {
+        val (api, _) = api()
+        assertNull(api.signInMethods("hotmess.social"), "a 404 leaves the login screen as it was")
+    }
+
+    @Test
     fun nowWithoutAPositionMakesNoRequest() = runTest {
         val (api, bodies) = api()
         assertEquals(Now(), api.now(null))
@@ -681,10 +855,10 @@ class HotMessApiTest {
 
     @Test
     fun nowReportsThePosition() = runTest {
-        val (api, bodies) = api("ReportLocation" to """{"data":{"reportLocation":{"now":{"title":"Capitol Hill","venues":[],"events":[${Fixtures.EVENT}]}}}}""")
+        val (api, bodies) = api("ReportLocation" to """{"data":{"reportLocation":{"nearbyVenues":[],"locale":{"id":"l1","name":"Capitol Hill","events":{"upcoming":{"nodes":[${Fixtures.EVENT}]}}}}}}""")
         val now = api.now(Coordinates(47.61, -122.32))
 
-        assertEquals("Capitol Hill", now.title)
+        assertEquals("Happening Now in Capitol Hill", now.title)
         assertTrue(now.isNearVenues)
         assertEquals(1, now.events.size)
         assertTrue(bodies.single().contains("\"latitude\":47.61"))
@@ -697,7 +871,7 @@ class HotMessApiTest {
         val transport = HttpTransport {
             requests++
             gate.await()
-            com.audiencekit.HttpResponse(200, """{"data":{"reportLocation":{"now":{"title":"Nyne"}}}}""".toByteArray())
+            com.audiencekit.HttpResponse(200, """{"data":{"reportLocation":{"venue":{"id":"v1","name":"Nyne"}}}}""".toByteArray())
         }
         val api = HotMessApi(
             AudienceKitClient(
@@ -726,27 +900,50 @@ class HotMessApiTest {
     @Test
     fun meHasTheirPhoto() = runTest {
         val (api, bodies) = api(
-            "query Me" to """{"data":{"me":{"id":"5b3c8a72-4e19-4d06-b2f5-8c7a1e0d9b22","name":"Billie Jean",
-                "photo":{"cdnUrl":"https://cdn.example/billie.jpg"}}}}""",
+            "query Me" to """{"data":{"me":{"self":{"id":"5b3c8a72-4e19-4d06-b2f5-8c7a1e0d9b22","name":"Billie Jean",
+                "avatarUrl":"https://cdn.example/billie.jpg"}}}}""",
         )
         val me = api.me()!!
 
         assertEquals("Billie Jean", me.name)
         assertEquals("https://cdn.example/billie.jpg", me.avatarUrl)
-        assertTrue(bodies.single().contains("photo { cdnUrl }"))
+        assertTrue(bodies.single().contains("avatarUrl"))
         assertFalse(bodies.single().contains("/picture"))
+    }
+
+    @Test
+    fun nowLeadsWithTheEventTheUserIsAt() = runTest {
+        val bingo = """{"id":"e1","name":"Bingo","startAt":"2026-10-16T19:00:00Z","endAt":"2026-10-16T22:00:00Z",
+            "bannerUrl":"https://cdn.example/bingo.jpg"}"""
+        val (api, bodies) = api(
+            "ReportLocation" to """{"data":{"reportLocation":{"nearbyVenues":null,"event":$bingo,
+                "venue":{"id":"v1","name":"First Baptist","bannerUrl":"https://cdn.example/church.jpg",
+                  "events":{"upcoming":{"nodes":[$bingo]}}}}}}""",
+        )
+        val now = api.now(Coordinates(47.66, -117.40))
+
+        assertEquals("Bingo", now.title)
+        assertEquals("e1", now.event?.id)
+        assertEquals("https://cdn.example/bingo.jpg", now.imageUrl)
+        assertEquals("First Baptist", now.venue?.name)
+        assertTrue(now.events.isEmpty(), "the event isn't listed again under Events")
+        assertTrue(bodies.single().contains("event {"))
     }
 
     @Test
     fun nowAtAVenueHasItsRecentChatAndFriends() = runTest {
         val (api, _) = api(
-            "ReportLocation" to """{"data":{"reportLocation":{"now":{"title":"Nyne","venues":null,"events":[],
-                "venue":{"id":"v1","name":"Nyne","recentMessages":[{"id":"m1","message":"who's here?","name":"Sam",
-                  "userId":"u1","avatarUrl":"","sentAt":"2026-10-07T08:00:00Z"}]},
-                "friends":[{"id":"f1","name":"Alex Friend","facebookId":"4242"}]}}}}""",
+            "ReportLocation" to """{"data":{"reportLocation":{"nearbyVenues":null,
+                "venue":{"id":"v1","name":"Nyne","bannerUrl":"https://cdn.example/nyne.jpg","events":{"upcoming":{"nodes":[]}},
+                  "chat":{"recentMessages":{"nodes":[{"id":"m1","message":"who's here?","name":"Sam",
+                  "userId":"u1","avatarUrl":null,"sentAt":"2026-10-07T08:00:00Z"}]}},
+                  "friends":{"list":{"nodes":[{"id":"f1","name":"Alex Friend","facebookId":"4242"}]}}}}}}""",
         )
         val now = api.now(Coordinates(47.66, -117.41))
 
+        assertEquals("Nyne", now.title)
+        assertEquals("https://cdn.example/nyne.jpg", now.imageUrl)
+        assertFalse(now.isNearVenues)
         val line = now.venue!!.recentMessages.single()
         assertEquals("who's here?", line.message)
         assertEquals("Sam", line.name)
@@ -759,9 +956,9 @@ class HotMessApiTest {
     @Test
     fun venueOverviewAsksForAndKeepsItsRecentChat() = runTest {
         val (api, bodies) = api(
-            "query Venue(" to """{"data":{"venue":{"id":"v1","name":"Nyne","chatOpen":true,"events":[],
-                "recentMessages":[{"id":"m1","message":"who's here?","name":"Sam","userId":"u1","avatarUrl":"",
-                  "sentAt":"2026-10-07T08:00:00Z"}]}}}""",
+            "query Venue(" to """{"data":{"venues":{"venue":{"id":"v1","name":"Nyne","events":{"upcoming":{"nodes":[]}},
+                "chat":{"open":true,"recentMessages":{"nodes":[{"id":"m1","message":"who's here?","name":"Sam","userId":"u1",
+                  "avatarUrl":null,"sentAt":"2026-10-07T08:00:00Z"}]}}}}}}""",
         )
         val overview = api.venueOverview("v1")
 
@@ -776,9 +973,10 @@ class HotMessApiTest {
     @Test
     fun nowAwayFromVenuesCountsFriendsPerVenue() = runTest {
         val (api, _) = api(
-            "ReportLocation" to """{"data":{"reportLocation":{"now":{"title":"Spokane","venues":[],"events":[],
-                "friendVenues":[{"venue":{"id":"v1","name":"Nyne"},"friendCount":2,
-                  "friends":[{"id":"f1","name":"Alex Friend"},{"id":"f2","name":"Sam Chatter"}]}]}}}}""",
+            "ReportLocation" to """{"data":{"reportLocation":{"nearbyVenues":[],
+                "locale":{"id":"l1","name":"Spokane","friends":{"list":{"nodes":[]},
+                  "venues":{"nodes":[{"venue":{"id":"v1","name":"Nyne"},"friendCount":2,
+                    "friends":[{"id":"f1","name":"Alex Friend"},{"id":"f2","name":"Sam Chatter"}]}]}}}}}}""",
         )
         val entry = api.now(Coordinates(47.66, -117.43)).friendVenues.single()
 
@@ -790,27 +988,31 @@ class HotMessApiTest {
     @Test
     fun nowAwayFromVenuesHasTheLocaleChat() = runTest {
         val (api, bodies) = api(
-            "ReportLocation" to """{"data":{"reportLocation":{"now":{"title":"Seattle","venues":[],"events":[],
-                "locale":{"id":"l1","name":"Seattle","chatOpen":true,"recentMessages":[{"id":"m1",
-                  "message":"anyone out?","name":"Ada","userId":"u1","sentAt":"2026-10-07T08:00:00Z"}]}}}}}""",
+            "ReportLocation" to """{"data":{"reportLocation":{"nearbyVenues":[],
+                "locale":{"id":"l1","name":"Seattle","bannerUrl":"https://cdn.example/seattle.jpg","chat":{"open":true,
+                  "recentMessages":{"nodes":[{"id":"m1",
+                  "message":"anyone out?","name":"Ada","userId":"u1","sentAt":"2026-10-07T08:00:00Z"}]}}}}}}""",
         )
-        val locale = api.now(Coordinates(47.62, -122.32)).locale!!
+        val now = api.now(Coordinates(47.62, -122.32))
+        val locale = now.locale!!
+
+        assertEquals("https://cdn.example/seattle.jpg", now.imageUrl)
 
         assertTrue(locale.chatOpen)
         assertEquals("Seattle", locale.name)
         assertEquals("anyone out?", locale.recentMessages.single().message)
-        assertTrue(bodies.single().contains("chatOpen"))
+        assertTrue(bodies.single().contains("chat { open recentMessages"))
     }
 
     @Test
     fun recentChatAndFriendsCarryPresenceAndRoles() = runTest {
         val (api, bodies) = api(
-            "ReportLocation" to """{"data":{"reportLocation":{"now":{"title":"Nyne","venues":null,"events":[],
-                "venue":{"id":"v1","name":"Nyne","recentMessages":[{"id":"m1","message":"Special: Two for one",
-                  "name":"Nyne","userId":"u1","avatarUrl":"","sentAt":"2026-10-07T08:00:00Z","presence":"OFFLINE",
+            "ReportLocation" to """{"data":{"reportLocation":{"nearbyVenues":null,
+                "venue":{"id":"v1","name":"Nyne","chat":{"recentMessages":{"nodes":[{"id":"m1","message":"Special: Two for one",
+                  "name":"Nyne","userId":"u1","avatarUrl":null,"sentAt":"2026-10-07T08:00:00Z","presence":"OFFLINE",
                   "role":"VENUE","kind":"SPECIAL","endsAt":"2026-10-07T09:00:00Z","postedAsVenue":true},
-                  {"id":"m2","message":"hi","name":"Alex Friend","userId":"f1","presence":"ONLINE","kind":"TEXT"}]},
-                "friends":[{"id":"f1","name":"Alex Friend","facebookId":"4242","presence":"PUSH"}]}}}}""",
+                  {"id":"m2","message":"hi","name":"Alex Friend","userId":"f1","presence":"ONLINE","kind":"TEXT"}]}},
+                  "friends":{"list":{"nodes":[{"id":"f1","name":"Alex Friend","facebookId":"4242","presence":"PUSH"}]}}}}}}""",
         )
         val now = api.now(Coordinates(47.66, -117.41))
 
@@ -830,30 +1032,30 @@ class HotMessApiTest {
     @Test
     fun venueOverviewHasItsSocialLinks() = runTest {
         val (api, bodies) = api(
-            "query Venue(" to """{"data":{"venue":{"id":"v-1","name":"The Wildrose","chatOpen":true,"events":[${Fixtures.EVENT}],
-                "socialLinks":[{"id":"s-1","handle":"thewildrosebar","provider":"instagram","url":"https://instagram.com/thewildrosebar"},
-                  {"id":"s-2","handle":"wildrose","provider":"facebook","url":""}]}}}""",
+            "query Venue(" to """{"data":{"venues":{"venue":{"id":"v-1","name":"The Wildrose","chat":{"open":true},"events":{"upcoming":{"nodes":[${Fixtures.EVENT}]}},
+                "profile":{"socialLinks":{"nodes":[{"id":"s-1","handle":"thewildrosebar","provider":"instagram","url":"https://instagram.com/thewildrosebar"},
+                  null,{"id":"s-2","handle":"wildrose","provider":"facebook","url":null}]}}}}}}""",
         )
         val overview = api.venueOverview("v-1")
 
-        assertTrue(bodies.single().contains("socialLinks"))
+        assertTrue(bodies.single().contains("profile { socialLinks { nodes {"))
         assertTrue(overview.chatOpen)
         assertEquals(1, overview.events.size)
         val links = overview.venue.socialLinks
         assertEquals(listOf(SocialLink.Network.INSTAGRAM, SocialLink.Network.FACEBOOK), links.map { it.network })
         assertEquals("https://instagram.com/thewildrosebar", links.first().url)
-        assertNull(links.last().url, "an empty URL is no URL")
+        assertNull(links.last().url, "no URL is null")
     }
 
     @Test
     fun venueOverviewHasTheFriendsHere() = runTest {
         val (api, bodies) = api(
-            "query Venue(" to """{"data":{"venue":{"id":"v1","name":"Nyne","chatOpen":true,"events":[],
-                "friends":[{"id":"f1","name":"Alex Friend","facebookId":"4242","presence":"ONLINE"}]}}}""",
+            "query Venue(" to """{"data":{"venues":{"venue":{"id":"v1","name":"Nyne","chat":{"open":true},"events":{"upcoming":{"nodes":[]}},
+                "friends":{"list":{"nodes":[{"id":"f1","name":"Alex Friend","facebookId":"4242","presence":"ONLINE"}]}}}}}}""",
         )
         val overview = api.venueOverview("v1")
 
-        assertTrue(bodies.single().contains("friends { id name facebookId presence }"))
+        assertTrue(bodies.single().contains("friends { list { nodes { id name facebookId avatarUrl presence } } }"))
         val friend = overview.friends.single()
         assertEquals("Alex Friend", friend.name)
         assertEquals("https://m.me/4242", friend.messengerUrl)
@@ -862,8 +1064,38 @@ class HotMessApiTest {
     }
 
     @Test
+    fun nowAtAVenueHasWhoIsOnNow() = runTest {
+        val (api, bodies) = api(
+            "ReportLocation" to """{"data":{"reportLocation":{"nearbyVenues":null,
+                "venue":{"id":"v1","name":"Nyne","events":{"upcoming":{"nodes":[]}},
+                  "people":{"onNow":{"nodes":[{"id":"a1","role":"DJ","startsAt":"2026-10-18T06:45:00Z","endsAt":null,
+                    "person":{"id":"p1","name":"Q","avatarUrl":"https://cdn.example/q.jpg"}}]}}}}}}""",
+        )
+        val now = api.now(Coordinates(47.66, -117.41))
+
+        assertTrue(bodies.single().contains("people { onNow { nodes { id role startsAt endsAt person { id name avatarUrl } } } }"))
+        val appearance = now.onNow.single()
+        assertEquals("Q", appearance.person.name)
+        assertEquals(AppearanceRole.DJ, appearance.role)
+        assertEquals("23:45 – close", appearance.hours(java.time.ZoneOffset.ofHours(-7), java.util.Locale.UK))
+    }
+
+    @Test
+    fun venueOverviewHasWhoIsOnNow() = runTest {
+        val (api, _) = api(
+            "query Venue(" to """{"data":{"venues":{"venue":{"id":"v1","name":"Nyne","events":{"upcoming":{"nodes":[]}},
+                "people":{"onNow":{"nodes":[{"id":"a1","role":"BARTENDER","startsAt":"2026-10-18T06:45:00Z","endsAt":"2026-10-18T08:00:00Z",
+                  "person":{"id":"p1","name":"Q"}},null]}}}}}}""",
+        )
+        val appearance = api.venueOverview("v1").onNow.single()
+
+        assertNull(appearance.role, "a role this build doesn't know has no label")
+        assertEquals("06:45 – 08:00", appearance.hours(java.time.ZoneOffset.UTC, java.util.Locale.UK))
+    }
+
+    @Test
     fun aVenueWithoutFriendsHasNone() = runTest {
-        val (api, _) = api("query Venue(" to """{"data":{"venue":{"id":"v1","name":"Nyne","events":[]}}}""")
+        val (api, _) = api("query Venue(" to """{"data":{"venues":{"venue":{"id":"v1","name":"Nyne","events":{"upcoming":{"nodes":[]}}}}}}""")
         assertTrue(api.venueOverview("v1").friends.isEmpty())
     }
 
@@ -873,8 +1105,27 @@ class HotMessApiTest {
     }
 
     @Test
+    fun aVenuesAddressPhoneAndPageComeFromItsProfile() {
+        val venue = HotMessApi.json.decodeFromString(Venue.serializer(), Fixtures.VENUE)
+
+        assertEquals("1021 E Pike St", venue.address)
+        assertNull(venue.phone)
+        assertEquals("https://facebook.com/55", venue.facebookUrl)
+        assertTrue(venue.isLiked)
+    }
+
+    @Test
+    fun aVenueWithoutAProfileHasNoAddressOrPage() {
+        val venue = HotMessApi.json.decodeFromString(Venue.serializer(), """{"id":"v-2","name":"Pop-up"}""")
+
+        assertNull(venue.address)
+        assertNull(venue.facebookId)
+        assertFalse(venue.isLiked)
+    }
+
+    @Test
     fun missingRecordsAreNotFound() = runTest {
-        val (api, _) = api("query Event" to """{"data":{"event":null}}""")
+        val (api, _) = api("query Event" to """{"data":{"events":{"event":null}}}""")
         assertFailsWith<ApiError.NotFound> { api.event("e") }
     }
 
@@ -886,27 +1137,92 @@ class HotMessApiTest {
     }
 
     @Test
-    fun manifestWithoutAnAndroidEntryMeansNoMinimum() {
-        assertNull(HotMessApi.parseManifest("""{"client":{"mobile":{"apple":{"minimum_build":1000}}}}"""))
-        assertEquals(
-            12,
-            HotMessApi.parseManifest("""{"client":{"mobile":{"android":{"minimum_build":12,"minimum_version":"1.2"}}}}""")?.minimumBuild,
+    fun statusWithoutAnAndroidEntryMeansNoMinimum() {
+        assertNull(HotMessApi.parseStatus("""{"api":{"version":"2026-10-11"},"clients":{"ios":{"minimumVersion":"1.0.15"}}}"""))
+        assertNull(HotMessApi.parseStatus("not json"))
+        val android = HotMessApi.parseStatus(
+            """{"api":{"version":"2026-10-11","sdk":{"android":{"minimumVersion":"0.1.0"}}},
+               "clients":{"android":{"minimumVersion":"1.2","latestVersion":"1.3.1","storeUrl":"https://play.google.com/store/apps/details?id=social.hotmess.android"}}}""",
         )
+        assertEquals(VersionInfo("1.2", "1.3.1", "https://play.google.com/store/apps/details?id=social.hotmess.android"), android)
+    }
+
+    @Test
+    fun theStatusIsReadWithoutASession() = runTest {
+        val (api, _) = api("/v1/status" to """{"api":{"version":"2026-10-11"},"clients":{"android":{"minimumVersion":"2.0","latestVersion":"2.0","storeUrl":null}}}""")
+        assertEquals("2.0", api.clientVersions()?.minimumVersion)
+    }
+
+    @Test
+    fun errorsAreClassifiedByCodeNotWording() = runTest {
+        val (api, _) = api("query People" to """{"data":null,"errors":[{"message":"Pick places in your city","extensions":{"code":"NOT_FOUND"}}]}""")
+        assertFailsWith<ApiError.NotFound> { api.people() }
+    }
+}
+
+class VersionInfoTest {
+    @Test
+    fun comparesVersionsPartByPart() {
+        val minimum = VersionInfo(minimumVersion = "1.0.15")
+        assertTrue(minimum.supports("1.0.15"))
+        assertTrue(minimum.supports("1.1"))
+        assertTrue(minimum.supports("2.0-staging"), "a build type's suffix doesn't count")
+        assertFalse(minimum.supports("1.0.9"))
+        assertFalse(minimum.supports("0.9.99"))
+        assertTrue(VersionInfo(minimumVersion = "1.2").supports("1.2.0"))
+        assertTrue(VersionInfo().supports("0.1"), "no minimum supports everything")
+        assertTrue(minimum.supports("dev"), "an unreadable version isn't refused")
+        assertTrue(VersionInfo(minimumVersion = "soon").supports("1.0"))
+    }
+}
+
+class ApiErrorTest {
+    private fun error(message: String, extensions: String? = null): GraphQLError {
+        val extra = if (extensions == null) "" else ""","extensions":$extensions"""
+        return HotMessApi.json.decodeFromString(GraphQLError.serializer(), """{"message":"$message"$extra}""")
+    }
+
+    @Test
+    fun classifiesGraphQLErrorsByCode() {
+        assertEquals(ApiError.Unauthorized, ApiError.fromGraphQL(listOf(error("Sign in", """{"code":"UNAUTHENTICATED"}"""))))
+        assertEquals(ApiError.NotFound, ApiError.fromGraphQL(listOf(error("Nope", """{"code":"NOT_FOUND"}"""))))
+        assertEquals(ApiError.Server(500), ApiError.fromGraphQL(listOf(error("Stripe failed", """{"code":"INTERNAL"}"""))))
+        assertEquals(ApiError.Unavailable, ApiError.fromGraphQL(listOf(error("Stripe is down", """{"code":"UNAVAILABLE"}"""))))
+        assertTrue(ApiError.Unavailable.isRetryable)
+
+        val invalid = ApiError.fromGraphQL(listOf(error("Name can't be blank", """{"code":"INVALID","fields":{"name":["can't be blank"]}}""")))
+        assertEquals(ApiError.Rejected("INVALID", "Name can't be blank", mapOf("name" to listOf("can't be blank"))), invalid)
+        assertFalse(invalid.isRetryable)
+
+        val forbidden = ApiError.fromGraphQL(listOf(error("Banned", """{"code":"FORBIDDEN","reason":"banned"}""")))
+        assertEquals("banned", (forbidden as ApiError.Rejected).reason)
+        assertTrue(ApiError.fromGraphQL(listOf(error("Slow down", """{"code":"RATE_LIMITED"}"""))).isRetryable)
+    }
+
+    @Test
+    fun anErrorWithoutACodeIsNotForPeople() {
+        // graphql-ruby's own errors carry its codes or none; their wording never reaches the screen.
+        assertEquals(ApiError.Other(ApiError.GENERIC_MESSAGE), ApiError.fromGraphQL(listOf(error("Field 'x' doesn't exist on type 'Query'"))))
+        assertEquals(ApiError.Other(ApiError.GENERIC_MESSAGE), ApiError.fromGraphQL(listOf(error("That ping has ended"))))
+        assertEquals(ApiError.Other(ApiError.GENERIC_MESSAGE), ApiError.fromGraphQL(listOf(error("Bad variable", """{"code":"undefinedField"}"""))))
+        assertNull(HotMessApi.userFacingMessage(listOf(error("Field 'sendPing' doesn't exist on type 'Mutation'"))))
+        assertNull(HotMessApi.userFacingMessage(emptyList()))
+        assertEquals("Pick places in your city", HotMessApi.userFacingMessage(listOf(error("Pick places in your city", """{"code":"INVALID"}"""))))
     }
 }
 
 private object Fixtures {
-    const val VENUE = """{"id":"v-1","name":"The Wildrose","address":"1021 E Pike St","distance":120.5,
-        "point":"POINT (-122.3194 47.6145)","facebookId":"55","photoUrl":"https://img/v","heroUrl":null,"isLiked":true}"""
+    const val VENUE = """{"id":"v-1","name":"The Wildrose","distance":120.5,"point":"POINT (-122.3194 47.6145)",
+        "photoUrl":"https://img/v","bannerUrl":null,"profile":{"address":"1021 E Pike St","phone":null,"facebook":{"facebookId":"55","isLiked":true}}}"""
 
     const val EVENT = """{"id":"e-1","name":"Drag Brunch","startAt":"2026-10-10T04:00:00Z","endAt":null,
-        "facebookId":"1234","coverPhotoUrl":"","isFeatured":false,"viewerRsvp":"MAYBE","venue":$VENUE}"""
+        "facebookId":"1234","bannerUrl":null,"isFeatured":false,"rsvp":{"mine":"MAYBE"},"venue":{"name":"The Wildrose","venue":$VENUE}}"""
 
-    const val PERSON = """{"id":"p-1","name":"DJ Glitter","facebookId":null,"isLiked":false,"pictureUrl":"https://img/p",
-        "coverUrl":null,"events":[$EVENT],"socialLinks":[{"id":"s-1","handle":"glitter","provider":"Instagram","url":"https://instagram.com/glitter"}],
-        "tracks":[{"id":"t-1","title":"Late Night","provider":"soundcloud","providerUrl":null,"waveformUrl":null,"artworkUrl":null}]}"""
+    const val PERSON = """{"id":"p-1","name":"DJ Glitter","avatarUrl":"https://img/p","bannerUrl":null,"events":{"upcoming":{"nodes":[$EVENT]}},
+        "profile":{"facebook":{"facebookId":"99","isLiked":false},"socialLinks":{"nodes":[{"id":"s-1","handle":"glitter","provider":"Instagram","url":"https://instagram.com/glitter"}]}},
+        "music":{"tracks":{"nodes":[{"id":"t-1","title":"Late Night","provider":"soundcloud","providerUrl":null,"waveformUrl":null,"artworkUrl":null},null]}}}"""
 
-    const val TROUPE = """{"id":"p-3","name":"The Glitterettes","pictureUrl":null,"coverUrl":null,"events":[],"socialLinks":[],"tracks":[],
-        "members":[{"id":"p-4","name":"Anita Cocktail","pictureUrl":"https://img/anita"},{"id":"p-5","name":"Ella Vator","pictureUrl":""}],
-        "groups":[{"id":"p-2","name":"House of Glitter","pictureUrl":null}]}"""
+    const val TROUPE = """{"id":"p-3","name":"The Glitterettes","avatarUrl":null,"bannerUrl":null,"events":{"upcoming":{"nodes":[]}},"profile":{"socialLinks":{"nodes":[]}},"music":{"tracks":{"nodes":[]}},
+        "members":[{"id":"p-4","name":"Anita Cocktail","avatarUrl":"https://img/anita"},{"id":"p-5","name":"Ella Vator","avatarUrl":null}],
+        "groups":[{"id":"p-2","name":"House of Glitter","avatarUrl":null}]}"""
 }

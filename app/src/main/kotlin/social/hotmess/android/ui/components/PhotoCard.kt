@@ -301,9 +301,9 @@ fun VenueCard(
  * Interested only), and the name with when and where at the bottom. Featured events are taller.
  */
 @Composable
-fun EventCard(event: Event, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun EventCard(event: Event, onClick: () -> Unit, modifier: Modifier = Modifier, photoUrl: String? = null) {
     PhotoCard(
-        url = event.coverPhotoUrl,
+        url = photoUrl ?: event.bannerUrl,
         onClick = onClick,
         modifier = modifier,
         minHeight = if (event.isFeatured) Sizes.photoCardFeatured else Sizes.photoCard,
@@ -343,7 +343,7 @@ fun PersonCard(
     friends: List<Friend> = emptyList(),
 ) {
     PhotoCard(
-        url = person.pictureUrl,
+        url = person.avatarUrl,
         onClick = onClick,
         modifier = modifier.semantics {
             if (friends.isNotEmpty()) stateDescription = withFriends(friends)
@@ -359,7 +359,7 @@ fun PersonCard(
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Avatar(person.pictureUrl, person.name, size = Sizes.avatarLg, modifier = Modifier.photoRing())
+            Avatar(person.avatarUrl, person.name, size = Sizes.avatarLg, modifier = Modifier.photoRing())
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(person.name, style = PersonCardTitle, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 (detail ?: person.role)?.takeIf { it.isNotBlank() }?.let {

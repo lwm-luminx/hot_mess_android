@@ -5,9 +5,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -37,12 +39,15 @@ import social.hotmess.android.session.AuthState
 import social.hotmess.android.ui.LocalAppGraph
 import social.hotmess.android.ui.components.Message
 import social.hotmess.android.ui.components.PrimaryButton
+import social.hotmess.android.ui.components.SecondaryButton
 import social.hotmess.android.ui.components.SpectrumBar
 import social.hotmess.android.ui.openUrl
 import social.hotmess.android.ui.theme.HotMessTheme
 import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
+import social.hotmess.core.LegalLinks
+import social.hotmess.core.SignInMethods
 import social.hotmess.core.VersionInfo
 
 /** While the session is restored. */
@@ -56,11 +61,28 @@ fun LaunchScreen() {
 
 /** Sign-in, skinned with the audience's branding, always dark over the photo. */
 @Composable
-fun LoginScreen(onSignIn: () -> Unit) {
+fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}) {
     val graph = LocalAppGraph.current
     val state by graph.session.state.collectAsStateWithLifecycle()
     val branding by graph.brand.branding.collectAsStateWithLifecycle()
+    val endedNotice by graph.session.endedNotice.collectAsStateWithLifecycle()
     val signingIn = state == AuthState.SigningIn
+    // The audience's sign-in methods from AudienceKit; when the API can't say, all of them with no warnings. The
+    // buttons wait for the answer so nobody skips a warning by tapping early.
+    var signInMethods by remember { mutableStateOf<SignInMethods?>(null) }
+    var asked by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        signInMethods = graph.api.signInMethods(graph.configuration.audienceHost)
+        asked = true
+    }
+    val offersFacebook = signInMethods?.facebook ?: true
+    val offersGoogle = signInMethods?.google ?: true
+    // A sign-in waiting on Cancel or Continue: the warning and what Continue does.
+    var warned by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
+    fun begin(method: String, signIn: () -> Unit) {
+        val warning = signInMethods?.warning(method)
+        if (warning == null) signIn() else warned = warning to signIn
+    }
 
     HotMessTheme(branding = branding?.theme, darkTheme = true) {
         Box(Modifier.fillMaxSize().background(Color.Black)) {
@@ -93,18 +115,68 @@ fun LoginScreen(onSignIn: () -> Unit) {
                         textAlign = TextAlign.Center,
                     )
                     Spacer(Modifier.padding(Space.s4))
+                    val notice = endedNotice
+                    if (state == AuthState.SignedOut && notice != null) {
+                        Text(notice, style = HotMessType.body, color = Color.White, textAlign = TextAlign.Center)
+                    }
                     if (signingIn) {
                         CircularProgressIndicator(color = Color.White)
                     } else {
-                        PrimaryButton("Continue with Facebook", onClick = onSignIn, modifier = Modifier.fillMaxWidth())
+                        if (offersFacebook) {
+                            PrimaryButton(
+                                "Continue with Facebook",
+                                onClick = { begin("facebook", onSignIn) },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = asked,
+                            )
+                        }
+                        if (offersGoogle) {
+                            SecondaryButton(
+                                "Continue with Google",
+                                onClick = { begin("google", onGoogleSignIn) },
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
+                                enabled = asked,
+                            )
+                        }
                     }
                     Text(
-                        "We use your Facebook profile to find your friends and the nights near you.",
+                        when {
+                            offersFacebook && offersGoogle ->
+                                "We use your Facebook profile to find your friends and the nights near you. With Google, you can connect Facebook later."
+                            offersFacebook -> "We use your Facebook profile to find your friends and the nights near you."
+                            offersGoogle -> "Sign in with Google to find the nights near you. You can connect Facebook later to find your friends."
+                            else -> "Sign-in isn't available in this app right now. Please check back soon."
+                        },
                         style = HotMessType.bodySmall,
                         color = Color.White.copy(alpha = 0.8f),
                         textAlign = TextAlign.Center,
                     )
+                    val context = androidx.compose.ui.platform.LocalContext.current
+                    Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = { context.openUrl(LegalLinks.TERMS) }) {
+                            Text("Terms of use", style = HotMessType.caption, color = Color.White)
+                        }
+                        TextButton(onClick = { context.openUrl(LegalLinks.PRIVACY) }) {
+                            Text("Privacy policy", style = HotMessType.caption, color = Color.White)
+                        }
+                    }
                 }
+            }
+
+            warned?.let { (warning, signIn) ->
+                AlertDialog(
+                    onDismissRequest = { warned = null },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            warned = null
+                            signIn()
+                        }) { Text("Continue") }
+                    },
+                    dismissButton = { TextButton(onClick = { warned = null }) { Text("Cancel") } },
+                    title = { Text("Before you continue", style = HotMessType.heading) },
+                    text = { Text(warning, style = HotMessType.body) },
+                    containerColor = tokens.surfaceRaised,
+                )
             }
 
             var reportingProblem by remember { mutableStateOf(false) }
@@ -130,7 +202,7 @@ fun LoginScreen(onSignIn: () -> Unit) {
     }
 }
 
-/** When the API no longer serves this build. */
+/** When the API no longer serves this build (`GET /v1/status` says a newer minimum than this version). */
 @Composable
 fun UpdateRequiredScreen(versionInfo: VersionInfo?) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -139,6 +211,8 @@ fun UpdateRequiredScreen(versionInfo: VersionInfo?) {
         title = "Time to update",
         text = versionInfo?.minimumVersion?.let { "Update Hot Mess to version $it or later to keep going." }
             ?: "Update Hot Mess to keep going.",
-        action = "Open Google Play" to { context.openUrl("market://details?id=${context.packageName}") },
+        action = "Open Google Play" to {
+            context.openUrl(versionInfo?.storeUrl ?: "market://details?id=${context.packageName}")
+        },
     )
 }

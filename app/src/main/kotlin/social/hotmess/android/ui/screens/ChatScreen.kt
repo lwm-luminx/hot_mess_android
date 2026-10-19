@@ -10,6 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Chat
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -44,10 +45,12 @@ import social.hotmess.android.ui.components.RichContent
 import social.hotmess.android.ui.components.RoomBanner
 import social.hotmess.android.ui.components.RoomBannerKind
 import social.hotmess.core.AppRoute
-import social.hotmess.core.ChatProtocol
+import social.hotmess.core.BlockedUser
 import social.hotmess.core.ChatRoom
 import social.hotmess.core.FriendDirectory
 import social.hotmess.core.RecordId
+import social.hotmess.core.ReportSubject
+import social.hotmess.core.ReportTarget
 import social.hotmess.core.RoomPeople
 import social.hotmess.core.VenueChatConnection
 import social.hotmess.core.VenueMessage
@@ -73,7 +76,7 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
 
     /**
      * Who is in the room now, by lowercase user id, with their names and photos where the room sends
-     * them: the roster on joining, then presence frames. Someone who left stays listed, offline, until
+     * them: the roster on joining, then presence events. Someone who left stays listed, offline, until
      * their `recentUntil`. Empty while disconnected.
      */
     private val _people = MutableStateFlow(RoomPeople())
@@ -86,18 +89,21 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
     private val _reachable = MutableStateFlow<Set<String>>(emptySet())
     val reachable: StateFlow<Set<String>> = _reachable.asStateFlow()
 
-    private var connection: VenueChatConnection? = null
+    /** A line on its way to the room; the composer waits for it. */
+    private val _sending = MutableStateFlow(false)
+    val sending: StateFlow<Boolean> = _sending.asStateFlow()
+
     private var job: Job? = null
     private var heartbeat: Job? = null
     private var prune: Job? = null
 
-    /** Connects while the screen is showing, reconnecting after a drop. */
+    /**
+     * Follows the room on the app's shared cable while the screen is showing. The cable reconnects after
+     * a drop and joins the room again on the same flow: offline until then, and ChatJoined refreshes the room.
+     * Only when the server ends the room's operation does this subscribe again itself, after a backoff.
+     */
     fun connect() {
         if (job?.isActive == true) return
-        val url = ChatProtocol.realtimeUrl(graph.configuration.baseUrl) ?: run {
-            _status.value = Status.OFFLINE
-            return
-        }
         if (heartbeat?.isActive != true) {
             heartbeat = viewModelScope.launch {
                 while (true) {
@@ -119,13 +125,29 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
             _status.value = Status.CONNECTING
             // The server checks for a recent position at the venue (or in the locale) before letting anyone in.
             graph.location.reportAgain()
+            // The cable runs GraphQL for one audience: the configured one, the session's, or the host's.
             var backoff = 1_000L
+            var audienceId: String? = null
+            while (audienceId == null) {
+                audienceId = try {
+                    graph.api.client.audienceId()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
+                }
+                if (audienceId == null) {
+                    _status.value = Status.OFFLINE
+                    delay(backoff)
+                    backoff = (backoff * 2).coerceAtMost(30_000L)
+                    _status.value = Status.CONNECTING
+                }
+            }
+            backoff = 1_000L
             while (true) {
-                _status.value = Status.CONNECTING
-                val current = VenueChatConnection(room, url, graph.session.sessionToken)
-                connection = current
                 var away = false
-                current.events().takeWhile { event ->
+                var ended = false
+                VenueChatConnection(room, audienceId, graph.cable).events().takeWhile { event ->
                     when (event) {
                         VenueChatConnection.Event.Connected -> {
                             _status.value = Status.CONNECTED
@@ -154,33 +176,37 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
                         is VenueChatConnection.Event.Removed -> _messages.value = _messages.value.filterNot { it.id == event.id }
                         VenueChatConnection.Event.Cleared -> _messages.value = emptyList()
                         is VenueChatConnection.Event.Disconnected -> {
+                            // Reconnecting (or over): the next roster says who's here; until then nobody is known to be.
                             _status.value = Status.OFFLINE
-                            // The next roster says who's here; until then nobody is known to be.
                             _people.value = RoomPeople()
                             _reachable.value = emptySet()
                         }
+                        VenueChatConnection.Event.Ended -> ended = true
                         VenueChatConnection.Event.Rejected, VenueChatConnection.Event.Left -> away = true
                     }
                     !away
                 }.collect()
-                connection = null
                 if (away) {
-                    // Reconnecting won't help until they're back; "Try again" reconnects.
+                    // Reconnecting won't help until they're back; "Try again" subscribes again.
                     _status.value = Status.AWAY
                     return@launch
                 }
                 _status.value = Status.OFFLINE
+                // Cable drops are the cable's to reconnect; only an operation the server ended is ours to
+                // start over. Anything else (signed out, refused) stays offline.
+                if (!ended) return@launch
                 delay(backoff)
                 backoff = (backoff * 2).coerceAtMost(30_000L)
+                _status.value = Status.CONNECTING
             }
         }
     }
 
     /** Adds a line. A line the room sends again (by its id) replaces the first copy. */
     private fun receive(line: VenueMessage) {
-        if (line.reachable && !line.isPostedAsVenue) _reachable.value = _reachable.value + line.userId.lowercase()
+        if (line.reachable && !line.isFromListing) _reachable.value = _reachable.value + line.userId.lowercase()
         // An older server's roster has no names: a line someone sends names them in "Here now".
-        if (!line.isPostedAsVenue) _people.value = _people.value.described(line.userId, line.name, line.avatarUrl)
+        if (!line.isFromListing) _people.value = _people.value.described(line.userId, line.name, line.avatarUrl)
         val current = _messages.value
         val index = current.indexOfFirst { it.id == line.id }
         _messages.value = if (index >= 0) current.toMutableList().also { it[index] = line } else current + line
@@ -194,7 +220,7 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
         val lines = messages
         val older = pinned?.takeIf { p -> lines.none { it.id == p.id } }
         _messages.value = listOfNotNull(older) + lines
-        _reachable.value = lines.filter { it.reachable && !it.isPostedAsVenue }.map { it.userId.lowercase() }.toSet()
+        _reachable.value = lines.filter { it.reachable && !it.isFromListing }.map { it.userId.lowercase() }.toSet()
     }
 
     /** An announcement was pinned (replacing whichever was) or unpinned. */
@@ -213,15 +239,32 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
         heartbeat = null
         prune?.cancel()
         prune = null
-        connection = null
         _people.value = RoomPeople()
         _reachable.value = emptySet()
     }
 
-    fun send(body: String): Boolean {
+    /**
+     * Says [body] in the room with `sendMyChatMessage`, then tells [onResult] whether it went. The room
+     * delivers the line to everyone following it, this person included, and the copy the mutation returns
+     * shows it at once; the room's copy then replaces it by id. A failed send leaves the draft as it was.
+     */
+    fun send(body: String, onResult: (Boolean) -> Unit) {
         val text = body.trim()
-        if (text.isEmpty()) return false
-        return connection?.send(text) ?: false
+        if (text.isEmpty() || _sending.value || _status.value != Status.CONNECTED) return onResult(false)
+        _sending.value = true
+        viewModelScope.launch {
+            val sent = try {
+                graph.api.sendChatMessage(room, text)?.let(::receive)
+                true
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                false
+            } finally {
+                _sending.value = false
+            }
+            onResult(sent)
+        }
     }
 
     override fun onCleared() = disconnect()
@@ -253,15 +296,31 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
     val people by model.people.collectAsStateWithLifecycle()
     val reachable by model.reachable.collectAsStateWithLifecycle()
     val user by graph.session.user.collectAsStateWithLifecycle()
+    val safety by graph.safety.state.collectAsStateWithLifecycle()
     var draft by rememberSaveable { mutableStateOf("") }
+    // Reporting and blocking from a long press on someone's line, and the terms asked before the first message.
+    var acting by remember { mutableStateOf<VenueMessage?>(null) }
+    var reporting by remember { mutableStateOf<ReportSubject?>(null) }
+    var blocking by remember { mutableStateOf<BlockedUser?>(null) }
+    var askingTerms by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) { if (graph.safety.state.value == null) graph.safety.refresh() }
 
     DisposableEffect(model) {
         model.connect()
         onDispose { model.disconnect() }
     }
 
+    val sending by model.sending.collectAsStateWithLifecycle()
+
     fun send() {
-        if (model.send(draft)) draft = ""
+        if (graph.safety.needsTerms) {
+            askingTerms = true
+            return
+        }
+        val text = draft
+        // Clears only what was sent, not anything typed while it went.
+        model.send(text) { sent -> if (sent && draft == text) draft = "" }
     }
 
     ScreenScaffold(title = venueName, onBack = navigator::back) {
@@ -291,11 +350,14 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
             val userId = user?.id
             val friends = graph.api.friends
             // Who's here, the viewer then friends first; a roster can add friends' full names, so it redraws the thread too.
-            val hereNow = remember(people, userId) {
+            val hereNow = remember(people, userId, safety) {
                 RoomPeople.hereNow(people.byId.values, userId) { friends.fullName(it) }
+                    .filterNot { safety?.isBlocked(it.userId) == true }
             }
             HereNowStrip(hereNow, reachable, viewerId = userId)
-            val thread = remember(messages, userId, people) { messages.map { it.threadMessage(userId, friends) } }
+            // Blocked people's lines leave the room at once; the API stops sending new ones.
+            val shown = remember(messages, safety) { messages.filterNot { !it.isFromListing && safety?.isBlocked(it.userId) == true } }
+            val thread = remember(shown, userId, people) { shown.map { it.threadMessage(userId, friends) } }
             // Green for everyone in the room, yellow for friends outside it whom a notification reaches.
             val presence = remember(people, reachable) {
                 val push = reachable + people.byId.values.filter { it.isRecent && it.reachable }.map { it.userId }
@@ -308,14 +370,45 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
                 presence = presence,
                 isLocale = isLocale,
                 onOpenEvent = { id -> navigator.open(AppRoute.EventDetail(RecordId.normalize(id) ?: id.lowercase())) },
+                onMessageActions = { line -> acting = shown.firstOrNull { it.id == line.id } },
             )
             ChatComposer(
                 value = draft,
                 onValueChange = { draft = it },
                 onSend = ::send,
-                sendEnabled = draft.isNotBlank() && status == VenueChatModel.Status.CONNECTED,
+                sendEnabled = draft.isNotBlank() && !sending && status == VenueChatModel.Status.CONNECTED,
             )
         }
+    }
+
+    acting?.let { line ->
+        // A post as the venue or a listing has no sender to block; it can still be reported.
+        val sender = if (line.isFromListing) null else BlockedUser(line.userId, line.name.orEmpty(), line.avatarUrl)
+        ReportOrBlockDialog(
+            title = line.name?.takeIf { it.isNotBlank() }?.let { "Message from $it" } ?: "Message",
+            reportLabel = "Report message",
+            person = sender,
+            onReport = {
+                acting = null
+                reporting = ReportSubject(ReportTarget.MESSAGE, line.id, sender)
+            },
+            onBlock = {
+                acting = null
+                blocking = it
+            },
+            onDismiss = { acting = null },
+        )
+    }
+    reporting?.let { ReportDialog(it) { reporting = null } }
+    blocking?.let { BlockDialog(it) { blocking = null } }
+    if (askingTerms) {
+        TermsDialog(
+            onAgreed = {
+                askingTerms = false
+                send()
+            },
+            onDismiss = { askingTerms = false },
+        )
     }
 }
 
@@ -327,12 +420,13 @@ private fun roomNameFallback(room: ChatRoom, graph: AppGraph): String = when (ro
 
 /**
  * A room's line as ChatThread draws it. A friend shows by their full name (the room sends everyone
- * "First L."), a post as the venue by the venue's name and photo, and a rich message as its card.
+ * "First L."), a post as the venue or as a listing by its own name and photo, and a rich message as its card.
  */
 private fun VenueMessage.threadMessage(viewerId: String?, friends: FriendDirectory) = ChatThreadMessage(
     id = id,
-    senderId = userId.lowercase(),
-    senderName = if (isPostedAsVenue) name else friends.displayName(userId, name),
+    // A post as a listing groups apart from the poster's own lines, and takes no presence of theirs.
+    senderId = personId?.let { "person:$it" } ?: userId.lowercase(),
+    senderName = if (isFromListing) name else friends.displayName(userId, name),
     avatarUrl = avatarUrl,
     text = body,
     sentAt = sentAt,

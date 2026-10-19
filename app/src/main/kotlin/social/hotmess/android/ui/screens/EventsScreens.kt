@@ -160,21 +160,21 @@ fun EventScreen(id: String, navigator: Navigator) {
     val userId = rememberUserId()
     var pingHere by rememberSaveable { mutableStateOf(false) }
     val actions = rememberPingActions { ping ->
-        loader.update { event -> event.copy(friendPings = event.friendPings.map { if (it.id == ping.id) ping else it }) }
+        loader.update { event -> event.replacingFriendPing(ping) }
         graph.pingUpdated(ping.id)
     }
 
     fun choose(rsvp: Rsvp) {
         val previous = state.valueOrNull?.rsvp ?: return
         if (rsvp == previous) return
-        loader.update { it.copy(rsvp = rsvp) }
+        loader.update { it.withRsvp(rsvp) }
         scope.launch {
             try {
                 graph.api.setRsvp(rsvp, id)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                loader.update { it.copy(rsvp = previous) }
+                loader.update { it.withRsvp(previous) }
                 rsvpError = ApiError.of(e).message ?: "Try again in a moment."
             }
         }
@@ -201,7 +201,7 @@ fun EventScreen(id: String, navigator: Navigator) {
             HeroFeed(
                 listState,
                 hero = {
-                    HeroHeader(loaded.coverPhotoUrl, topInset, onTone = { heroTone = it }) {
+                    HeroHeader(loaded.bannerUrl, topInset, onTone = { heroTone = it }) {
                         Text(
                             "${Formatting.monthAbbreviation(loaded.startAt)} ${Formatting.dayOfMonth(loaded.startAt)} · ${Formatting.shortTime(loaded.startAt)}".uppercase(),
                             style = HotMessType.caption,

@@ -14,7 +14,7 @@ sealed interface AppRoute {
     /** The Now tab, opened from a Ping push; [pingId] names the Ping it was about. */
     data class NowPing(val pingId: String? = null) : AppRoute
 
-    /** A chat room by its venue's or locale's id ([room]), from a link or a recent-chat push. */
+    /** A chat room by its venue's or locale's id ([room]), from a link or a push about a room the user left. */
     data class Chat(val room: ChatRoom) : AppRoute
 
     /** Which tab the route opens in. */
@@ -32,8 +32,9 @@ sealed interface AppRoute {
 object DeepLink {
     /**
      * Reads `hotmess://venues/<uuid>` (the type is the host) and
-     * `https://hotmess.social/venues/<uuid>`; likewise `events` and `people`. A room's link,
-     * `venues/<uuid>/chat` or `locales/<uuid>/chat`, opens its chat.
+     * `https://hotmess.social/venues/<uuid>`; likewise `events`, `people` and `pings` (a Ping opens Now).
+     * A room's link, `venues/<uuid>/chat` or `locales/<uuid>/chat`, opens its chat. Pushes carry such a
+     * URL in `url`, which is what the app routes on (a `recent_chat` push carries its room's).
      */
     fun route(url: String): AppRoute? {
         val uri = runCatching { URI(url) }.getOrNull() ?: return null
@@ -58,32 +59,8 @@ object DeepLink {
             "venues" -> AppRoute.VenueDetail(id)
             "events" -> AppRoute.EventDetail(id)
             "people" -> AppRoute.PersonDetail(id)
+            "pings" -> AppRoute.NowPing(id)
             else -> null
-        }
-    }
-}
-
-/**
- * A push about new messages in a chat room the user left lately (they asked for these: `recentChatPush`),
- * read from the FCM message's data. Its [url] is the room's web link, `…/venues/<id>/chat` or
- * `…/locales/<id>/chat`, which [route] opens.
- */
-data class RecentChatPush(val url: String, val roomId: String?, val messageId: String?) {
-    val route: AppRoute? get() = DeepLink.route(url)
-
-    companion object {
-        const val KIND = "kind"
-        const val URL = "url"
-        const val ROOM_ID = "room_id"
-        const val MESSAGE_ID = "message_id"
-        private const val RECENT_CHAT = "recent_chat"
-
-        /** The push in [data], or null when it isn't one, or has no link the app can open. */
-        fun parse(data: Map<String, String?>): RecentChatPush? {
-            if (data[KIND] != RECENT_CHAT) return null
-            val url = data[URL]?.takeIf { it.isNotBlank() } ?: return null
-            return RecentChatPush(url, data[ROOM_ID]?.takeIf { it.isNotBlank() }, data[MESSAGE_ID]?.takeIf { it.isNotBlank() })
-                .takeIf { it.route != null }
         }
     }
 }

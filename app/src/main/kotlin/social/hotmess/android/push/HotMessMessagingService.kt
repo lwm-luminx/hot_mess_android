@@ -15,14 +15,18 @@ import com.google.firebase.messaging.RemoteMessage
 import social.hotmess.android.MainActivity
 import social.hotmess.android.R
 import social.hotmess.android.appGraph
+import social.hotmess.core.AppRoute
+import social.hotmess.core.DeepLink
 import social.hotmess.core.PingPush
-import social.hotmess.core.RecentChatPush
+import social.hotmess.core.PushNotification
 
 /**
  * Firebase hands new tokens here. In the background Firebase shows notifications itself, and tapping
- * one opens [MainActivity] with the message's data (`kind`, `ping_id`, or a recent chat's `url`) as
- * extras. In the foreground Firebase shows nothing, so a Ping push is shown here, with the same extras,
- * and Now reloads; likewise a push about a chat room the user just left, which opens the room.
+ * one opens [MainActivity] with the message's data (`url`, `ping_id`; `kind` for analytics) as extras. In the
+ * foreground Firebase shows nothing, so a push whose `url` the app routes is shown here, with the same extras,
+ * and a Ping's reloads Now (a push about a chat room the user just left, whose `url` is the room's, goes in
+ * its own channel), unless the same notification (by `notification_id`) came over the cable and
+ * [InAppNotifications] showed it.
  */
 class HotMessMessagingService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
@@ -31,41 +35,36 @@ class HotMessMessagingService : FirebaseMessagingService() {
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
-        RecentChatPush.parse(message.data)?.let { push ->
-            val notification = message.notification ?: return
-            val id = (push.messageId ?: push.url).hashCode()
-            show(applicationContext, notification.title, notification.body, message.data, CHAT_CHANNEL, "Chat rooms", id)
-            return
-        }
-        val push = PingPush.parse(message.data) ?: return
-        applicationContext.appGraph.pingUpdated(push.pingId)
+        val route = message.data[PingPush.URL]?.let(DeepLink::route)
+            ?: PingPush.parse(message.data)?.let { AppRoute.NowPing(it.pingId) }
+            ?: return
+        val graph = applicationContext.appGraph
+        // The in-app copy was shown (and reloaded Now) already, or gets a moment to be: drop this one.
+        if (!graph.notifications.shouldPostSystemCopy(message.data[PushNotification.NOTIFICATION_ID])) return
+        if (route is AppRoute.NowPing) graph.pingUpdated(route.pingId)
         val notification = message.notification ?: return
-        show(applicationContext, notification.title, notification.body, message.data, PING_CHANNEL, "Pings", push.pingId?.hashCode() ?: 0)
+        val channel = if (route is AppRoute.Chat) CHAT_CHANNEL else PING_CHANNEL
+        show(applicationContext, notification.title, notification.body, message.data, channel)
     }
 
     companion object {
         const val PING_CHANNEL = "pings"
         const val CHAT_CHANNEL = "chat"
 
-        private fun show(
-            context: Context,
-            title: String?,
-            body: String?,
-            data: Map<String, String>,
-            channel: String,
-            channelName: String,
-            id: Int,
-        ) {
+        private fun channelName(channel: String): String = if (channel == CHAT_CHANNEL) "Chat rooms" else "Pings"
+
+        private fun show(context: Context, title: String?, body: String?, data: Map<String, String>, channel: String) {
             val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
                 PackageManager.PERMISSION_GRANTED || android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU
             if (!granted) return
 
             val manager = context.getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(NotificationChannel(channel, channelName, NotificationManager.IMPORTANCE_HIGH))
+            manager.createNotificationChannel(NotificationChannel(channel, channelName(channel), NotificationManager.IMPORTANCE_HIGH))
 
             val open = Intent(context, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             data.forEach { (key, value) -> open.putExtra(key, value) }
+            val id = (data[PingPush.URL] ?: data[PingPush.PING_ID])?.hashCode() ?: 0
             val tap = PendingIntent.getActivity(context, id, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
             val notification = NotificationCompat.Builder(context, channel)

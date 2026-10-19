@@ -12,9 +12,12 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
+import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Paid
 import androidx.compose.material.icons.rounded.People
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -63,9 +66,12 @@ import social.hotmess.android.ui.rememberLoader
 import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.Space
 import social.hotmess.core.AppRoute
+import social.hotmess.core.Event
 import social.hotmess.core.Person
 import social.hotmess.core.PersonDetail
 import social.hotmess.core.PhotoTone
+import social.hotmess.core.ReportSubject
+import social.hotmess.core.ReportTarget
 import social.hotmess.core.SocialLink
 
 /** The DJs, hosts and performers. */
@@ -110,11 +116,20 @@ fun PersonScreen(id: String, navigator: Navigator) {
     val listState = rememberLazyListState()
     val scrolled by rememberHeroCollapsed(listState)
     var heroTone by remember { mutableStateOf(PhotoTone.PLACEHOLDER) }
+    var reporting by remember { mutableStateOf<ReportSubject?>(null) }
+    reporting?.let { ReportDialog(it) { reporting = null } }
     HeroScaffold(
         title = current?.name ?: "Person",
         tone = heroTone,
         collapsed = current == null || scrolled,
         onBack = navigator::back,
+        actions = {
+            if (current != null) {
+                IconButton(onClick = { reporting = ReportSubject(ReportTarget.PERSON, id) }) {
+                    Icon(Icons.Rounded.Flag, contentDescription = "Report")
+                }
+            }
+        },
     ) { topInset ->
         LoadStateView(state, onRetry = { loader.load(id) { graph.api.person(id) } }) { detail ->
             val open = { person: Person -> navigator.open(AppRoute.PersonDetail(person.id)) }
@@ -152,7 +167,11 @@ fun PersonScreen(id: String, navigator: Navigator) {
                     item { DetailSection("Events") { EmptyRow("Nothing coming up yet.") } }
                 } else {
                     cardSection("events", "Events", detail.events, key = { it.id }) { event ->
-                        EventCard(event, onClick = { navigator.open(AppRoute.EventDetail(event.id)) })
+                        EventCard(
+                            event,
+                            onClick = { navigator.open(AppRoute.EventDetail(event.id)) },
+                            photoUrl = event.photoUrl(Event.PhotoPriority.VENUE_FIRST, personFallback = detail.person),
+                        )
                     }
                 }
                 if (detail.tracks.isNotEmpty()) {
@@ -184,10 +203,10 @@ fun PersonScreen(id: String, navigator: Navigator) {
 /** The cover photo, with their picture and name over it. */
 @Composable
 private fun Hero(detail: PersonDetail, topInset: Dp, onTone: (PhotoTone) -> Unit) {
-    HeroHeader(detail.coverUrl, topInset, onTone = onTone) {
+    HeroHeader(detail.bannerUrl, topInset, onTone = onTone) {
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.Bottom) {
             Avatar(
-                detail.pictureUrl,
+                detail.avatarUrl,
                 detail.name,
                 size = 76.dp,
                 modifier = Modifier.border(3.dp, LocalContentColor.current, CircleShape),

@@ -97,10 +97,9 @@ class PingModelTest {
     }
 
     @Test
-    fun idsMatchAcrossForms() {
+    fun idsMatchAcrossCases() {
         val uuid = "b0f8b66a-e636-495d-9475-0f5317ea08e0"
-        val global = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString("gid://audience-kit/Venue/$uuid".toByteArray())
-        assertTrue(RecordId.same(uuid.uppercase(), global))
+        assertTrue(RecordId.same(uuid.uppercase(), uuid))
         assertTrue(RecordId.same("t-1", "T-1"))
         assertFalse(RecordId.same("t-1", null))
         assertFalse(RecordId.same("t-1", "t-2"))
@@ -203,9 +202,17 @@ class PingLogicTest {
     }
 
     @Test
-    fun readsPingPushes() {
-        assertEquals(PingPush(PingPush.Kind.PING, "p-1"), PingPush.parse(mapOf("kind" to "ping", "ping_id" to "p-1")))
-        assertEquals(PingPush(PingPush.Kind.PING_JOIN, null), PingPush.parse(mapOf("kind" to "ping_join", "ping_id" to "")))
+    fun readsPingPushesByTheirUrl() {
+        val id = "0f4e8c2a-7b1d-4c3e-9a5f-2d6b8e1c4a7f"
+        val url = "https://hotmess.social/pings/$id"
+        assertEquals(PingPush(id, "ping"), PingPush.parse(mapOf("url" to url, "kind" to "ping", "ping_id" to id)))
+        assertEquals(PingPush(id, "ping_join"), PingPush.parse(mapOf("url" to url, "kind" to "ping_join", "ping_id" to id)))
+        assertEquals(PingPush(id, "ping"), PingPush.parse(mapOf("url" to "hotmess://pings/$id", "kind" to "ping")), "either scheme")
+        assertNull(PingPush.parse(mapOf("url" to "https://hotmess.social/venues/$id", "kind" to "ping", "ping_id" to id)), "the url decides, not kind")
+        assertNull(PingPush.parse(mapOf("url" to "https://example.com/elsewhere", "kind" to "ping")))
+        // Before `url` was sent, `ping_id` named the Ping; `kind` alone never did.
+        assertEquals(PingPush("p-1", "ping"), PingPush.parse(mapOf("kind" to "ping", "ping_id" to "p-1")))
+        assertNull(PingPush.parse(mapOf("kind" to "ping_join", "ping_id" to "")))
         assertNull(PingPush.parse(mapOf("kind" to "chat")))
         assertNull(PingPush.parse(emptyMap()))
         assertEquals(AppTab.NOW, AppRoute.NowPing("p-1").tab)
@@ -248,8 +255,8 @@ class PingApiTest {
     @Test
     fun nowCarriesYourPingAndYourFriends() = runTest {
         val (api, bodies) = api(
-            "ReportLocation" to """{"data":{"reportLocation":{"now":{"title":"Capitol Hill","venues":[],"events":[],
-                "myPing":${PingFixtures.MY_PING},"friendPings":[${PingFixtures.FRIEND_PING}]}}}}""",
+            "ReportLocation" to """{"data":{"reportLocation":{"nearbyVenues":[],"locale":{"id":"l1","name":"Capitol Hill"},
+                "audience":{"me":{"ping":{"myPing":${PingFixtures.MY_PING},"friendPings":[${PingFixtures.FRIEND_PING}]}}}}}}""",
         )
         val now = api.now(Coordinates(47.61, -122.32))
 
@@ -263,8 +270,8 @@ class PingApiTest {
     @Test
     fun withoutAPositionNowStillHasPings() = runTest {
         val (api, bodies) = api(
-            "query MyPing" to """{"data":{"myPing":${PingFixtures.MY_PING}}}""",
-            "query FriendPings" to """{"data":{"friendPings":[${PingFixtures.FRIEND_PING}]}}""",
+            "query MyPing" to """{"data":{"me":{"ping":{"myPing":${PingFixtures.MY_PING}}}}}""",
+            "query FriendPings" to """{"data":{"me":{"ping":{"friendPings":[${PingFixtures.FRIEND_PING}]}}}}""",
         )
         val now = api.nowOrPings(null)
         assertEquals("p-mine", now.myPing?.id)
@@ -274,7 +281,7 @@ class PingApiTest {
 
     @Test
     fun nowWithoutPingsDecodes() = runTest {
-        val (api, _) = api("ReportLocation" to """{"data":{"reportLocation":{"now":{"title":"x","myPing":null,"friendPings":[]}}}}""")
+        val (api, _) = api("ReportLocation" to """{"data":{"reportLocation":{"audience":{"me":{"ping":null}}}}}""")
         val now = api.now(Coordinates(1.0, 2.0))
         assertNull(now.myPing)
         assertTrue(now.friendPings.isEmpty())
@@ -335,8 +342,8 @@ class PingApiTest {
     @Test
     fun queriesPingsWithoutReportingLocation() = runTest {
         val (api, _) = api(
-            "query MyPing" to """{"data":{"myPing":null}}""",
-            "query FriendPings" to """{"data":{"friendPings":[${PingFixtures.FRIEND_PING}]}}""",
+            "query MyPing" to """{"data":{"me":{"ping":{"myPing":null}}}}""",
+            "query FriendPings" to """{"data":{"me":{"ping":{"friendPings":[${PingFixtures.FRIEND_PING}]}}}}""",
         )
         assertNull(api.myPing())
         assertEquals(1, api.friendPings().size)
@@ -344,16 +351,17 @@ class PingApiTest {
 
     @Test
     fun pingErrorsAreShownAsWritten() = runTest {
-        val (api, _) = api("JoinPing" to """{"data":null,"errors":[{"message":"That ping has ended"}]}""")
-        val error = assertFailsWith<ApiError.Other> { api.joinPing("p-1", null) }
+        val (api, _) = api("JoinPing" to """{"data":null,"errors":[{"message":"That ping has ended","extensions":{"code":"CONFLICT"}}]}""")
+        val error = assertFailsWith<ApiError.Rejected> { api.joinPing("p-1", null) }
         assertEquals("That ping has ended", error.message)
+        assertEquals("CONFLICT", error.code)
     }
 
     @Test
-    fun schemaErrorsAreNotShown() {
-        assertNull(HotMessApi.userFacingMessage(listOf("Field 'sendPing' doesn't exist on type 'Mutation'")))
-        assertNull(HotMessApi.userFacingMessage(emptyList()))
-        assertEquals("Pick places in your city", HotMessApi.userFacingMessage(listOf("Pick places in your city")))
+    fun errorsWithoutACodeAreNotShown() = runTest {
+        val (api, _) = api("JoinPing" to """{"data":null,"errors":[{"message":"Field 'joinPing' doesn't exist on type 'Mutation'"}]}""")
+        val error = assertFailsWith<ApiError.Other> { api.joinPing("p-1", null) }
+        assertEquals(ApiError.GENERIC_MESSAGE, error.message)
     }
 
     @Test
@@ -370,9 +378,9 @@ class PingApiTest {
     @Test
     fun venueAndEventPagesCarryFriendsPings() = runTest {
         val (api, _) = api(
-            "query Venue" to """{"data":{"venue":{"id":"v-wildrose","name":"The Wildrose","friendPings":[${PingFixtures.FRIEND_PING}]}}}""",
-            "query Event" to """{"data":{"event":{"id":"e-bingo","name":"Drag Bingo","startAt":"2026-10-10T04:00:00Z",
-                "friendPings":[${PingFixtures.FRIEND_PING}]}}}""",
+            "query Venue" to """{"data":{"venues":{"venue":{"id":"v-wildrose","name":"The Wildrose","ping":{"friendPings":[${PingFixtures.FRIEND_PING}]}}}}}""",
+            "query Event" to """{"data":{"events":{"event":{"id":"e-bingo","name":"Drag Bingo","startAt":"2026-10-10T04:00:00Z",
+                "ping":{"friendPings":[${PingFixtures.FRIEND_PING}]}}}}}""",
         )
         assertEquals("p-1", api.venueOverview("v-wildrose").friendPings.single().id)
         assertEquals("p-1", api.event("e-bingo").friendPings.single().id)
@@ -385,7 +393,7 @@ private object PingFixtures {
         "user":{"id":"u-jordan","name":"Jordan Lee","facebookId":"77"},"via":{"id":"u-sam","name":"Sam Chatter"},
         "targets":[
           {"id":"t-1","venue":null,"event":{"id":"e-bingo","name":"Drag Bingo","startAt":"2026-10-10T04:00:00Z",
-            "venue":{"id":"v-neighbours","name":"Neighbours"}},
+            "venue":{"venue":{"id":"v-neighbours","name":"Neighbours"}}},
             "joins":[{"id":"j-1","targetId":"t-1","user":{"id":"u-sam","name":"Sam Chatter"}}]},
           {"id":"t-2","venue":{"id":"v-wildrose","name":"The Wildrose","photoUrl":""},"event":null,"joins":[]}
         ],

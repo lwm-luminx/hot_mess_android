@@ -7,25 +7,53 @@ import com.audiencekit.Queries
  * the models in Models.kt; ask for a field there before using it here.
  */
 object Documents {
+    /**
+     * How many of the locale's upcoming events Now lists away from a venue. A string, so the document that
+     * interpolates it stays a constant the schema check can validate.
+     */
+    const val LOCALE_EVENT_FIRST: String = "5"
+
+    /** [LOCALE_EVENT_FIRST] as a number, for trimming the list. */
+    val LOCALE_EVENT_LIMIT: Int = LOCALE_EVENT_FIRST.toInt()
+
+    /**
+     * A venue, with its address, phone and Facebook Page under its profile mixin. `bannerUrl` is its wide image
+     * (its first banner, else its own photo, else its Page's cover) and `photoUrl` its own photo; both null when
+     * there's none.
+     */
     const val VENUE_FIELDS: String =
-        "id name address description phone distance point facebookId photoUrl heroUrl isLiked"
+        "id name description distance point photoUrl bannerUrl profile { address phone facebook { facebookId isLiked link } }"
 
     /** A chat line as a preview shows it: rich messages in words (`message`), with the sender's role and presence. */
-    const val CHAT_LINE_FIELDS: String = "id message name userId avatarUrl sentAt presence role kind endsAt postedAsVenue"
+    const val CHAT_LINE_FIELDS: String = "id message name userId avatarUrl sentAt presence role kind endsAt postedAsVenue postedAsPerson"
 
-    /** A venue's last few chat lines, oldest first; empty unless the viewer is at the venue or an admin. */
-    const val RECENT_MESSAGES: String = "recentMessages(limit: 3) { $CHAT_LINE_FIELDS }"
+    /**
+     * A room's last few chat lines, oldest first, in the venue's or locale's chat mixin (`chat { ... }`); empty unless
+     * the viewer is in the room or an admin.
+     */
+    const val RECENT_MESSAGES: String = "recentMessages(limit: 3) { nodes { $CHAT_LINE_FIELDS } }"
 
-    /** Tonight's cover at a venue and the user's pass for it. */
+    /** Tonight's cover at a venue and the user's pass for it, in the cover mixin inside the venue's tickets mixin. */
     const val VENUE_COVER_FIELDS: String =
-        "coverCharge { ${Queries.COVER_CHARGE_FIELDS} } viewerAdmission { ${Queries.ADMISSION_FIELDS} }"
+        "tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } viewerAdmission { ${Queries.ADMISSION_FIELDS} } } }"
 
-    const val PERSON_FIELDS: String = "id name facebookId isLiked pictureUrl coverUrl"
+    /** A person, with their Facebook Page under their profile mixin. */
+    const val PERSON_FIELDS: String = "id name avatarUrl bannerUrl profile { facebook { facebookId isLiked link } }"
 
+    /** A venue's or person's social links, a connection in the profile mixin (merged with the fields' own `profile`). */
+    const val PROFILE_SOCIAL_LINKS: String = "profile { socialLinks { nodes { id handle provider url } } }"
+
+    /**
+     * An event, with the signed-in user's answer under its rsvp mixin (`rsvp { mine }`) and its venue under the
+     * event's venue mixin (`venue { venue }`).
+     */
     const val EVENT_FIELDS: String =
-        "id name startAt endAt facebookId coverPhotoUrl isFeatured viewerRsvp venue { $VENUE_FIELDS }"
+        "id name startAt endAt facebookId bannerUrl isFeatured rsvp { mine } venue { venue { $VENUE_FIELDS } }"
 
-    const val FRIEND_FIELDS: String = "id name facebookId"
+    /** Who's on at a venue right now, in its people mixin. */
+    const val ON_NOW_FIELDS: String = "people { onNow { nodes { id role startsAt endsAt person { id name avatarUrl } } } }"
+
+    const val FRIEND_FIELDS: String = "id name facebookId avatarUrl"
 
     /** Friends out now, with whether they can be reached (in chat, or by push). */
     const val FRIEND_OUT_FIELDS: String = "$FRIEND_FIELDS presence"
@@ -33,32 +61,38 @@ object Documents {
     /** A Ping with its picks and who's in. Picks carry enough of the venue or event for a row. */
     const val PING_FIELDS: String =
         "id note createdAt expiresAt isMine joined reach user { $FRIEND_FIELDS } via { $FRIEND_FIELDS } " +
-            "targets { id venue { id name photoUrl } event { id name startAt venue { id name } } " +
+            "targets { id venue { id name photoUrl } event { id name startAt venue { venue { id name } } } " +
             "joins { id targetId user { $FRIEND_FIELDS } } } " +
             "joins { id targetId user { $FRIEND_FIELDS } }"
 
     val REPORT_LOCATION: String = """
         mutation ReportLocation(${'$'}position: CoordinatesInput!) {
           reportLocation(input: { position: ${'$'}position }) {
-            now {
-              title imageUrl
-              venue { $VENUE_FIELDS $RECENT_MESSAGES $VENUE_COVER_FIELDS }
-              venues { $VENUE_FIELDS }
-              locale { id name chatOpen $RECENT_MESSAGES }
-              events { $EVENT_FIELDS }
-              friends { $FRIEND_OUT_FIELDS }
-              friendVenues { venue { $VENUE_FIELDS } friendCount friends { $FRIEND_OUT_FIELDS } }
-              myPing { $PING_FIELDS }
-              friendPings { $PING_FIELDS }
+            event { $EVENT_FIELDS }
+            venue {
+              $VENUE_FIELDS chat { $RECENT_MESSAGES } $VENUE_COVER_FIELDS
+              $ON_NOW_FIELDS
+              events { upcoming { nodes { $EVENT_FIELDS } } }
+              friends { list { nodes { $FRIEND_OUT_FIELDS } } }
             }
+            nearbyVenues { $VENUE_FIELDS }
+            locale {
+              id name bannerUrl chat { open $RECENT_MESSAGES }
+              events { upcoming(first: $LOCALE_EVENT_FIRST) { nodes { $EVENT_FIELDS } } }
+              friends {
+                list { nodes { $FRIEND_OUT_FIELDS } }
+                venues { nodes { venue { $VENUE_FIELDS } friendCount friends { $FRIEND_OUT_FIELDS } } }
+              }
+            }
+            audience { me { ping { myPing { $PING_FIELDS } friendPings { $PING_FIELDS } } } }
           }
         }
     """.trimIndent()
 
-    /** The signed-in user, with their profile photo (the SDK's Me doesn't ask for it). */
+    /** The signed-in user, with their picture (the SDK's Me doesn't ask for it). */
     val ME: String = """
         query Me {
-          me { id name firstName lastName photo { cdnUrl } }
+          me { self { id name firstName lastName avatarUrl signedInWithGoogle } }
         }
     """.trimIndent()
 
@@ -83,70 +117,77 @@ object Documents {
 
     val VENUES: String = """
         query Venues {
-          venues { $VENUE_FIELDS hidden order locale { id name label } }
+          venues { list { nodes { $VENUE_FIELDS hidden order locale { id name label } } } }
         }
     """.trimIndent()
 
     val VENUE: String = """
         query Venue(${'$'}id: ID!) {
-          venue(id: ${'$'}id) {
-            $VENUE_FIELDS chatOpen canWorkDoor
-            $RECENT_MESSAGES
-            $VENUE_COVER_FIELDS
-            events { $EVENT_FIELDS }
-            socialLinks { id handle provider url }
-            friends { $FRIEND_OUT_FIELDS }
-            friendPings { $PING_FIELDS }
+          venues {
+            venue(id: ${'$'}id) {
+              $VENUE_FIELDS
+              chat { open $RECENT_MESSAGES }
+              tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } viewerAdmission { ${Queries.ADMISSION_FIELDS} } } }
+              $ON_NOW_FIELDS
+              events { upcoming { nodes { $EVENT_FIELDS } } }
+              $PROFILE_SOCIAL_LINKS
+              friends { list { nodes { $FRIEND_OUT_FIELDS } } }
+              ping { friendPings { $PING_FIELDS } }
+            }
           }
         }
     """.trimIndent()
 
     val PEOPLE: String = """
         query People {
-          people { $PERSON_FIELDS order }
+          people { list { nodes { $PERSON_FIELDS order } } }
         }
     """.trimIndent()
 
     val PERSON: String = """
         query Person(${'$'}id: ID!) {
-          person(id: ${'$'}id) {
-            $PERSON_FIELDS
-            events { $EVENT_FIELDS }
-            socialLinks { id handle provider url }
-            members { id name pictureUrl }
-            groups { id name pictureUrl }
-            tracks { id title provider providerUrl waveformUrl artworkUrl }
+          people {
+            person(id: ${'$'}id) {
+              $PERSON_FIELDS
+              events { upcoming { nodes { $EVENT_FIELDS } } }
+              $PROFILE_SOCIAL_LINKS
+              members { id name avatarUrl }
+              groups { id name avatarUrl }
+              music { tracks { nodes { id title provider providerUrl waveformUrl artworkUrl } } }
+            }
           }
         }
     """.trimIndent()
 
     val LOCALE_EVENTS: String = """
         query LocaleEvents(${'$'}id: ID!) {
-          locale(id: ${'$'}id) { events { $EVENT_FIELDS } }
+          locale(id: ${'$'}id) { events { upcoming { nodes { $EVENT_FIELDS } } } }
         }
     """.trimIndent()
 
     val EVENT: String = """
         query Event(${'$'}id: ID!) {
-          event(id: ${'$'}id) {
-            $EVENT_FIELDS
-            coverCharge { ${Queries.COVER_CHARGE_FIELDS} }
-            venue { id $VENUE_COVER_FIELDS }
-            people { $PERSON_FIELDS }
-            friendPings { $PING_FIELDS }
+          events {
+            event(id: ${'$'}id) {
+              $EVENT_FIELDS
+              tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } } }
+              venue { venue { id $VENUE_COVER_FIELDS } }
+              people { lineup { nodes { $PERSON_FIELDS } } }
+              ping { friendPings { $PING_FIELDS } }
+            }
           }
         }
     """.trimIndent()
 
     val MY_PING: String = """
         query MyPing {
-          myPing { $PING_FIELDS }
+          me { ping { myPing { $PING_FIELDS } } }
         }
     """.trimIndent()
 
     val FRIEND_PINGS: String = """
         query FriendPings {
-          friendPings { $PING_FIELDS }
+          me { ping { friendPings { $PING_FIELDS } } }
         }
     """.trimIndent()
 
@@ -173,6 +214,45 @@ object Documents {
     val END_PING: String = """
         mutation EndPing {
           endPing(input: {}) { ended }
+        }
+    """.trimIndent()
+
+    /** What the signed-in user has said about their own safety: when they agreed to the terms, and who they block. */
+    val SAFETY: String = """
+        query Safety {
+          me { termsAcceptedAt blockedUsers { id name avatarUrl } }
+        }
+    """.trimIndent()
+
+    val ACCEPT_TERMS: String = """
+        mutation AcceptTerms {
+          acceptTerms(input: {}) { termsAcceptedAt }
+        }
+    """.trimIndent()
+
+    val BLOCK_USER: String = """
+        mutation BlockUser(${'$'}userId: ID!) {
+          blockUser(input: { userId: ${'$'}userId }) { blockedUsers { id name avatarUrl } }
+        }
+    """.trimIndent()
+
+    val UNBLOCK_USER: String = """
+        mutation UnblockUser(${'$'}userId: ID!) {
+          unblockUser(input: { userId: ${'$'}userId }) { blockedUsers { id name avatarUrl } }
+        }
+    """.trimIndent()
+
+    /** Files a report with the audience's admins, and blocks the person behind it when [block] is true and there is one. */
+    val REPORT_CONTENT: String = """
+        mutation ReportContent(${'$'}targetType: ReportTarget!, ${'$'}targetId: ID!, ${'$'}reason: String, ${'$'}block: Boolean) {
+          reportContent(input: { targetType: ${'$'}targetType, targetId: ${'$'}targetId, reason: ${'$'}reason, block: ${'$'}block }) { reported blocked }
+        }
+    """.trimIndent()
+
+    /** Deletes the signed-in user's account and everything recorded about them. It can't be undone. */
+    val DELETE_ACCOUNT: String = """
+        mutation DeleteAccount {
+          deleteAccount(input: { confirm: true }) { deleted }
         }
     """.trimIndent()
 
