@@ -223,6 +223,8 @@ dependencies {
     implementation(libs.androidx.credentials)
     implementation(libs.androidx.credentials.play.services.auth)
     implementation(libs.googleid)
+    // Google's AuthorizationClient, for the scope that reads a Google account's other emails.
+    implementation(libs.play.services.auth)
     // Sign-in through the Facebook app. Facebook Login brings an old Fragment; the Activity Result API needs 1.3
     // or later.
     implementation(libs.facebook.login)

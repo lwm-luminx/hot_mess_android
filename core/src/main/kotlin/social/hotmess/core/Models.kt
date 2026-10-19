@@ -693,7 +693,13 @@ data class VersionInfo(
 }
 
 /** The signed-in user, as the app shows them, with their profile photo when they have one. */
-data class User(val id: String, val name: String, val avatarUrl: String? = null) {
+/** [signedInWithGoogle] is null when unknown (an older API, or a user read from somewhere other than `me`). */
+data class User(
+    val id: String,
+    val name: String,
+    val avatarUrl: String? = null,
+    val signedInWithGoogle: Boolean? = null,
+) {
     val firstName: String get() = name.firstNameForDisplay()
     val initials: String get() = name.initialsForDisplay()
 }

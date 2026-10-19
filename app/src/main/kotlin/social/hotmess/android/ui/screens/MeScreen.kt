@@ -13,6 +13,7 @@ import androidx.compose.material.icons.rounded.ConfirmationNumber
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Email
+import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.PrivacyTip
@@ -39,6 +40,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import social.hotmess.android.location.LocationAccess
+import social.hotmess.android.session.LocalGoogleAccounts
 import social.hotmess.android.ui.LocalAppGraph
 import social.hotmess.android.ui.Navigator
 import social.hotmess.android.ui.ScreenScaffold
@@ -81,6 +83,10 @@ fun MeScreen(navigator: Navigator) {
     // Pushes about rooms they just left (me.recentChatPush); null until known, and the row stays hidden
     // when the server can't say (signed out, or an older API).
     var recentChatPush by remember { mutableStateOf<Boolean?>(null) }
+    // Connect Google, offered while the account has no Google sign-in (me.self.signedInWithGoogle is false).
+    val googleAccounts = LocalGoogleAccounts.current
+    var connectingGoogle by remember { mutableStateOf(false) }
+    var googleProblem by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) { graph.session.refreshUser() }
     LaunchedEffect(Unit) { graph.safety.refresh() }
@@ -186,6 +192,25 @@ fun MeScreen(navigator: Navigator) {
                     }
                 }
             }
+            if (googleAccounts?.available == true && user?.signedInWithGoogle == false) {
+                item {
+                    DetailSection("Sign-in") {
+                        InfoRow(
+                            if (connectingGoogle) "Connecting Google…" else "Connect Google",
+                            icon = Icons.Rounded.Link,
+                            onClick = {
+                                if (!connectingGoogle) {
+                                    connectingGoogle = true
+                                    scope.launch {
+                                        googleProblem = googleAccounts.connect()?.takeIf { it.isNotEmpty() }
+                                        connectingGoogle = false
+                                    }
+                                }
+                            },
+                        )
+                    }
+                }
+            }
             recentChatPush?.let { enabled ->
                 item {
                     DetailSection("Notifications") {
@@ -266,6 +291,15 @@ fun MeScreen(navigator: Navigator) {
     }
 
     if (reportingProblem) ReportProblemDialog(screen = "Me") { reportingProblem = false }
+
+    googleProblem?.let { problem ->
+        AlertDialog(
+            onDismissRequest = { googleProblem = null },
+            title = { Text("Google wasn't connected") },
+            text = { Text(problem) },
+            confirmButton = { TextButton(onClick = { googleProblem = null }) { Text("OK") } },
+        )
+    }
 
     failure?.let { message ->
         AlertDialog(

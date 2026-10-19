@@ -92,7 +92,7 @@ object Documents {
     /** The signed-in user, with their picture (the SDK's Me doesn't ask for it). */
     val ME: String = """
         query Me {
-          me { self { id name firstName lastName avatarUrl } }
+          me { self { id name firstName lastName avatarUrl signedInWithGoogle } }
         }
     """.trimIndent()
 
