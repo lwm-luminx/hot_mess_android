@@ -334,6 +334,44 @@ class HotMessApi(val client: AudienceKitClient) {
 
     // endregion
 
+    // region Safety
+
+    /** When the user agreed to the terms (null if they haven't) and who they block, or null signed out. */
+    suspend fun safety(): SafetyState? {
+        val me = query(Documents.SAFETY, SafetyResponse.serializer()).me ?: return null
+        return SafetyState(termsAccepted = me.termsAcceptedAt != null, blockedUsers = me.blockedUsers)
+    }
+
+    /** Records that the user agreed to the terms of use, which chat and Pings need first. */
+    suspend fun acceptTerms() {
+        mutate(Documents.ACCEPT_TERMS, JsonObject.serializer())
+    }
+
+    /** Blocks someone by user id; returns everyone the user now blocks. The audience's admins are told. */
+    suspend fun block(userId: String): List<BlockedUser> =
+        mutate(Documents.BLOCK_USER, BlockUserResponse.serializer(), graphQLVariables("userId" to userId)).blockUser.blockedUsers
+
+    /** Unblocks someone; returns everyone the user still blocks. */
+    suspend fun unblock(userId: String): List<BlockedUser> =
+        mutate(Documents.UNBLOCK_USER, UnblockUserResponse.serializer(), graphQLVariables("userId" to userId)).unblockUser.blockedUsers
+
+    /**
+     * Reports something to the audience's admins (`reportContent`), who see it at once. With [block], the person
+     * behind it is blocked too when there is one; the result says whether they were.
+     */
+    suspend fun report(target: ReportTarget, targetId: String, reason: String?, block: Boolean): ReportResult =
+        mutate(
+            Documents.REPORT_CONTENT,
+            ReportContentResponse.serializer(),
+            graphQLVariables("targetType" to target.name, "targetId" to targetId, "reason" to reason, "block" to block),
+        ).reportContent
+
+    /** Deletes the user's account and everything recorded about them, and ends every session. */
+    suspend fun deleteAccount(): Boolean =
+        mutate(Documents.DELETE_ACCOUNT, DeleteAccountResponse.serializer()).deleteAccount.deleted
+
+    // endregion
+
     private suspend fun <T> query(
         document: String,
         serializer: KSerializer<T>,
@@ -678,6 +716,28 @@ private data class JoinPingResponse(val joinPing: PingPayload)
 
 @Serializable
 private data class LeavePingResponse(val leavePing: PingPayload)
+
+@Serializable
+private data class SafetyResponse(val me: Me? = null) {
+    @Serializable
+    data class Me(val termsAcceptedAt: String? = null, val blockedUsers: List<BlockedUser> = emptyList())
+}
+
+@Serializable
+private data class BlockUserResponse(val blockUser: Payload) {
+    @Serializable data class Payload(val blockedUsers: List<BlockedUser> = emptyList())
+}
+
+@Serializable
+private data class UnblockUserResponse(val unblockUser: BlockUserResponse.Payload)
+
+@Serializable
+private data class ReportContentResponse(val reportContent: ReportResult)
+
+@Serializable
+private data class DeleteAccountResponse(val deleteAccount: Payload) {
+    @Serializable data class Payload(val deleted: Boolean = false)
+}
 
 @Serializable
 private data class EndPingResponse(val endPing: Payload) {

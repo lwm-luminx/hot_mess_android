@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -64,9 +65,12 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.takeOrElse
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
@@ -286,6 +290,7 @@ fun ChatThread(
     state: LazyListState = rememberLazyListState(),
     isLocale: Boolean = false,
     onOpenEvent: (String) -> Unit = {},
+    onMessageActions: ((ChatThreadMessage) -> Unit)? = null,
 ) {
     val clock by rememberMinuteClock()
     val visible = remember(messages, clock) { messages.filter { it.isShowing(clock) } }
@@ -307,7 +312,7 @@ fun ChatThread(
                     if (isLocale) "Everyone out in $roomName can see what you write here." else "Everyone at $roomName can see what you write here.",
                 )
             } else {
-                Transcript(entries, presence, state, onOpenEvent)
+                Transcript(entries, presence, state, onOpenEvent, onMessageActions)
             }
         }
     }
@@ -328,6 +333,7 @@ private fun BoxScope.Transcript(
     presence: Map<String, Presence>,
     state: LazyListState,
     onOpenEvent: (String) -> Unit,
+    onMessageActions: ((ChatThreadMessage) -> Unit)?,
 ) {
     LaunchedEffect(entries.size) { if (entries.isNotEmpty()) state.animateScrollToItem(entries.lastIndex) }
     BoxWithConstraints(Modifier.fillMaxSize().widthIn(max = ContentMaxWidth).align(Alignment.TopCenter)) {
@@ -347,6 +353,7 @@ private fun BoxScope.Transcript(
                         presence[entry.message.senderId],
                         richMax = richMax,
                         onOpenEvent = onOpenEvent,
+                        onActions = onMessageActions,
                     )
                 }
             }
@@ -375,9 +382,19 @@ private fun BubbleRow(
     ring: Color = Color.Unspecified,
     richMax: Dp = bubbleMax,
     onOpenEvent: (String) -> Unit = {},
+    onActions: ((ChatThreadMessage) -> Unit)? = null,
 ) {
     val message = entry.message
     val rich = message.rich?.takeIf { it.drawable }
+    // Someone else's line: a long press reports it or blocks its sender, also offered to screen readers.
+    val actions = onActions?.takeIf { !message.own }
+    val actionsModifier = if (actions == null) {
+        Modifier
+    } else {
+        Modifier
+            .pointerInput(message.id) { detectTapGestures(onLongPress = { actions(message) }) }
+            .semantics { customActions = listOf(CustomAccessibilityAction("Report or block") { actions(message); true }) }
+    }
     Row(
         Modifier.fillMaxWidth().padding(bottom = if (entry.last) groupGap else 2.dp),
         horizontalArrangement = if (message.own) Arrangement.End else Arrangement.Start,
@@ -400,7 +417,7 @@ private fun BubbleRow(
             Spacer(Modifier.width(Space.s2))
         }
         Column(
-            modifier = if (rich != null) Modifier.widthIn(max = richMax).fillMaxWidth() else Modifier,
+            modifier = (if (rich != null) Modifier.widthIn(max = richMax).fillMaxWidth() else Modifier).then(actionsModifier),
             horizontalAlignment = if (message.own) Alignment.End else Alignment.Start,
         ) {
             val name = message.senderName?.takeIf { it.isNotBlank() }

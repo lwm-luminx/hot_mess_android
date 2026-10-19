@@ -217,6 +217,45 @@ object Documents {
         }
     """.trimIndent()
 
+    /** What the signed-in user has said about their own safety: when they agreed to the terms, and who they block. */
+    val SAFETY: String = """
+        query Safety {
+          me { termsAcceptedAt blockedUsers { id name avatarUrl } }
+        }
+    """.trimIndent()
+
+    val ACCEPT_TERMS: String = """
+        mutation AcceptTerms {
+          acceptTerms(input: {}) { termsAcceptedAt }
+        }
+    """.trimIndent()
+
+    val BLOCK_USER: String = """
+        mutation BlockUser(${'$'}userId: ID!) {
+          blockUser(input: { userId: ${'$'}userId }) { blockedUsers { id name avatarUrl } }
+        }
+    """.trimIndent()
+
+    val UNBLOCK_USER: String = """
+        mutation UnblockUser(${'$'}userId: ID!) {
+          unblockUser(input: { userId: ${'$'}userId }) { blockedUsers { id name avatarUrl } }
+        }
+    """.trimIndent()
+
+    /** Files a report with the audience's admins, and blocks the person behind it when [block] is true and there is one. */
+    val REPORT_CONTENT: String = """
+        mutation ReportContent(${'$'}targetType: ReportTarget!, ${'$'}targetId: ID!, ${'$'}reason: String, ${'$'}block: Boolean) {
+          reportContent(input: { targetType: ${'$'}targetType, targetId: ${'$'}targetId, reason: ${'$'}reason, block: ${'$'}block }) { reported blocked }
+        }
+    """.trimIndent()
+
+    /** Deletes the signed-in user's account and everything recorded about them. It can't be undone. */
+    val DELETE_ACCOUNT: String = """
+        mutation DeleteAccount {
+          deleteAccount(input: { confirm: true }) { deleted }
+        }
+    """.trimIndent()
+
     /** The SDK's registerDevice, plus which app the token is for; Android builds are never sandboxed. */
     val REGISTER_DEVICE: String = """
         mutation RegisterDevice(${'$'}notificationToken: String!, ${'$'}appId: String, ${'$'}sandbox: Boolean) {

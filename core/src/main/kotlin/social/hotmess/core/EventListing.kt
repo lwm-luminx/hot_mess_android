@@ -12,11 +12,13 @@ data class EventListing(val sections: List<EventSection> = emptyList()) {
     companion object {
         /**
          * Splits upcoming events the way the iOS app does: up to two events with a cover photo as
-         * "Featured", then every event, soonest first, as "Upcoming".
+         * "Featured", then every other event, soonest first, as "Upcoming", so none shows twice.
          */
         fun upcoming(events: List<Event>): EventListing {
-            val upcoming = events.sortedBy { it.startAt }
-            val featured = upcoming.filter { it.bannerUrl != null }.take(2)
+            val sorted = events.sortedBy { it.startAt }
+            val featured = sorted.filter { it.bannerUrl != null }.take(2)
+            val featuredIds = featured.map { it.id }.toSet()
+            val upcoming = sorted.filterNot { it.id in featuredIds }
             return EventListing(
                 listOf(
                     EventSection(id = "featured", title = "Featured", events = featured),

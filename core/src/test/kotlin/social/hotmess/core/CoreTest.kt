@@ -155,7 +155,8 @@ class ListingTest {
 
         assertEquals(listOf("featured", "upcoming"), listing.sections.map { it.id })
         assertEquals(listOf("a", "c"), listing.sections[0].events.map { it.id })
-        assertEquals(listOf("a", "b", "c", "d"), listing.sections[1].events.map { it.id })
+        assertEquals(listOf("b", "d"), listing.sections[1].events.map { it.id })
+        assertEquals(listOf("a", "b", "c", "d"), listing.allEvents.map { it.id })
     }
 
     @Test

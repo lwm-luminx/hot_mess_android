@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -45,6 +46,7 @@ import social.hotmess.android.ui.theme.HotMessTheme
 import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
+import social.hotmess.core.LegalLinks
 import social.hotmess.core.SignInMethods
 import social.hotmess.core.VersionInfo
 
@@ -149,6 +151,15 @@ fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}) {
                         color = Color.White.copy(alpha = 0.8f),
                         textAlign = TextAlign.Center,
                     )
+                    val context = androidx.compose.ui.platform.LocalContext.current
+                    Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = { context.openUrl(LegalLinks.TERMS) }) {
+                            Text("Terms of use", style = HotMessType.caption, color = Color.White)
+                        }
+                        TextButton(onClick = { context.openUrl(LegalLinks.PRIVACY) }) {
+                            Text("Privacy policy", style = HotMessType.caption, color = Color.White)
+                        }
+                    }
                 }
             }
 
