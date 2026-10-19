@@ -217,6 +217,62 @@ object Documents {
         }
     """.trimIndent()
 
+    private const val PAIR_UP_MATCH_FIELDS =
+        "id accepted partnerAccepted bonus metAt endReason topic { key text } partner { id name avatarUrl lookFor }"
+
+    private const val PAIR_UP_STATE_FIELDS =
+        "status lookFor metCount match { $PAIR_UP_MATCH_FIELDS } bonus { $PAIR_UP_MATCH_FIELDS }"
+
+    val VENUE_PAIR_UP: String = """
+        query VenuePairUp(${'$'}id: ID!) {
+          venues { venue(id: ${'$'}id) { pairUp { here mine { $PAIR_UP_STATE_FIELDS } } } }
+        }
+    """.trimIndent()
+
+    val JOIN_PAIR_UP: String = """
+        mutation JoinPairUp(${'$'}venueId: ID!, ${'$'}lookFor: String) {
+          joinPairUp(input: { venueId: ${'$'}venueId, lookFor: ${'$'}lookFor }) { pairUp { $PAIR_UP_STATE_FIELDS } }
+        }
+    """.trimIndent()
+
+    val ACCEPT_PAIR_UP: String = """
+        mutation AcceptPairUp(${'$'}matchId: ID!) {
+          acceptPairUp(input: { matchId: ${'$'}matchId }) { pairUp { $PAIR_UP_STATE_FIELDS } }
+        }
+    """.trimIndent()
+
+    val SKIP_PAIR_UP: String = """
+        mutation SkipPairUp(${'$'}matchId: ID!, ${'$'}what: PairUpSkip!) {
+          skipPairUp(input: { matchId: ${'$'}matchId, what: ${'$'}what }) { pairUp { $PAIR_UP_STATE_FIELDS } }
+        }
+    """.trimIndent()
+
+    val CANCEL_PAIR_UP: String = """
+        mutation CancelPairUp(${'$'}matchId: ID!) {
+          cancelPairUp(input: { matchId: ${'$'}matchId }) { pairUp { $PAIR_UP_STATE_FIELDS } }
+        }
+    """.trimIndent()
+
+    val LEAVE_PAIR_UP: String = """
+        mutation LeavePairUp(${'$'}venueId: ID!) {
+          leavePairUp(input: { venueId: ${'$'}venueId }) { pairUp { $PAIR_UP_STATE_FIELDS } }
+        }
+    """.trimIndent()
+
+    val SHOW_PAIR_UP_CODE: String = """
+        mutation ShowPairUpCode(${'$'}matchId: ID!) {
+          showPairUpCode(input: { matchId: ${'$'}matchId }) { code }
+        }
+    """.trimIndent()
+
+    val SCAN_PAIR_UP_CODE: String = """
+        mutation ScanPairUpCode(${'$'}venueId: ID!, ${'$'}code: String!) {
+          scanPairUpCode(input: { venueId: ${'$'}venueId, code: ${'$'}code }) {
+            outcome match { $PAIR_UP_MATCH_FIELDS } pairUp { $PAIR_UP_STATE_FIELDS }
+          }
+        }
+    """.trimIndent()
+
     /** What the signed-in user has said about their own safety: when they agreed to the terms, and who they block. */
     val SAFETY: String = """
         query Safety {

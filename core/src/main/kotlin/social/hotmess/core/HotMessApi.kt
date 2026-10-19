@@ -18,6 +18,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -244,6 +246,7 @@ class HotMessApi(val client: AudienceKitClient) {
     /** Ends the signed-in user's active Ping early. */
     suspend fun endPing(): Boolean = mutate(Documents.END_PING, EndPingResponse.serializer()).endPing.ended
 
+
     /** What the send sheet offers in [localeId], and the Ping it would edit. Without a locale, only venues you pick elsewhere. */
     suspend fun pingChoices(localeId: String?): PingChoices = coroutineScope {
         val active = async { myPing() }
@@ -251,6 +254,52 @@ class HotMessApi(val client: AudienceKitClient) {
         val places = async { if (localeId == null) emptyList() else venues(localeId) }
         PingChoices.of(tonight.await(), places.await(), localeId, active.await())
     }
+
+    // endregion
+
+    // region Pair me up
+
+    /** Pair me up at a venue: null where the venue doesn't have it. */
+    suspend fun pairUp(venueId: String): VenuePairUp? =
+        query(Documents.VENUE_PAIR_UP, VenuePairUpResponse.serializer(), graphQLVariables("id" to venueId))
+            .venues?.venue?.pairUp
+
+    /** Opts in at the venue for tonight, or changes the hint; after a meeting, looks for someone new. */
+    suspend fun joinPairUp(venueId: String, lookFor: String?): PairUpState? =
+        pairUpMutation(Documents.JOIN_PAIR_UP, graphQLVariables("venueId" to venueId, "lookFor" to lookFor?.trim()))
+
+    suspend fun acceptPairUp(matchId: String): PairUpState? =
+        pairUpMutation(Documents.ACCEPT_PAIR_UP, graphQLVariables("matchId" to matchId))
+
+    /** A new topic for the two of them, or ([partner]) someone new for both. */
+    suspend fun skipPairUp(matchId: String, partner: Boolean): PairUpState? =
+        pairUpMutation(
+            Documents.SKIP_PAIR_UP,
+            graphQLVariables("matchId" to matchId, "what" to if (partner) "PARTNER" else "TOPIC"),
+        )
+
+    /** Cancels a pairing: neither sees the other from then on. */
+    suspend fun cancelPairUp(matchId: String): PairUpState? =
+        pairUpMutation(Documents.CANCEL_PAIR_UP, graphQLVariables("matchId" to matchId))
+
+    suspend fun leavePairUp(venueId: String): PairUpState? =
+        pairUpMutation(Documents.LEAVE_PAIR_UP, graphQLVariables("venueId" to venueId))
+
+    /** A fresh single-use code to show the partner. */
+    suspend fun showPairUpCode(matchId: String): String =
+        mutate(Documents.SHOW_PAIR_UP_CODE, ShowPairUpCodeResponse.serializer(), graphQLVariables("matchId" to matchId))
+            .showPairUpCode.code
+
+    suspend fun scanPairUpCode(venueId: String, code: String): PairUpScan =
+        mutate(
+            Documents.SCAN_PAIR_UP_CODE,
+            ScanPairUpCodeResponse.serializer(),
+            graphQLVariables("venueId" to venueId, "code" to code),
+        ).scanPairUpCode
+
+    /** Each Pair me up mutation answers with `{ pairUp }` under its own name. */
+    private suspend fun pairUpMutation(document: String, variables: Map<String, JsonElement>): PairUpState? =
+        mutate(document, PAIR_UP_PAYLOADS, variables).values.firstOrNull()?.pairUp
 
     // endregion
 
@@ -748,3 +797,24 @@ private data class EndPingResponse(val endPing: Payload) {
 private data class RegisterDeviceResponse(val registerDevice: Payload? = null) {
     @Serializable data class Payload(val registered: Boolean = false)
 }
+
+/** `venues { venue(id:) { pairUp } }`; a venue without it has no `pairUp`. */
+@Serializable
+private data class VenuePairUpResponse(val venues: Venues? = null) {
+    @Serializable data class Venues(val venue: Venue? = null)
+
+    @Serializable data class Venue(val pairUp: VenuePairUp? = null)
+}
+
+@Serializable
+private data class PairUpPayload(val pairUp: PairUpState? = null)
+
+private val PAIR_UP_PAYLOADS = MapSerializer(String.serializer(), PairUpPayload.serializer())
+
+@Serializable
+private data class ShowPairUpCodeResponse(val showPairUpCode: Payload) {
+    @Serializable data class Payload(val code: String)
+}
+
+@Serializable
+private data class ScanPairUpCodeResponse(val scanPairUpCode: PairUpScan)
