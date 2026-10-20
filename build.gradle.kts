@@ -13,6 +13,9 @@ buildscript {
         dependencies {
             // Keep in step with `agp` in gradle/libs.versions.toml.
             classpath("com.android.tools.build:gradle:9.1.0")
+            // New Relic's plugin instruments the app's network and UI calls for its mobile agent. Keep in step with
+            // `newrelic` in gradle/libs.versions.toml.
+            classpath("com.newrelic.agent.android:agent-gradle-plugin:7.8.3")
         }
     }
 }

@@ -23,6 +23,8 @@ data class AppConfiguration(
         AudienceKitEnvironment.entries.firstOrNull { it.value == BuildConfig.AUDIENCEKIT_ENVIRONMENT }
             ?: AudienceKitEnvironment.PRODUCTION,
     val beaconUuid: String? = BuildConfig.BEACON_UUID.ifBlank { null },
+    /** The New Relic mobile app's token; no token, no agent. */
+    val newRelicToken: String? = BuildConfig.NEW_RELIC_TOKEN.ifBlank { null },
     val versionName: String = BuildConfig.VERSION_NAME,
     val versionCode: Int = BuildConfig.VERSION_CODE,
     /** Staging and debug builds, which get testing aids such as pretending to be at a venue. */
