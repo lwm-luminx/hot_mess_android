@@ -62,13 +62,21 @@ data class Environment(
      */
     val audienceHost: String = "hotmess.admin.audiencekit.com",
     val googleServerClientId: String = "",
+    /**
+     * The Services ID for Sign in with Apple, which Android runs as Apple's web sign-in in a Custom Tab (the SDK's
+     * AppleWebSignIn; the API's doc/TOKENS.md, "Sign in with Apple on Android"). Apple returns to the API over HTTPS,
+     * so builds against a local API go without. Empty hides "Continue with Apple"; Release gets it from
+     * `hotmess.apple.servicesId` once the Services ID is set up.
+     */
+    val appleServicesId: String = "",
 )
 
 val environments = mapOf(
     // The emulator reaches the host's localhost at 10.0.2.2.
     "debug" to Environment("debug", "http://10.0.2.2:3000", "", "842337999153841"),
     "staging" to Environment("staging", "https://api.next.audiencekit.com", "", "1660272792277019", "staging",
-        facebookClientToken = "5d40b408dee01b2985755736fd046296", audienceHost = "hotmess.admin.next.audiencekit.com"),
+        facebookClientToken = "5d40b408dee01b2985755736fd046296", audienceHost = "hotmess.admin.next.audiencekit.com",
+        appleServicesId = "social.hotmess.signin"),
     // Debug for the sign-in test: Hot Mess's development app against the local API. The app is in development
     // mode, so the test signs its account (which needs a role on the app) in to Chrome first, and sign-in shares
     // Chrome's session rather than using a private tab.
@@ -174,6 +182,7 @@ android {
         buildConfigField("String", "FACEBOOK_CLIENT_TOKEN", "\"${environment.facebookClientToken}\"")
         buildConfigField("String", "FACEBOOK_LOGIN_CONFIG_ID", "\"${environment.facebookLoginConfigId}\"")
         buildConfigField("String", "GOOGLE_SERVER_CLIENT_ID", "\"${environment.googleServerClientId.ifEmpty { secret("google.serverClientId") }}\"")
+        buildConfigField("String", "APPLE_SERVICES_ID", "\"${environment.appleServicesId.ifEmpty { secret("apple.servicesId").takeIf { name == "release" }.orEmpty() }}\"")
         buildConfigField("boolean", "PRIVATE_SIGN_IN", environment.privateSignIn.toString())
         buildConfigField("String", "AUDIENCEKIT_ENVIRONMENT", "\"${environment.audienceKitEnvironment}\"")
         resValue(

@@ -61,7 +61,7 @@ fun LaunchScreen() {
 
 /** Sign-in, skinned with the audience's branding, always dark over the photo. */
 @Composable
-fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}) {
+fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}, onAppleSignIn: () -> Unit = {}) {
     val graph = LocalAppGraph.current
     val state by graph.session.state.collectAsStateWithLifecycle()
     val branding by graph.brand.branding.collectAsStateWithLifecycle()
@@ -77,6 +77,10 @@ fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}) {
     }
     val offersFacebook = signInMethods?.facebook ?: true
     val offersGoogle = signInMethods?.google ?: true
+    // Apple needs the API's hand-back (/v1/token/apple/callback), so it waits for an API that lists it.
+    val offersApple = signInMethods?.apple == true && graph.configuration.appleServicesId.isNotBlank()
+    // The ways to sign in that leave Facebook for later, as the text below names them.
+    val others = listOfNotNull("Google".takeIf { offersGoogle }, "Apple".takeIf { offersApple }).joinToString(" or ")
     // A sign-in waiting on Cancel or Continue: the warning and what Continue does.
     var warned by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
     fun begin(method: String, signIn: () -> Unit) {
@@ -138,13 +142,21 @@ fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}) {
                                 enabled = asked,
                             )
                         }
+                        if (offersApple) {
+                            SecondaryButton(
+                                "Continue with Apple",
+                                onClick = { begin("apple", onAppleSignIn) },
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
+                                enabled = asked,
+                            )
+                        }
                     }
                     Text(
                         when {
-                            offersFacebook && offersGoogle ->
-                                "We use your Facebook profile to find your friends and the nights near you. With Google, you can connect Facebook later."
+                            offersFacebook && others.isNotEmpty() ->
+                                "We use your Facebook profile to find your friends and the nights near you. With $others, you can connect Facebook later."
                             offersFacebook -> "We use your Facebook profile to find your friends and the nights near you."
-                            offersGoogle -> "Sign in with Google to find the nights near you. You can connect Facebook later to find your friends."
+                            others.isNotEmpty() -> "Sign in with $others to find the nights near you. You can connect Facebook later to find your friends."
                             else -> "Sign-in isn't available in this app right now. Please check back soon."
                         },
                         style = HotMessType.bodySmall,

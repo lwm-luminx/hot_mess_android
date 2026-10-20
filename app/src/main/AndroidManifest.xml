@@ -75,6 +75,14 @@
                 <data android:scheme="fbconnect" android:host="cct.${applicationId}" />
             </intent-filter>
 
+            <!-- Sign in with Apple: the API hands Apple's web sign-in back here, to this package only (AppleWebSignIn). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="audiencekit-apple" android:host="callback" />
+            </intent-filter>
+
             <!-- A Business-type Facebook app's dialog redirects to fb<app id>://authorize/ instead. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
