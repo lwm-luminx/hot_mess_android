@@ -224,6 +224,43 @@ class DeepLinkTest {
         assertNull(DeepLink.route("https://hotmess.social/about"))
         assertNull(DeepLink.route("hotmess://friends/$id"))
     }
+
+    @Test
+    fun keepsAShareLinksSignedExpiry() {
+        val link = DeepLink.link("https://hotmess.social/venues/${id.uppercase()}?utm_source=x&e=vbbc00.AbCdEf-_12345678")!!
+        assertEquals(AppRoute.VenueDetail(id), link.route)
+        assertEquals("hotmess.social", link.host)
+        assertEquals("/venues/${id.uppercase()}", link.path, "checked as it was signed")
+        assertEquals("vbbc00.AbCdEf-_12345678", link.expiry)
+        assertEquals(AppRoute.EventDetail(id), DeepLink.route("https://hotmess.social/events/$id?e=vbbc00.AbCdEf-_12345678"))
+
+        val app = DeepLink.link("hotmess://people/$id?e=vbbc00.AbCdEf-_12345678")!!
+        assertNull(app.host, "a hotmess: link's host is its type")
+        assertEquals("/people/$id", app.path)
+        assertEquals("vbbc00.AbCdEf-_12345678", app.expiry)
+    }
+
+    @Test
+    fun aLinkWithoutAnExpiryOpensAsBefore() {
+        assertNull(DeepLink.link("https://hotmess.social/venues/$id")!!.expiry)
+        assertNull(DeepLink.link("https://hotmess.social/venues/$id?e=")!!.expiry)
+        assertNull(DeepLink.link("https://hotmess.social/venues/$id?ref=e=1")!!.expiry)
+    }
+
+    @Test
+    fun readsTheExpiryAShareLinkSigns() {
+        assertEquals(1_893_456_000L, ShareLinkExpiry.expiresAt("vbbc00.AbCdEf-_12345678"), "2030-01-01, in base36")
+        assertEquals(1_767_225_600L, ShareLinkExpiry.expiresAt("t85s00.AbCdEf-_12345678"))
+        assertNull(ShareLinkExpiry.expiresAt("AbCdEf-_12345678"), "no expiry before a dot")
+        assertNull(ShareLinkExpiry.expiresAt(".AbCdEf-_12345678"))
+        assertNull(ShareLinkExpiry.expiresAt("not!base36.AbCdEf-_12345678"))
+
+        val now = Instant.parse("2026-10-20T00:00:00Z").epochSecond
+        assertTrue(ShareLinkExpiry.hasPassed("t85s00.AbCdEf-_12345678", now))
+        assertFalse(ShareLinkExpiry.hasPassed("vbbc00.AbCdEf-_12345678", now))
+        assertTrue(ShareLinkExpiry.hasPassed("vbbc00.sig", 1_893_456_000L), "expired at the second it names")
+        assertFalse(ShareLinkExpiry.hasPassed("garbled", now), "left to the API to refuse")
+    }
 }
 
 class ChatProtocolTest {
@@ -844,6 +881,55 @@ class HotMessApiTest {
     fun signInMethodsAreUnknownOnAnOlderApi() = runTest {
         val (api, _) = api()
         assertNull(api.signInMethods("hotmess.social"), "a 404 leaves the login screen as it was")
+    }
+
+    /** An API that answers `GET /v1/share` with [status], recording the URLs asked for. */
+    private fun shareApi(status: Int, urls: MutableList<String>): HotMessApi {
+        val transport = HttpTransport { request ->
+            urls += request.url
+            val body = if (status == 410) """{"error":"EXPIRED","message":"This link has expired"}""" else "{}"
+            com.audiencekit.HttpResponse(status, body.toByteArray())
+        }
+        return HotMessApi(
+            AudienceKitClient(AudienceKitConfiguration(baseUrl = "https://api.example", audienceId = "aud-1"), InMemoryTokenStore("token"), transport),
+        )
+    }
+
+    @Test
+    fun asksTheApiWhetherAShareLinkHasExpired() = runTest {
+        val now = Instant.parse("2026-10-20T00:00:00Z").epochSecond
+        val urls = mutableListOf<String>()
+        assertTrue(shareApi(410, urls).shareLinkExpired("hotmess.social", "/venues/v-1", "vbbc00.sig", now), "410 is expired or tampered")
+        assertEquals("https://api.example/v1/share?host=hotmess.social&path=%2Fvenues%2Fv-1&e=vbbc00.sig", urls.single())
+
+        assertFalse(shareApi(200, urls).shareLinkExpired("hotmess.social", "/venues/v-1", "vbbc00.sig", now))
+        assertFalse(shareApi(404, urls).shareLinkExpired("hotmess.social", "/venues/v-1", "vbbc00.sig", now), "the record says what's missing")
+        assertFalse(shareApi(503, urls).shareLinkExpired("hotmess.social", "/venues/v-1", "vbbc00.sig", now), "opens as before")
+    }
+
+    @Test
+    fun aShareLinkPastItsExpiryNeverAsks() = runTest {
+        val urls = mutableListOf<String>()
+        val now = Instant.parse("2026-10-20T00:00:00Z").epochSecond
+        assertTrue(shareApi(200, urls).shareLinkExpired("hotmess.social", "/venues/v-1", "t85s00.sig", now))
+        assertTrue(urls.isEmpty())
+    }
+
+    @Test
+    fun mintsAShareLink() = runTest {
+        val url = "https://hotmess.social/venues/v-1?e=vbbc00.AbCdEf-_12345678"
+        val (api, bodies) = api("ShareLink" to """{"data":{"shareLink":{"url":"$url","expiresAt":"2030-01-01T00:00:00Z"}}}""")
+
+        assertEquals(url, api.shareLink("/venues/v-1"))
+        val body = HotMessApi.json.parseToJsonElement(bodies.single()).jsonObject
+        assertEquals("""{"path":"/venues/v-1"}""", body["variables"].toString())
+        assertTrue(body["query"].toString().contains("lifetime: MONTH"))
+    }
+
+    @Test
+    fun aRecordTheApiWontShareHasNoLink() = runTest {
+        val (api, _) = api("ShareLink" to """{"data":{"shareLink":null}}""")
+        assertFailsWith<ApiError.NotFound> { api.shareLink("/venues/v-1") }
     }
 
     @Test

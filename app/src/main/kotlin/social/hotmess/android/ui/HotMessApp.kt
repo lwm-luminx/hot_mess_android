@@ -17,6 +17,7 @@ import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.People
 import androidx.compose.material.icons.rounded.Place
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -25,6 +26,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -154,6 +156,7 @@ private fun MainShell(links: Flow<AppRoute>) {
     var selectedTab by rememberSaveable { mutableStateOf(AppTab.NOW) }
     val backStackEntry by navController.currentBackStackEntryAsState()
     val destination = backStackEntry?.destination
+    var linkExpired by rememberSaveable { mutableStateOf(false) }
 
     // Coming back to a tab's root (e.g. with Back) selects that tab.
     LaunchedEffect(destination) {
@@ -182,6 +185,11 @@ private fun MainShell(links: Flow<AppRoute>) {
                     is AppRoute.PersonDetail -> PersonRoute(route.id)
                     // A tab of its own, not a screen to push: getting to the tab is all it needs.
                     is AppRoute.NowPing -> return
+                    // Venues, where it says the link expired, is all it opens: never the record.
+                    AppRoute.LinkExpired -> {
+                        linkExpired = true
+                        return
+                    }
                     // A venue's room over its page, so Back goes there; a locale's over Now.
                     is AppRoute.Chat -> {
                         val locale = route.room.kind == ChatRoom.Kind.LOCALE
@@ -228,6 +236,15 @@ private fun MainShell(links: Flow<AppRoute>) {
     }
 
     AskForPermissions()
+
+    if (linkExpired) {
+        AlertDialog(
+            onDismissRequest = { linkExpired = false },
+            confirmButton = { TextButton(onClick = { linkExpired = false }) { Text("OK") } },
+            title = { Text("This link has expired") },
+            text = { Text("Ask whoever sent it for a new one.") },
+        )
+    }
 
     // Chat and a pass take the whole screen.
     val fullScreen = destination?.let { it.hasRoute(ChatRoute::class) || it.hasRoute(PassRoute::class) } == true
