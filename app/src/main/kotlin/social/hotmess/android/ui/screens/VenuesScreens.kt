@@ -225,6 +225,10 @@ fun VenueScreen(id: String, navigator: Navigator) {
     val checkoutState by checkout.state.collectAsStateWithLifecycle()
     val userId = rememberUserId()
     var pingHere by rememberSaveable { mutableStateOf(false) }
+    val pairUpScope = rememberCoroutineScope()
+    val pairUp = remember(id) { PairUpController(graph.api, id, pairUpScope) }
+    var pairingUp by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(id) { pairUp.load() }
     val actions = rememberPingActions { ping ->
         loader.update { overview -> overview.copy(friendPings = overview.friendPings.map { if (it.id == ping.id) ping else it }) }
         graph.pingUpdated(ping.id)
@@ -302,6 +306,10 @@ fun VenueScreen(id: String, navigator: Navigator) {
                         onPingHere = { pingHere = true },
                     )
                 }
+                // Pair me up, where the venue has it: once you're here, or while you're in it tonight.
+                pairUp.pairUp?.takeIf { it.here || it.mine != null }?.let { offer ->
+                    item(key = "pair-up") { PairUpRow(offer) { pairingUp = true } }
+                }
                 item {
                     DetailSection("About") {
                         loaded.description?.takeIf { it.isNotBlank() }?.let {
@@ -360,6 +368,7 @@ fun VenueScreen(id: String, navigator: Navigator) {
                     item {
                         PretendHere(loaded.name, coordinate.latitude, coordinate.longitude) {
                             loader.load(id, refresh = true) { graph.api.venueOverview(id) }
+                            pairUpScope.launch { pairUp.load() }
                         }
                     }
                 }
@@ -387,6 +396,12 @@ fun VenueScreen(id: String, navigator: Navigator) {
             onDismiss = { pingHere = false },
             onSent = { graph.pingUpdated(it.id) },
         )
+    }
+    if (pairingUp && here != null) {
+        PairUpSheet(pairUp, here.name) {
+            pairingUp = false
+            pairUpScope.launch { pairUp.load() }
+        }
     }
 }
 

@@ -241,6 +241,10 @@ dependencies {
     // Cover charge: Stripe's payment sheet or Square's card entry takes the payment.
     implementation(libs.stripe.android)
     implementation(libs.square.card.entry)
+    // Pair me up: scanning a match's QR code (decoded with the core module's ZXing reader).
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
 
     testImplementation(libs.junit)
 
