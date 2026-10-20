@@ -36,11 +36,12 @@ dependencyResolutionManagement {
 
 rootProject.name = "hot_mess_android"
 
-// The AudienceKit Android SDK (audience-kit/audience-kit-sdk-android) isn't published to a Maven
-// repository yet, so it's built from a checkout as a composite build. Point at one with
-// `audiencekit.dir` in gradle.properties or local.properties, or AUDIENCEKIT_DIR; otherwise the
-// AudienceKit monorepo's sdk/audience_kit/android (where this repository is apps/hot_mess/android),
-// a clone next to this one (../audience-kit-sdk-android) or inside it (which CI uses) is picked up.
+// The AudienceKit SDK (lwm-luminx/audience-kit-sdk: Swift, KMP core and Android, with the Gradle build
+// at its root) isn't published to a Maven repository yet, so it's built from a checkout as a composite
+// build. Point at one with `audiencekit.dir` in gradle.properties or local.properties, or
+// AUDIENCEKIT_DIR; otherwise the AudienceKit monorepo's sdk/audience-kit-sdk (where this repository is
+// apps/hot_mess/android), a clone next to this one (../audience-kit-sdk) or inside it (which CI uses)
+// is picked up.
 val localProperties = java.util.Properties().apply {
     file("local.properties").takeIf { it.exists() }?.inputStream()?.use(::load)
 }
@@ -48,13 +49,13 @@ val audienceKitSdk = listOfNotNull(
     providers.gradleProperty("audiencekit.dir").orNull,
     localProperties.getProperty("audiencekit.dir"),
     System.getenv("AUDIENCEKIT_DIR"),
-    "../../../sdk/audience_kit/android",
-    "../audience-kit-sdk-android",
-    "audience-kit-sdk-android",
+    "../../../sdk/audience-kit-sdk",
+    "../audience-kit-sdk",
+    "audience-kit-sdk",
 ).map(::file)
     .firstOrNull { it.resolve("settings.gradle.kts").exists() }
     ?: error(
-        "The AudienceKit Android SDK wasn't found. Clone audience-kit/audience-kit-sdk-android next to this " +
+        "The AudienceKit SDK wasn't found. Clone lwm-luminx/audience-kit-sdk next to this " +
             "repository, or set audiencekit.dir in local.properties.",
     )
 

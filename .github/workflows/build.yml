@@ -11,13 +11,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # The app builds against the AudienceKit Android SDK from source (a Gradle composite build). It's public, so
+      # The app builds against the AudienceKit SDK (its Gradle build is at the repository root) from source (a Gradle composite build). It's public, so
       # no key is needed.
       - uses: actions/checkout@v5
         with:
-          repository: audience-kit/audience-kit-sdk-android
+          repository: lwm-luminx/audience-kit-sdk
           ref: main
-          path: audience-kit-sdk-android
+          path: audience-kit-sdk
 
       - uses: actions/setup-java@v5
         with:
@@ -42,4 +42,4 @@ jobs:
           curl -fsSLO https://developer.audiencekit.com/graphql/schema.graphql
           npm install --silent --no-save --no-package-lock graphql@16
           node check.mjs --schema schema.graphql --endpoint consumer \
-            ../core/src/main ../app/src/main ../audience-kit-sdk-android/audiencekit/src/main
+            ../core/src/main ../app/src/main ../audience-kit-sdk/android/audiencekit/src/main
