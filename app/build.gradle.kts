@@ -82,13 +82,13 @@ val environments = mapOf(
     "debug" to Environment("debug", "http://10.0.2.2:3000", "", "842337999153841"),
     "staging" to Environment("staging", "https://api.next.audiencekit.com", "", "1660272792277019", "staging",
         facebookClientToken = "5d40b408dee01b2985755736fd046296", audienceHost = "hotmess.admin.next.audiencekit.com",
-        appleServicesId = "social.hotmess.signin"),
+        appleServicesId = "social.hotmess.signin", newRelicToken = "AA5ae44dcde02fb1820cebf78f3cde4514ea836c87-NRMA"),
     // Debug for the sign-in test: Hot Mess's development app against the local API. The app is in development
     // mode, so the test signs its account (which needs a role on the app) in to Chrome first, and sign-in shares
     // Chrome's session rather than using a private tab.
     "signInTest" to Environment("signInTest", "http://10.0.2.2:3000", "", "2967605370250663"),
     "release" to Environment("release", "https://api.audiencekit.com", "b0f8b66a-e636-495d-9475-0f5317ea08e0", "1168782378316790",
-        facebookClientToken = "ee4e193e42709c8aaf8f3aa6b383feab"),
+        facebookClientToken = "ee4e193e42709c8aaf8f3aa6b383feab", newRelicToken = "AA5ae44dcde02fb1820cebf78f3cde4514ea836c87-NRMA"),
 )
 
 android {
