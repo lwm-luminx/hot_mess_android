@@ -124,7 +124,7 @@ interface Navigator {
 
 /** Update required, launch, sign-in or the app, by session state. */
 @Composable
-fun HotMessApp(links: Flow<AppRoute>, onSignIn: () -> Unit, onGoogleSignIn: () -> Unit) {
+fun HotMessApp(links: Flow<AppRoute>, onSignIn: () -> Unit, onGoogleSignIn: () -> Unit, onAppleSignIn: () -> Unit = {}) {
     val graph = LocalAppGraph.current
     val state by graph.session.state.collectAsStateWithLifecycle()
     val requiredVersion by graph.session.requiredVersion.collectAsStateWithLifecycle()
@@ -141,7 +141,7 @@ fun HotMessApp(links: Flow<AppRoute>, onSignIn: () -> Unit, onGoogleSignIn: () -
         when (screen) {
             0 -> UpdateRequiredScreen(requiredVersion)
             1 -> LaunchScreen()
-            2 -> LoginScreen(onSignIn = onSignIn, onGoogleSignIn = onGoogleSignIn)
+            2 -> LoginScreen(onSignIn = onSignIn, onGoogleSignIn = onGoogleSignIn, onAppleSignIn = onAppleSignIn)
             else -> MainShell(links)
         }
     }

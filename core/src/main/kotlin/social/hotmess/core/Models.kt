@@ -781,6 +781,7 @@ fun String.firstNameForDisplay(): String = split(' ').firstOrNull { it.isNotEmpt
 data class SignInMethods(val methods: List<String> = emptyList(), val warnings: Map<String, String> = emptyMap()) {
     val facebook: Boolean get() = "facebook" in methods
     val google: Boolean get() = "google" in methods
+    val apple: Boolean get() = "apple" in methods
 
     /** What to say before signing in with [method], such as "Facebook login is only for testers"; null for nothing. */
     fun warning(method: String): String? = warnings[method]?.takeIf { it.isNotBlank() }

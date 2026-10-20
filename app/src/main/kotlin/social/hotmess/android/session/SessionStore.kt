@@ -2,6 +2,7 @@ package social.hotmess.android.session
 
 import android.content.Context
 import android.util.Log
+import com.audiencekit.AppleWebSignIn
 import com.audiencekit.AudienceKitClient
 import com.audiencekit.DeviceDescription
 import com.audiencekit.SessionEvent
@@ -69,6 +70,9 @@ class SessionStore(
 
     /** The dialog the Custom Tab is showing, and the state its redirect must carry. */
     private var pendingLogin: Pair<FacebookLoginDialog, String>? = null
+
+    /** Apple's sign-in the Custom Tab is showing, with the state and nonce its result must match. */
+    private var pendingApple: AppleWebSignIn? = null
 
     init {
         scope.launch {
@@ -142,8 +146,51 @@ class SessionStore(
         }
     }
 
-    /** Takes the dialog's redirect, if [url] is one. */
+    /**
+     * Starts Sign in with Apple and returns Apple's sign-in page to open, or null when the build has no Services ID.
+     * Apple posts the result to the API, which hands it back to [handleRedirect].
+     */
+    fun beginAppleSignIn(): String? {
+        _state.value = AuthState.SigningIn
+        val servicesId = configuration.appleServicesId
+        if (servicesId.isBlank()) {
+            signInFailed("Sign in with Apple isn't set up for this build yet.")
+            return null
+        }
+        val apple = AppleWebSignIn(servicesId, AppleWebSignIn.callbackUrl(configuration.baseUrl), context.packageName)
+        pendingApple = apple
+        return apple.authorizationUrl()
+    }
+
+    /** Takes Apple's result as the API hands it back. */
+    private fun handleAppleRedirect(url: String) {
+        val apple = pendingApple
+        pendingApple = null
+        if (apple == null) {
+            // The app was stopped while Apple's page was open, so the nonce that goes with this token is gone.
+            signInFailed("Sign in with Apple took too long. Try again.")
+            return
+        }
+        when (val result = apple.result(url)) {
+            is AppleWebSignIn.Result.Credential -> scope.launch {
+                exchange(displayName = listOfNotNull(result.firstName, result.lastName).joinToString(" ")) {
+                    audienceKit.signInWithApple(result, apple, DeviceDescription.current(context))
+                }
+            }
+            AppleWebSignIn.Result.Cancelled -> signInCancelled()
+            is AppleWebSignIn.Result.Failed -> {
+                Log.e("HotMess", "Apple sign-in failed: ${result.reason}")
+                signInFailed(result.reason)
+            }
+        }
+    }
+
+    /** Takes the dialog's redirect, or Apple's result, if [url] is one. */
     fun handleRedirect(url: String): Boolean {
+        if (AppleWebSignIn.isCallbackUrl(url)) {
+            handleAppleRedirect(url)
+            return true
+        }
         val (dialog, state) = pendingLogin?.takeIf { it.first.isRedirect(url) } ?: return false
         pendingLogin = null
         when (val result = dialog.result(url, state)) {
@@ -168,8 +215,9 @@ class SessionStore(
 
     /** The app came back without a redirect: the Custom Tab was closed. */
     fun signInAbandoned() {
-        if (pendingLogin == null || _state.value != AuthState.SigningIn) return
+        if ((pendingLogin == null && pendingApple == null) || _state.value != AuthState.SigningIn) return
         pendingLogin = null
+        pendingApple = null
         signInCancelled()
     }
 
@@ -186,12 +234,12 @@ class SessionStore(
      * session. The token JSON (`userId`, `audienceId`, `role`, `endpoint`) says who signed in; the SDK keeps the
      * token and the audience, and nothing here decodes the JWT. Their name and picture come from Me.
      */
-    private suspend fun exchange(signIn: suspend () -> com.audiencekit.SignInResult) {
+    private suspend fun exchange(displayName: String = "", signIn: suspend () -> com.audiencekit.SignInResult) {
         _state.value = AuthState.SigningIn
         try {
             val result = signIn()
             val id = social.hotmess.core.RecordId.normalize(result.userId)
-            _user.value = id?.let { User(it, "") }
+            _user.value = id?.let { User(it, displayName) }
             _user.value = runCatching { api.me() }.getOrNull() ?: _user.value
             signedIn()
         } catch (e: CancellationException) {

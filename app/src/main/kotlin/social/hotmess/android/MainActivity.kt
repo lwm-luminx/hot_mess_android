@@ -83,7 +83,12 @@ class MainActivity : ComponentActivity(), GoogleAccounts {
             HotMessTheme(branding = branding?.theme) {
                 CompositionLocalProvider(LocalAppGraph provides graph, LocalGoogleAccounts provides this) {
                     Box(Modifier.fillMaxSize()) {
-                        HotMessApp(links = linkFlow, onSignIn = ::signIn, onGoogleSignIn = ::signInWithGoogle)
+                        HotMessApp(
+                            links = linkFlow,
+                            onSignIn = ::signIn,
+                            onGoogleSignIn = ::signInWithGoogle,
+                            onAppleSignIn = ::signInWithApple,
+                        )
                         // A notification that came over the cable while the app is open; a tap opens it as a push's would.
                         NotificationBanner(graph.notifications) { notification -> openPush(notification.data) }
                     }
@@ -124,6 +129,15 @@ class MainActivity : ComponentActivity(), GoogleAccounts {
     /** Facebook's login dialog in a Custom Tab, for phones without the Facebook app. */
     private fun signInWithFacebookDialog() {
         val url = graph.session.beginSignIn() ?: return
+        CustomTabsIntent.Builder()
+            .setEphemeralBrowsingEnabled(graph.configuration.privateSignIn)
+            .build()
+            .launchUrl(this, url.toUri())
+    }
+
+    /** Apple's web sign-in in a Custom Tab; the API hands the result back through [handle]. */
+    private fun signInWithApple() {
+        val url = graph.session.beginAppleSignIn() ?: return
         CustomTabsIntent.Builder()
             .setEphemeralBrowsingEnabled(graph.configuration.privateSignIn)
             .build()

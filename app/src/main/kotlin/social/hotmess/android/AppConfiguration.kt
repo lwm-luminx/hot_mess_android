@@ -12,6 +12,8 @@ data class AppConfiguration(
     /** The Facebook app's client token, which the Facebook SDK needs to sign in through the Facebook app. */
     val facebookClientToken: String = BuildConfig.FACEBOOK_CLIENT_TOKEN,
     val googleServerClientId: String = BuildConfig.GOOGLE_SERVER_CLIENT_ID,
+    /** The Services ID "Continue with Apple" opens Apple's web sign-in with; empty for none. */
+    val appleServicesId: String = BuildConfig.APPLE_SERVICES_ID,
     /** The Login for Business configuration, for a build that signs in with a Business-type app. */
     val facebookLoginConfigId: String? = BuildConfig.FACEBOOK_LOGIN_CONFIG_ID.ifBlank { null },
     /** Signs in through an ephemeral Custom Tab that doesn't share Chrome's Facebook cookies (Sign-in Test). */
