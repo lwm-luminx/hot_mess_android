@@ -7,6 +7,7 @@ import java.util.Properties
 // AGP 9 compiles Kotlin itself (built-in Kotlin), so there's no separate Kotlin Android plugin.
 plugins {
     id("com.android.application") // on the root build classpath; see ../build.gradle.kts
+    id("newrelic") // also on the root build classpath
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
 }
@@ -69,6 +70,11 @@ data class Environment(
      * `hotmess.apple.servicesId` once the Services ID is set up.
      */
     val appleServicesId: String = "",
+    /**
+     * The New Relic mobile app's token (one per app in New Relic). It ships in the app, so it isn't a secret.
+     * Without one the agent doesn't start.
+     */
+    val newRelicToken: String = "",
 )
 
 val environments = mapOf(
@@ -185,6 +191,7 @@ android {
         buildConfigField("String", "APPLE_SERVICES_ID", "\"${environment.appleServicesId.ifEmpty { secret("apple.servicesId").takeIf { name == "release" }.orEmpty() }}\"")
         buildConfigField("boolean", "PRIVATE_SIGN_IN", environment.privateSignIn.toString())
         buildConfigField("String", "AUDIENCEKIT_ENVIRONMENT", "\"${environment.audienceKitEnvironment}\"")
+        buildConfigField("String", "NEW_RELIC_TOKEN", "\"${environment.newRelicToken}\"")
         resValue(
             "string",
             "app_name",
@@ -213,6 +220,11 @@ android {
     testOptions {
         unitTests.isReturnDefaultValues = true
     }
+}
+
+// Only the builds people run report to New Relic; local and UI-test builds aren't instrumented.
+newrelic {
+    excludeVariantInstrumentation("debug", "signInTest")
 }
 
 dependencies {
@@ -247,6 +259,8 @@ dependencies {
     implementation(libs.androidx.fragment)
     implementation(libs.maplibre)
     implementation(libs.firebase.messaging)
+    // Mobile monitoring: crashes, HTTP timings and errors, app launches.
+    implementation(libs.newrelic.android.agent)
     // Cover charge: Stripe's payment sheet or Square's card entry takes the payment.
     implementation(libs.stripe.android)
     implementation(libs.square.card.entry)
