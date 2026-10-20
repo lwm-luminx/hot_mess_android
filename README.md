@@ -24,7 +24,7 @@ interpolate). Locally, from an audience-kit checkout where this app is `apps/hot
 
 ```sh
 node scripts/graphql-documents/check.mjs --schema api/schema.graphql --endpoint consumer \
-  apps/hot_mess/android/core/src/main apps/hot_mess/android/app/src/main sdk/audience_kit/android/audiencekit/src/main
+  apps/hot_mess/android/core/src/main apps/hot_mess/android/app/src/main sdk/audience-kit-sdk/android/audiencekit/src/main
 ```
 
 Before sign-in the app reads `GET /v1/status` for the oldest version Google Play still serves
@@ -34,9 +34,9 @@ says (`userId`, `audienceId`, `role`, `endpoint`); nothing decodes the JWT. API 
 
 ## Setup
 
-1. Clone [audience-kit-sdk-android](https://github.com/audience-kit/audience-kit-sdk-android) next to
-   this repository (`../audience-kit-sdk-android`); it's included as a Gradle composite build. In the
-   AudienceKit monorepo, where this app is `apps/hot_mess/android`, its `sdk/audience_kit/android` is used.
+1. Clone [audience-kit-sdk](https://github.com/lwm-luminx/audience-kit-sdk) next to this repository
+   (`../audience-kit-sdk`); its root Gradle build is included as a composite build. In the AudienceKit
+   monorepo, where this app is `apps/hot_mess/android`, its `sdk/audience-kit-sdk` submodule is used.
    To keep it somewhere else, set `audiencekit.dir` in `local.properties` or `AUDIENCEKIT_DIR`.
 2. Optionally, add Firebase's settings to `local.properties` for push (never commit them):
 
@@ -110,7 +110,7 @@ connected test run, it uninstalls the app when it finishes.
 
 ## CI
 
-`.github/workflows/build.yml` checks out the public audience-kit-sdk-android beside the app, so it needs
+`.github/workflows/build.yml` checks out the public audience-kit-sdk beside the app, so it needs
 no secrets. The `AUDIENCE_KIT_SSH_KEY` secret, and the read-only deploy key on audience-kit/audience-kit it
 belonged to, are no longer used.
 

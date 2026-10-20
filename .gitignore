@@ -12,6 +12,7 @@ build/
 /.idea
 # CI checks the AudienceKit SDK out here (see settings.gradle.kts).
 /audience-kit
+/audience-kit-sdk
 
 # Scratch for the GraphQL document check (see .github/workflows/build.yml).
 /.graphql-check
