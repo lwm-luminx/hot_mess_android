@@ -30,6 +30,7 @@ import androidx.compose.material.icons.rounded.Campaign
 import androidx.compose.material3.Icon
 import androidx.compose.material3.TextButton
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import social.hotmess.core.ApiError
 import androidx.compose.runtime.remember
@@ -42,7 +43,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import social.hotmess.android.payments.CoverCheckout
 import social.hotmess.android.payments.CoverCheckoutFailure
 import social.hotmess.android.payments.rememberCoverCheckout
@@ -91,6 +95,9 @@ import social.hotmess.core.PhotoTone
 import social.hotmess.core.Venue
 import java.time.Instant
 
+/** How often Now reloads while it's showing. */
+private const val NOW_REFRESH_MS = 60_000L
+
 /**
  * What's happening where you are: the venue you're in, with the last few lines of its chat and the
  * friends who are there, or the venues nearby; then what's on.
@@ -113,6 +120,20 @@ fun NowScreen(navigator: Navigator) {
         graph.pingUpdates.collect {
             val near = latestCoordinates
             loader.load(near, refresh = true) { graph.api.nowOrPings(near) }
+        }
+    }
+
+    // Standing still reports no new position, but the chat, the lineup and who's here keep changing:
+    // reload quietly on coming back to the screen and every minute while it's showing. The first pass
+    // finds the load above in flight and leaves it be.
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                val near = latestCoordinates
+                loader.load(near, refresh = true, quiet = true) { graph.api.nowOrPings(near) }
+                delay(NOW_REFRESH_MS)
+            }
         }
     }
 
