@@ -158,7 +158,10 @@ android {
             initWith(getByName("release"))
             applicationIdSuffix = ".staging"
             versionNameSuffix = "-staging"
-            signingConfig = signingConfigs.getByName("debug")
+            // Debug-signed for local installs. The Play workflow (.github/workflows/play.yml) sets
+            // `hotmess.stagingSigning=upload` to sign it with the upload key for the staging app's Play listing.
+            signingConfig = signingConfigs.findByName("upload")?.takeIf { secret("stagingSigning") == "upload" }
+                ?: signingConfigs.getByName("debug")
             matchingFallbacks += listOf("release")
         }
         create("signInTest") {
