@@ -17,6 +17,8 @@ name: Google Play
 on:
   push:
     branches: [next, main]
+  # Pull requests build the Staging bundle to check this workflow, and never upload.
+  pull_request:
   workflow_dispatch:
 
 concurrency:
@@ -30,7 +32,7 @@ jobs:
     env:
       VARIANT: ${{ github.ref_name == 'main' && 'release' || 'staging' }}
       PACKAGE: ${{ github.ref_name == 'main' && 'social.hotmess.android.app' || 'social.hotmess.android.staging' }}
-      HAS_PLAY: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON != '' && secrets.PLAY_UPLOAD_KEYSTORE != '' }}
+      HAS_PLAY: ${{ github.event_name != 'pull_request' && secrets.PLAY_SERVICE_ACCOUNT_JSON != '' && secrets.PLAY_UPLOAD_KEYSTORE != '' }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/checkout@v5
@@ -85,7 +87,7 @@ jobs:
           if-no-files-found: error
 
       - name: Skip the upload without Play secrets
-        if: env.HAS_PLAY != 'true'
+        if: env.HAS_PLAY != 'true' && github.event_name != 'pull_request'
         run: echo "::warning::PLAY_SERVICE_ACCOUNT_JSON or PLAY_UPLOAD_KEYSTORE isn't set; built $PACKAGE but didn't upload it"
 
       - id: auth
