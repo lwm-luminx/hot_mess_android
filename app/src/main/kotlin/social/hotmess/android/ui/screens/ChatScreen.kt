@@ -41,11 +41,14 @@ import social.hotmess.android.ui.components.ChatThreadMessage
 import social.hotmess.android.ui.components.HereNowStrip
 import social.hotmess.android.ui.components.Message
 import social.hotmess.android.ui.components.Presence
+import social.hotmess.android.ui.components.PromptBar
 import social.hotmess.android.ui.components.RichContent
 import social.hotmess.android.ui.components.RoomBanner
 import social.hotmess.android.ui.components.RoomBannerKind
 import social.hotmess.core.AppRoute
 import social.hotmess.core.BlockedUser
+import social.hotmess.core.ChatKind
+import social.hotmess.core.ChatPrompts
 import social.hotmess.core.ChatRoom
 import social.hotmess.core.FriendDirectory
 import social.hotmess.core.RecordId
@@ -54,6 +57,7 @@ import social.hotmess.core.ReportTarget
 import social.hotmess.core.RoomPeople
 import social.hotmess.core.VenueChatConnection
 import social.hotmess.core.VenueMessage
+import java.time.Instant
 
 /**
  * The live chat room for one venue, or one locale, kept across configuration changes. Only people at
@@ -244,17 +248,18 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
     }
 
     /**
-     * Says [body] in the room with `sendMyChatMessage`, then tells [onResult] whether it went. The room
-     * delivers the line to everyone following it, this person included, and the copy the mutation returns
-     * shows it at once; the room's copy then replaces it by id. A failed send leaves the draft as it was.
+     * Says [body] in the room with `sendMyChatMessage`, answering the prompt [promptId] when given, then
+     * tells [onResult] whether it went. The room delivers the line to everyone following it, this person
+     * included, and the copy the mutation returns shows it at once; the room's copy then replaces it by id.
+     * A failed send leaves the draft as it was.
      */
-    fun send(body: String, onResult: (Boolean) -> Unit) {
+    fun send(body: String, promptId: String? = null, onResult: (Boolean) -> Unit) {
         val text = body.trim()
         if (text.isEmpty() || _sending.value || _status.value != Status.CONNECTED) return onResult(false)
         _sending.value = true
         viewModelScope.launch {
             val sent = try {
-                graph.api.sendChatMessage(room, text)?.let(::receive)
+                graph.api.sendChatMessage(room, text, promptId)?.let(::receive)
                 true
             } catch (e: CancellationException) {
                 throw e
@@ -303,6 +308,9 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
     var reporting by remember { mutableStateOf<ReportSubject?>(null) }
     var blocking by remember { mutableStateOf<BlockedUser?>(null) }
     var askingTerms by remember { mutableStateOf(false) }
+    // The prompt being answered (its id), and the quiet-room cards this reader said "Not now" to.
+    var answering by rememberSaveable { mutableStateOf<String?>(null) }
+    var dismissedPrompts by rememberSaveable { mutableStateOf(emptyList<String>()) }
 
     LaunchedEffect(Unit) { if (graph.safety.state.value == null) graph.safety.refresh() }
 
@@ -319,8 +327,12 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
             return
         }
         val text = draft
-        // Clears only what was sent, not anything typed while it went.
-        model.send(text) { sent -> if (sent && draft == text) draft = "" }
+        val promptId = answering
+        // Clears only what was sent, not anything typed while it went; an answer that went ends answering.
+        model.send(text, promptId) { sent ->
+            if (sent && draft == text) draft = ""
+            if (sent && answering == promptId) answering = null
+        }
     }
 
     ScreenScaffold(title = venueName, onBack = navigator::back) {
@@ -357,7 +369,15 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
             HereNowStrip(hereNow, reachable, viewerId = userId)
             // Blocked people's lines leave the room at once; the API stops sending new ones.
             val shown = remember(messages, safety) { messages.filterNot { !it.isFromListing && safety?.isBlocked(it.userId) == true } }
-            val thread = remember(shown, userId, people) { shown.map { it.threadMessage(userId, friends) } }
+            val notDismissed = remember(shown, dismissedPrompts) { shown.filterNot { it.kind == ChatKind.PROMPT && it.id in dismissedPrompts } }
+            val thread = remember(notDismissed, userId, people) {
+                notDismissed.map { it.threadMessage(userId, friends, notDismissed, people) }
+            }
+            // The night's pinned prompt (the newest), the PromptBar's; and the prompt being answered.
+            val pinnedPrompt = remember(shown) { ChatPrompts.pinned(shown)?.prompt }
+            val answeringPrompt = remember(shown, answering) {
+                answering?.let { id -> shown.firstNotNullOfOrNull { line -> line.prompt?.takeIf { it.id == id } } }
+            }
             // Green for everyone in the room, yellow for friends outside it whom a notification reaches.
             val presence = remember(people, reachable) {
                 val push = reachable + people.byId.values.filter { it.isRecent && it.reachable }.map { it.userId }
@@ -371,12 +391,37 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
                 isLocale = isLocale,
                 onOpenEvent = { id -> navigator.open(AppRoute.EventDetail(RecordId.normalize(id) ?: id.lowercase())) },
                 onMessageActions = { line -> acting = shown.firstOrNull { it.id == line.id } },
+                promptBar = pinnedPrompt?.let { prompt ->
+                    @Composable { collapsed: Boolean ->
+                        val answers = remember(shown, prompt.id) { ChatPrompts.answerCount(shown, prompt.id) }
+                        val clock by produceState(Instant.now(), prompt.nextAt) {
+                            while (true) {
+                                delay(60_000L)
+                                value = Instant.now()
+                            }
+                        }
+                        PromptBar(
+                            prompt,
+                            footer = ChatPrompts.footer(prompt, answers, at = clock),
+                            onAnswer = { answering = prompt.id },
+                            collapsed = collapsed,
+                            answerCount = answers,
+                        )
+                    }
+                },
+                onAnswerPrompt = { line -> line.prompt?.let { answering = it.id } },
+                onDismissPrompt = { line ->
+                    dismissedPrompts = dismissedPrompts + line.id
+                    if (answering == line.prompt?.id) answering = null
+                },
             )
             ChatComposer(
                 value = draft,
                 onValueChange = { draft = it },
                 onSend = ::send,
                 sendEnabled = draft.isNotBlank() && !sending && status == VenueChatModel.Status.CONNECTED,
+                answering = answeringPrompt?.text,
+                onStopAnswering = { answering = null },
             )
         }
     }
@@ -420,22 +465,32 @@ private fun roomNameFallback(room: ChatRoom, graph: AppGraph): String = when (ro
 
 /**
  * A room's line as ChatThread draws it. A friend shows by their full name (the room sends everyone
- * "First L."), a post as the venue or as a listing by its own name and photo, and a rich message as its card.
+ * "First L."), a post as the venue or as a listing by its own name and photo, a prompt as the audience
+ * (its name and mark), an answer with its Prompt label from [lines], and a rich message as its card.
  */
-private fun VenueMessage.threadMessage(viewerId: String?, friends: FriendDirectory) = ChatThreadMessage(
+private fun VenueMessage.threadMessage(viewerId: String?, friends: FriendDirectory, lines: List<VenueMessage>, people: RoomPeople) = ChatThreadMessage(
     id = id,
-    // A post as a listing groups apart from the poster's own lines, and takes no presence of theirs.
-    senderId = personId?.let { "person:$it" } ?: userId.lowercase(),
+    // A post as a listing or the audience groups apart from the poster's own lines, and takes no presence of theirs.
+    senderId = when {
+        isPostedAsAudience -> "audience"
+        personId != null -> "person:$personId"
+        else -> userId.lowercase()
+    },
     senderName = if (isFromListing) name else friends.displayName(userId, name),
-    avatarUrl = avatarUrl,
-    text = body,
+    avatarUrl = if (isPostedAsAudience) null else avatarUrl,
+    text = prompt?.text ?: body,
     sentAt = sentAt,
-    own = isOutgoing(viewerId),
-    role = role,
+    own = !isPostedAsAudience && isOutgoing(viewerId),
+    role = if (isPostedAsAudience) null else role,
     asPlace = isPostedAsVenue,
-    rich = if (kind.isRich) {
+    rich = if (kind.isRich && kind != ChatKind.PROMPT) {
         RichContent(kind, title = title, body = caption, photoUrl = photoUrl, event = event, endsAt = endsAt, pinned = pinned)
     } else {
         null
     },
+    asAudience = isPostedAsAudience,
+    asListing = personId != null,
+    friend = !isFromListing && (people.byId[userId.lowercase()]?.friend == true || friends.fullName(userId) != null),
+    promptLabel = if (kind == ChatKind.TEXT) ChatPrompts.label(promptId, lines) else null,
+    prompt = if (kind == ChatKind.PROMPT) prompt else null,
 )

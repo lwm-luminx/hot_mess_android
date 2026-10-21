@@ -50,10 +50,12 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import social.hotmess.android.R
 import social.hotmess.android.ui.theme.ContentMaxWidth
@@ -209,8 +211,18 @@ fun RemoteImage(url: String?, modifier: Modifier = Modifier, contentScale: Conte
 }
 
 /**
- * A round avatar. Without a photo it shows initials on a spectrum colour, chosen by name. With a
- * [presence], a [PresenceDot] sits at its bottom-right (10 on avatars under 40, 12 from 40 up), ringed
+ * Chat's avatar size (design system TinyAvatar): people in rooms, Here now and the profile sheet draw at
+ * 24, and at [PeekAvatarSize] in ChatPeek. The venue and verified talent posting as their listing stay at
+ * [ListingAvatarSize].
+ */
+val TinyAvatarSize: Dp = 24.dp
+val PeekAvatarSize: Dp = 20.dp
+val ListingAvatarSize: Dp = 28.dp
+
+/**
+ * A round avatar. Without a photo it shows initials on a spectrum colour, chosen by name (at 10, or 9 at
+ * 20, on chat's tiny avatars). With a [presence], a [PresenceDot] sits at its bottom-right (9 on tiny
+ * avatars, 10 on avatars under 40, 12 from 40 up), ringed
  * in [presenceRing] (`surface-raised` when unspecified; pass the surface the avatar sits on); offline
  * draws nothing unless [showOffline] (see PresenceDot). A place
  * (a venue posting in chat) passes a rounded-square [shape], so it never looks like a person.
@@ -238,8 +250,14 @@ fun Avatar(
         ) {
             Text(
                 name.initialsForDisplay(),
-                style = HotMessType.subheading.copy(fontSize = HotMessType.subheading.fontSize * (size.value / 44f)),
+                // Chat's tiny avatars set their initials at 10 (9 at 20) so they stay legible; others scale.
+                style = when {
+                    size <= 20.dp -> HotMessType.caption.copy(fontSize = 9.sp, lineHeight = 10.sp, fontWeight = FontWeight.Bold)
+                    size <= TinyAvatarSize -> HotMessType.caption.copy(fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold)
+                    else -> HotMessType.subheading.copy(fontSize = HotMessType.subheading.fontSize * (size.value / 44f))
+                },
                 color = tokens.onSpectrum[band],
+                maxLines = 1,
             )
             if (url != null) {
                 AsyncImage(model = url, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
@@ -248,7 +266,11 @@ fun Avatar(
         if (presence != null && (presence != Presence.OFFLINE || showOffline)) {
             PresenceDot(
                 presence,
-                size = if (size >= 40.dp) 12.dp else 10.dp,
+                size = when {
+                    size >= 40.dp -> 12.dp
+                    size <= TinyAvatarSize -> 9.dp
+                    else -> 10.dp
+                },
                 ring = presenceRing,
                 showOffline = showOffline,
                 modifier = Modifier.align(Alignment.BottomEnd).offset(x = 1.dp, y = 1.dp),

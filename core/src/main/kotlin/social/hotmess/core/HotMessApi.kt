@@ -193,9 +193,10 @@ class HotMessApi(val client: AudienceKitClient) {
      * Says [body] in [room] as the signed-in user (`sendMyChatMessage`), returning the line as the room
      * sees it, or null if the response didn't carry one. The room also delivers it to everyone following,
      * the sender included. Errors written for people ("You're not at the venue") come through as they are.
+     * With [promptId] it answers that prompt, and comes back with `promptId` set.
      */
-    suspend fun sendChatMessage(room: ChatRoom, body: String): VenueMessage? {
-        val data = mutate(ChatProtocol.SEND_MESSAGE, JsonObject.serializer(), mapOf("input" to ChatProtocol.sendInput(room, body)))
+    suspend fun sendChatMessage(room: ChatRoom, body: String, promptId: String? = null): VenueMessage? {
+        val data = mutate(ChatProtocol.SEND_MESSAGE, JsonObject.serializer(), mapOf("input" to ChatProtocol.sendInput(room, body, promptId)))
         val payload = data["sendMyChatMessage"] as? JsonObject
         return ChatProtocol.message(payload?.get("message"))
     }
@@ -380,6 +381,17 @@ class HotMessApi(val client: AudienceKitClient) {
     suspend fun setRecentChatPush(enabled: Boolean): Boolean =
         mutate(Documents.SET_RECENT_CHAT_PUSH, SetRecentChatPushResponse.serializer(), graphQLVariables("enabled" to enabled))
             .setRecentChatPush.recentChatPush
+
+    /**
+     * Whether chat rooms show the user's initials instead of their photo (`me.chatInitials`), or null when
+     * there's no signed-in user.
+     */
+    suspend fun chatInitials(): Boolean? = query(Documents.CHAT_INITIALS, ChatInitialsResponse.serializer()).me?.chatInitials
+
+    /** Turns "Use my initials instead" on or off (`setChatInitials`); returns the setting as it now is. */
+    suspend fun setChatInitials(enabled: Boolean): Boolean =
+        mutate(Documents.SET_CHAT_INITIALS, SetChatInitialsResponse.serializer(), graphQLVariables("enabled" to enabled))
+            .setChatInitials.chatInitials
 
     // endregion
 
@@ -642,6 +654,16 @@ private data class RecentChatPushResponse(val me: Me? = null) {
 @Serializable
 private data class SetRecentChatPushResponse(val setRecentChatPush: Payload) {
     @Serializable data class Payload(val recentChatPush: Boolean = false)
+}
+
+@Serializable
+private data class ChatInitialsResponse(val me: Me? = null) {
+    @Serializable data class Me(val chatInitials: Boolean = false)
+}
+
+@Serializable
+private data class SetChatInitialsResponse(val setChatInitials: Payload) {
+    @Serializable data class Payload(val chatInitials: Boolean = false)
 }
 
 @Serializable

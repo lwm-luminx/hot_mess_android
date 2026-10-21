@@ -480,11 +480,18 @@ data class ChatLine(
     val postedAsVenue: Boolean = false,
     /** Posted by talent as their listing (role HOST): [name] and [avatarUrl] are the person's. */
     val postedAsPerson: Boolean = false,
+    /** Posted as the audience, like a prompt: [name] is the audience's, with no avatar or presence. */
+    val postedAsAudience: Boolean = false,
+    /** The prompt a text line answers, which labels its bubble "Prompt". */
+    val promptId: String? = null,
 ) {
     val role: ChatRole? get() = ChatRole.parse(roleName)
 
-    /** Posted as the venue or as a person: a listing, so no presence and no friend's name for the sender. */
-    val isFromListing: Boolean get() = postedAsVenue || postedAsPerson
+    /** Posted as the audience: a prompt, even from a server that doesn't say so. */
+    val isPostedAsAudience: Boolean get() = postedAsAudience || kind == ChatKind.PROMPT
+
+    /** Posted as the venue, a person or the audience: a listing, so no presence and no friend's name for the sender. */
+    val isFromListing: Boolean get() = postedAsVenue || postedAsPerson || isPostedAsAudience
     val kind: ChatKind get() = ChatKind.parse(kindName)
 
     /** Whether the room still shows it: a special stops at its end time. */
