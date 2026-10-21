@@ -333,7 +333,7 @@ class HotMessApi(val client: AudienceKitClient) {
      */
     suspend fun signInMethods(host: String): SignInMethods? =
         try {
-            val path = "/v1/token/methods?host=" + java.net.URLEncoder.encode(host, Charsets.UTF_8)
+            val path = "/v1/token/methods?host=" + java.net.URLEncoder.encode(host, Charsets.UTF_8.name())
             val bytes = client.data(APIRequest(method = "GET", path = path, authenticated = false))
             json.decodeFromString(SignInMethods.serializer(), bytes.toString(Charsets.UTF_8))
         } catch (e: CancellationException) {
