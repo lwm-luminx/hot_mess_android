@@ -203,6 +203,51 @@ class HotMessApi(val client: AudienceKitClient) {
 
     // endregion
 
+    // region Posts
+
+    /** A page of posts: a venue's, an event's, a person's or a locale's (filtered by [from]). */
+    suspend fun posts(subject: PostsSubject, from: PostsFilter = PostsFilter.ALL, first: Int = 20): List<Post> {
+        val variables = graphQLVariables("id" to subject.id, "first" to first)
+        return when (subject) {
+            is PostsSubject.Venue -> query(Documents.VENUE_POSTS, VenuePostsResponse.serializer(), variables).venues?.venue?.posts?.list?.nodes
+            is PostsSubject.Event -> query(Documents.EVENT_POSTS, EventPostsResponse.serializer(), variables).events?.event?.posts?.list?.nodes
+            is PostsSubject.Person -> query(Documents.PERSON_POSTS, PersonPostsResponse.serializer(), variables).people?.person?.posts?.list?.nodes
+            is PostsSubject.Locale -> query(
+                Documents.LOCALE_POSTS,
+                LocalePostsResponse.serializer(),
+                graphQLVariables("id" to subject.id, "first" to first, "from" to from.name),
+            ).locale?.posts?.list?.nodes
+        }.orEmpty().filterNotNull()
+    }
+
+    /** One post and its comments, oldest first; null once it's removed. */
+    suspend fun post(id: String): PostDetail? =
+        query(Documents.POST, PostResponse.serializer(), graphQLVariables("id" to id)).posts?.post?.let {
+            PostDetail(it.post, it.comments.nodes.filterNotNull())
+        }
+
+    suspend fun commentOnPost(postId: String, body: String): PostComment =
+        mutate(Documents.CREATE_POST_COMMENT, CreatePostCommentResponse.serializer(), graphQLVariables("postId" to postId, "body" to body.trim()))
+            .createPostComment.comment
+
+    suspend fun removePostComment(id: String) {
+        mutate(Documents.REMOVE_POST_COMMENT, RemovePostCommentResponse.serializer(), graphQLVariables("id" to id))
+    }
+
+    /** "Hide posts from {name}", or showing them again. */
+    suspend fun mutePosts(poster: PostPoster, muted: Boolean = true): Boolean =
+        mutate(
+            Documents.MUTE_POST_AUTHOR,
+            MutePostAuthorResponse.serializer(),
+            graphQLVariables(
+                "venueId" to poster.id.takeIf { poster.kind == PostPoster.Kind.VENUE },
+                "personId" to poster.id.takeIf { poster.kind == PostPoster.Kind.PERSON },
+                "muted" to muted,
+            ),
+        ).mutePostAuthor.muted
+
+    // endregion
+
     // region Ping
 
     /** The signed-in user's active Ping, without reporting the position. */
@@ -840,3 +885,79 @@ private data class ShowPairUpCodeResponse(val showPairUpCode: Payload) {
 
 @Serializable
 private data class ScanPairUpCodeResponse(val scanPairUpCode: PairUpScan)
+
+@Serializable
+private data class PostNodes(val nodes: List<Post?> = emptyList())
+
+@Serializable
+private data class PostList(val list: PostNodes? = null)
+
+@Serializable
+private data class PostsOwner(val posts: PostList? = null)
+
+@Serializable
+private data class VenuePostsResponse(val venues: Venues? = null) {
+    @Serializable
+    data class Venues(val venue: PostsOwner? = null)
+}
+
+@Serializable
+private data class EventPostsResponse(val events: Events? = null) {
+    @Serializable
+    data class Events(val event: PostsOwner? = null)
+}
+
+@Serializable
+private data class PersonPostsResponse(val people: People? = null) {
+    @Serializable
+    data class People(val person: PostsOwner? = null)
+}
+
+@Serializable
+private data class LocalePostsResponse(val locale: PostsOwner? = null)
+
+@Serializable
+private data class PostResponse(val posts: Posts? = null) {
+    @Serializable
+    data class Posts(val post: PostWithComments? = null)
+}
+
+/** `post(id:)`: the card's fields with its comments beside them. */
+@Serializable(with = PostWithCommentsSerializer::class)
+internal data class PostWithComments(val post: Post, val comments: CommentNodes)
+
+@Serializable
+internal data class CommentNodes(val nodes: List<PostComment?> = emptyList())
+
+/** Reads one object as both the [Post] and its `comments`. */
+internal object PostWithCommentsSerializer : KSerializer<PostWithComments> {
+    override val descriptor = Post.serializer().descriptor
+
+    override fun deserialize(decoder: kotlinx.serialization.encoding.Decoder): PostWithComments {
+        val input = decoder as kotlinx.serialization.json.JsonDecoder
+        val element = input.decodeJsonElement()
+        val comments = (element as? JsonObject)?.get("comments")
+        return PostWithComments(
+            post = input.json.decodeFromJsonElement(Post.serializer(), element),
+            comments = comments?.let { input.json.decodeFromJsonElement(CommentNodes.serializer(), it) } ?: CommentNodes(),
+        )
+    }
+
+    override fun serialize(encoder: kotlinx.serialization.encoding.Encoder, value: PostWithComments) =
+        throw UnsupportedOperationException("PostWithComments is only read")
+}
+
+@Serializable
+private data class CreatePostCommentResponse(val createPostComment: Payload) {
+    @Serializable
+    data class Payload(val comment: PostComment)
+}
+
+@Serializable
+private data class RemovePostCommentResponse(val removePostComment: JsonObject? = null)
+
+@Serializable
+private data class MutePostAuthorResponse(val mutePostAuthor: Payload) {
+    @Serializable
+    data class Payload(val muted: Boolean = true)
+}

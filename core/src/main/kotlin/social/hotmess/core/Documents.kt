@@ -332,4 +332,69 @@ object Documents {
           registerDevice(input: { notificationToken: ${'$'}notificationToken, appId: ${'$'}appId, sandbox: ${'$'}sandbox }) { registered }
         }
     """.trimIndent()
+
+    // region Posts
+
+    /** A post card's fields: its poster, photos, the event it's on and its comment count. */
+    const val POST_FIELDS: String =
+        "id body posterName posterAvatarUrl roleLabel actingPersonName createdAt edited pinned commentsOpen commentCount " +
+            "photos { url altText } event { id name startAt } person { id } venue { id }"
+
+    const val POST_COMMENT_FIELDS: String = "id authorId authorName authorAvatarUrl body createdAt viewerCanRemove"
+
+    /** A venue's own posts: on it, its events and its series, pinned first. */
+    val VENUE_POSTS: String = """
+        query VenuePosts(${'$'}id: ID!, ${'$'}first: Int!) {
+          venues { venue(id: ${'$'}id) { posts { list(first: ${'$'}first) { nodes { $POST_FIELDS } } } } }
+        }
+    """.trimIndent()
+
+    /** Posts on an event by its venue and the people on it. */
+    val EVENT_POSTS: String = """
+        query EventPosts(${'$'}id: ID!, ${'$'}first: Int!) {
+          events { event(id: ${'$'}id) { posts { list(first: ${'$'}first) { nodes { $POST_FIELDS } } } } }
+        }
+    """.trimIndent()
+
+    /** A talent listing's own posts. */
+    val PERSON_POSTS: String = """
+        query PersonPosts(${'$'}id: ID!, ${'$'}first: Int!) {
+          people { person(id: ${'$'}id) { posts { list(first: ${'$'}first) { nodes { $POST_FIELDS } } } } }
+        }
+    """.trimIndent()
+
+    /** A locale's updates from the last 14 days, newest first, from everyone, venues, talent or the events you're going to. */
+    val LOCALE_POSTS: String = """
+        query LocalePosts(${'$'}id: ID!, ${'$'}first: Int!, ${'$'}from: PostsFrom!) {
+          locale(id: ${'$'}id) { posts { list(first: ${'$'}first, from: ${'$'}from) { nodes { $POST_FIELDS } } } }
+        }
+    """.trimIndent()
+
+    /** One post and its comments, oldest first. */
+    val POST: String = """
+        query Post(${'$'}id: ID!) {
+          posts { post(id: ${'$'}id) { $POST_FIELDS comments(first: 100) { nodes { $POST_COMMENT_FIELDS } } } }
+        }
+    """.trimIndent()
+
+    val CREATE_POST_COMMENT: String = """
+        mutation CreatePostComment(${'$'}postId: ID!, ${'$'}body: String!) {
+          createPostComment(input: { postId: ${'$'}postId, body: ${'$'}body }) { comment { $POST_COMMENT_FIELDS } }
+        }
+    """.trimIndent()
+
+    val REMOVE_POST_COMMENT: String = """
+        mutation RemovePostComment(${'$'}id: ID!) {
+          removePostComment(input: { id: ${'$'}id }) { comment { id } }
+        }
+    """.trimIndent()
+
+    /** "Hide posts from {name}": a venue's or a person's, or shows them again. */
+    val MUTE_POST_AUTHOR: String = """
+        mutation MutePostAuthor(${'$'}venueId: ID, ${'$'}personId: ID, ${'$'}muted: Boolean) {
+          mutePostAuthor(input: { venueId: ${'$'}venueId, personId: ${'$'}personId, muted: ${'$'}muted }) { muted }
+        }
+    """.trimIndent()
+
+    // endregion
 }
