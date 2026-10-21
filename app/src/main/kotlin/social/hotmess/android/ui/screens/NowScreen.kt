@@ -396,8 +396,8 @@ private fun LocaleSmallTalk(locale: NowLocale, navigator: Navigator) {
 
 /**
  * A venue's recent chat lines as ChatPeek draws them: the viewer's own on the right, friends by their
- * full names, a post as the venue with its rounded-square photo, rich messages in words (their
- * summary), and specials gone once they've ended.
+ * full names, a post as the venue with its rounded-square photo, a prompt with the audience's mark,
+ * rich messages in words (their summary), and specials gone once they've ended.
  */
 @Composable
 internal fun rememberPeekMessages(lines: List<ChatLine>): List<ChatThreadMessage> {
@@ -409,14 +409,23 @@ internal fun rememberPeekMessages(lines: List<ChatLine>): List<ChatThreadMessage
         lines.filter { it.isShowing(now) }.map { line ->
             ChatThreadMessage(
                 id = line.id,
-                senderId = if (line.postedAsPerson) "person:${line.name}" else line.userId.ifEmpty { line.id }.lowercase(),
+                senderId = when {
+                    line.isPostedAsAudience -> "audience"
+                    line.postedAsPerson -> "person:${line.name}"
+                    else -> line.userId.ifEmpty { line.id }.lowercase()
+                },
                 senderName = if (line.isFromListing) line.name else graph.api.friends.displayName(line.userId, line.name),
-                avatarUrl = line.avatarUrl,
+                avatarUrl = if (line.isPostedAsAudience) null else line.avatarUrl,
                 text = line.message,
                 sentAt = line.sentAt,
-                own = viewerId != null && line.userId.equals(viewerId, ignoreCase = true),
-                role = line.role,
+                own = !line.isPostedAsAudience && viewerId != null && line.userId.equals(viewerId, ignoreCase = true),
+                role = if (line.isPostedAsAudience) null else line.role,
                 asPlace = line.postedAsVenue,
+                asAudience = line.isPostedAsAudience,
+                asListing = line.postedAsPerson,
+                friend = !line.isFromListing && graph.api.friends.fullName(line.userId) != null,
+                // A preview doesn't carry the prompt, so an answer is labelled "Prompt".
+                promptLabel = line.promptId?.let { "Prompt" },
             )
         }
     }

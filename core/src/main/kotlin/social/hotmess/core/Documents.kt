@@ -25,7 +25,8 @@ object Documents {
         "id name description distance point photoUrl bannerUrl profile { address phone facebook { facebookId isLiked link } }"
 
     /** A chat line as a preview shows it: rich messages in words (`message`), with the sender's role and presence. */
-    const val CHAT_LINE_FIELDS: String = "id message name userId avatarUrl sentAt presence role kind endsAt postedAsVenue postedAsPerson"
+    const val CHAT_LINE_FIELDS: String =
+        "id message name userId avatarUrl sentAt presence role kind endsAt postedAsVenue postedAsPerson postedAsAudience promptId"
 
     /**
      * A room's last few chat lines, oldest first, in the venue's or locale's chat mixin (`chat { ... }`); empty unless
@@ -106,6 +107,19 @@ object Documents {
     val SET_RECENT_CHAT_PUSH: String = """
         mutation SetRecentChatPush(${'$'}enabled: Boolean!) {
           setRecentChatPush(input: { enabled: ${'$'}enabled }) { recentChatPush }
+        }
+    """.trimIndent()
+
+    /** Whether chat rooms show the signed-in user's initials instead of their photo. Off unless they turn it on. */
+    val CHAT_INITIALS: String = """
+        query ChatInitials {
+          me { chatInitials }
+        }
+    """.trimIndent()
+
+    val SET_CHAT_INITIALS: String = """
+        mutation SetChatInitials(${'$'}enabled: Boolean!) {
+          setChatInitials(input: { enabled: ${'$'}enabled }) { chatInitials }
         }
     """.trimIndent()
 

@@ -38,7 +38,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Chat
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.ArrowUpward
-import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.LocationOff
 import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material3.Icon
@@ -46,6 +45,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -97,12 +97,13 @@ import social.hotmess.android.ui.theme.Radius
 import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.ChatKind
+import social.hotmess.core.ChatPrompt
+import social.hotmess.core.ChatPromptShownAs
 import social.hotmess.core.ChatRole
 import social.hotmess.core.Formatting
 import social.hotmess.core.RecordId
 import social.hotmess.core.RoomPerson
 import social.hotmess.core.SharedEvent
-import social.hotmess.core.firstNameForDisplay
 import java.time.Duration
 import java.time.Instant
 
@@ -125,7 +126,7 @@ fun presenceOf(value: com.audiencekit.Presence?): Presence? = when (value) {
 /**
  * The presence dot: a solid `presence-online` disc, or a `presence-push` ring with a hollow centre,
  * each on a 2dp [ring] (`surface-raised` when unspecified; the surface it sits on). [size] is the
- * dot without its ring: 10 on 28 avatars, 12 on 40 and up. Null draws nothing, and so does offline
+ * dot without its ring: 9 on chat's tiny (24) avatars, 10 on 28, 12 on 40 and up. Null draws nothing, and so does offline
  * unless [showOffline] (a room's people who just left), which is a muted `border-strong` disc.
  */
 @Composable
@@ -184,6 +185,19 @@ data class ChatThreadMessage(
     val asPlace: Boolean = false,
     /** A rich message's card, drawn in place of the bubble; null for plain text. */
     val rich: RichContent? = null,
+    /** Posted as the room's audience (a prompt): its mark beside it, no presence and no RoleTag. */
+    val asAudience: Boolean = false,
+    /** Verified talent posting as their listing: their listing photo stays at [ListingAvatarSize]. */
+    val asListing: Boolean = false,
+    /** The sender is the viewer's friend: a thin `accent` ring around their tiny avatar. */
+    val friend: Boolean = false,
+    /** An answer to a prompt: "Prompt" or "Trivia" on its bubble's first line. */
+    val promptLabel: String? = null,
+    /**
+     * A PROMPT message's prompt. A CARD one draws as a PromptCard in the thread; a PINNED one is the
+     * PromptBar's, so the thread leaves it out.
+     */
+    val prompt: ChatPrompt? = null,
 ) {
     /** Whether the room still shows it: a special disappears at its end time. */
     fun isShowing(at: Instant): Boolean {
@@ -214,6 +228,8 @@ data class RichContent(
             ChatKind.ANNOUNCEMENT, ChatKind.SPECIAL -> !title.isNullOrBlank()
             ChatKind.EVENT -> event != null
             ChatKind.PHOTO -> photoUrl != null
+            // A prompt draws from its ChatThreadMessage.prompt, as a PromptCard or the PromptBar.
+            ChatKind.PROMPT -> false
         }
 }
 
@@ -223,6 +239,11 @@ private sealed interface ThreadEntry {
     data class Divider(override val key: String, val label: String) : ThreadEntry
 
     data class BubbleEntry(val message: ChatThreadMessage, val first: Boolean, val last: Boolean) : ThreadEntry {
+        override val key: String get() = message.id
+    }
+
+    /** A quiet room's prompt, as a PromptCard. */
+    data class PromptEntry(val message: ChatThreadMessage, val prompt: ChatPrompt) : ThreadEntry {
         override val key: String get() = message.id
     }
 }
@@ -255,6 +276,7 @@ private fun sameGroup(messages: List<ChatThreadMessage>, index: Int): Boolean {
     if (previous.senderId != message.senderId || previous.own != message.own) return false
     if (previous.role != message.role || previous.asPlace != message.asPlace) return false
     if (previous.rich != null || message.rich != null) return false
+    if (previous.prompt != null || message.prompt != null) return false
     if (dividerBefore(messages, index)) return false
     val between = gap(previous, message) ?: return true
     return between < GroupGap
@@ -265,6 +287,16 @@ private fun threadEntries(messages: List<ChatThreadMessage>): List<ThreadEntry> 
     messages.forEachIndexed { index, message ->
         if (dividerBefore(messages, index)) {
             entries += ThreadEntry.Divider("divider-${message.id}", Formatting.shortTime(message.sentAt!!))
+        }
+        val prompt = message.prompt
+        if (prompt != null && prompt.shownAs == ChatPromptShownAs.CARD) {
+            // Why it appeared: the minutes nobody said anything before it.
+            val quiet = if (index > 0) gap(messages[index - 1], message)?.toMinutes() else null
+            if (quiet != null && quiet >= 1) {
+                entries += ThreadEntry.Divider("quiet-${message.id}", if (quiet == 1L) "Quiet for 1 minute" else "Quiet for $quiet minutes")
+            }
+            entries += ThreadEntry.PromptEntry(message, prompt)
+            return@forEachIndexed
         }
         val first = !sameGroup(messages, index)
         val last = index == messages.lastIndex || !sameGroup(messages, index + 1)
@@ -280,6 +312,11 @@ private fun threadEntries(messages: List<ChatThreadMessage>): List<ThreadEntry> 
  * messages stand alone as RichMessage cards; a special disappears at its end time; the pinned
  * announcement also shows as a PinnedBar on top, which scrolls to it. [onOpenEvent] opens a shared
  * event by id. Empty, it says hello to everyone in [roomName], or out in it when [isLocale] (a city's room).
+ *
+ * [promptBar] draws the night's pinned prompt under any PinnedBar, told to collapse to one line once the
+ * reader scrolls up or when an announcement is pinned too, so the header never holds more than two strips.
+ * Pinned prompts never show in the thread; a quiet room's prompt card does, with [onAnswerPrompt] and
+ * [onDismissPrompt] ("Not now") for its buttons.
  */
 @Composable
 fun ChatThread(
@@ -291,9 +328,14 @@ fun ChatThread(
     isLocale: Boolean = false,
     onOpenEvent: (String) -> Unit = {},
     onMessageActions: ((ChatThreadMessage) -> Unit)? = null,
+    promptBar: (@Composable (collapsed: Boolean) -> Unit)? = null,
+    onAnswerPrompt: (ChatThreadMessage) -> Unit = {},
+    onDismissPrompt: (ChatThreadMessage) -> Unit = {},
 ) {
     val clock by rememberMinuteClock()
-    val visible = remember(messages, clock) { messages.filter { it.isShowing(clock) } }
+    val visible = remember(messages, clock) {
+        messages.filter { it.isShowing(clock) && it.prompt?.shownAs != ChatPromptShownAs.PINNED }
+    }
     val entries = remember(visible) { threadEntries(visible) }
     val pinned = remember(visible) { visible.lastOrNull { it.rich?.kind == ChatKind.ANNOUNCEMENT && it.rich?.pinned == true } }
     val scope = rememberCoroutineScope()
@@ -304,6 +346,11 @@ fun ChatThread(
                 if (index >= 0) scope.launch { state.animateScrollToItem(index) }
             }
         }
+        if (promptBar != null) {
+            // Scrolled up from the newest line, the bar steps back to one line.
+            val scrolledUp by remember(state) { derivedStateOf { state.canScrollForward } }
+            promptBar(pinned != null || scrolledUp)
+        }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             if (visible.isEmpty()) {
                 Message(
@@ -312,7 +359,7 @@ fun ChatThread(
                     if (isLocale) "Everyone out in $roomName can see what you write here." else "Everyone at $roomName can see what you write here.",
                 )
             } else {
-                Transcript(entries, presence, state, onOpenEvent, onMessageActions)
+                Transcript(entries, presence, state, onOpenEvent, onMessageActions, onAnswerPrompt, onDismissPrompt)
             }
         }
     }
@@ -334,6 +381,8 @@ private fun BoxScope.Transcript(
     state: LazyListState,
     onOpenEvent: (String) -> Unit,
     onMessageActions: ((ChatThreadMessage) -> Unit)?,
+    onAnswerPrompt: (ChatThreadMessage) -> Unit,
+    onDismissPrompt: (ChatThreadMessage) -> Unit,
 ) {
     LaunchedEffect(entries.size) { if (entries.isNotEmpty()) state.animateScrollToItem(entries.lastIndex) }
     BoxWithConstraints(Modifier.fillMaxSize().widthIn(max = ContentMaxWidth).align(Alignment.TopCenter)) {
@@ -354,6 +403,14 @@ private fun BoxScope.Transcript(
                         richMax = richMax,
                         onOpenEvent = onOpenEvent,
                         onActions = onMessageActions,
+                    )
+                    is ThreadEntry.PromptEntry -> PromptCard(
+                        entry.prompt,
+                        audienceName = entry.message.senderName?.takeIf { it.isNotBlank() } ?: "Hot Mess",
+                        sentAt = entry.message.sentAt,
+                        onAnswer = { onAnswerPrompt(entry.message) },
+                        onDismiss = { onDismissPrompt(entry.message) },
+                        modifier = Modifier.padding(vertical = Space.s2),
                     )
                 }
             }
@@ -383,8 +440,11 @@ private fun BubbleRow(
     richMax: Dp = bubbleMax,
     onOpenEvent: (String) -> Unit = {},
     onActions: ((ChatThreadMessage) -> Unit)? = null,
+    avatarSize: Dp = TinyAvatarSize,
 ) {
     val message = entry.message
+    // People are tiny; the venue and verified talent posting as their listing keep their 28.
+    val avatar = if (message.asPlace || message.asListing) ListingAvatarSize else avatarSize
     val rich = message.rich?.takeIf { it.drawable }
     // Someone else's line: a long press reports it or blocks its sender, also offered to screen readers.
     val actions = onActions?.takeIf { !message.own }
@@ -401,18 +461,30 @@ private fun BubbleRow(
         verticalAlignment = Alignment.Bottom,
     ) {
         if (!message.own) {
-            if (entry.last) {
+            if (entry.last && message.asAudience) {
+                AudienceMark(message.senderName?.takeIf { it.isNotBlank() } ?: "Hot Mess", size = avatar)
+            } else if (entry.last) {
+                val friendRing = tokens.accent
                 Avatar(
                     message.avatarUrl,
                     message.senderName.orEmpty(),
-                    size = 28.dp,
+                    size = avatar,
+                    // A friend's tiny avatar: a 1.5dp `accent` ring outside a 2dp gap, drawn outside its bounds.
+                    modifier = if (message.friend && !message.asPlace && !message.asListing) {
+                        Modifier.drawBehind {
+                            val stroke = 1.5.dp.toPx()
+                            drawCircle(friendRing, radius = size.minDimension / 2f + 2.dp.toPx() + stroke / 2f, style = Stroke(width = stroke))
+                        }
+                    } else {
+                        Modifier
+                    },
                     // A place shows no presence, in a rounded square so it never looks like a person.
                     presence = if (message.asPlace) null else presence,
                     presenceRing = ring,
                     shape = if (message.asPlace) Radius.md else CircleShape,
                 )
             } else {
-                Spacer(Modifier.width(28.dp))
+                Spacer(Modifier.width(avatar))
             }
             Spacer(Modifier.width(Space.s2))
         }
@@ -450,6 +522,7 @@ private fun BubbleRow(
                     maxWidth = bubbleMax,
                     maxLines = maxLines,
                     tinted = !message.own && (message.role == ChatRole.VENUE || message.role == ChatRole.HOST),
+                    label = message.promptLabel,
                 )
             }
         }
@@ -460,7 +533,8 @@ private fun BubbleRow(
  * One chat bubble: `accent` / `on-accent` for your own, `surface-raised` / `ink` with a small
  * shadow for everyone else's, or `accent-soft` / `ink` with no shadow when [tinted] (the venue's and
  * hosts'). The last bubble of a group drops its corner nearest the sender to `radius-sm`. [maxLines]
- * clamps the text with an ellipsis (ChatPeek shows two).
+ * clamps the text with an ellipsis (ChatPeek shows two). An answer to a prompt passes its [label]
+ * ("Prompt", "Trivia"), drawn as the bubble's first line.
  */
 @Composable
 fun ChatBubble(
@@ -471,6 +545,7 @@ fun ChatBubble(
     maxWidth: Dp = 280.dp,
     maxLines: Int = Int.MAX_VALUE,
     tinted: Boolean = false,
+    label: String? = null,
 ) {
     val tail = CornerSize(4.dp)
     val shape = when {
@@ -483,19 +558,21 @@ fun ChatBubble(
         tinted -> tokens.accentSoft
         else -> tokens.surfaceRaised
     }
-    Text(
-        text,
-        style = HotMessType.body,
-        color = if (own) tokens.onAccent else tokens.ink,
-        maxLines = maxLines,
-        overflow = TextOverflow.Ellipsis,
-        modifier = modifier
-            .widthIn(max = maxWidth)
-            .then(if (own || tinted) Modifier else Modifier.shadow(1.dp, shape))
-            .clip(shape)
-            .background(fill)
-            .padding(horizontal = Space.s3, vertical = Space.s2),
-    )
+    val bubble = modifier
+        .widthIn(max = maxWidth)
+        .then(if (own || tinted) Modifier else Modifier.shadow(1.dp, shape))
+        .clip(shape)
+        .background(fill)
+        .padding(horizontal = Space.s3, vertical = Space.s2)
+    val ink = if (own) tokens.onAccent else tokens.ink
+    if (label == null) {
+        Text(text, style = HotMessType.body, color = ink, maxLines = maxLines, overflow = TextOverflow.Ellipsis, modifier = bubble)
+    } else {
+        Column(bubble) {
+            PromptLabel(label, if (own) tokens.onAccent else tokens.inkMuted)
+            Text(text, style = HotMessType.body, color = ink, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+        }
+    }
 }
 
 /**
@@ -622,7 +699,7 @@ fun RichMessage(content: RichContent, author: String?, modifier: Modifier = Modi
                 RichText(overline, content.title, body)
             }
         }
-        ChatKind.TEXT -> Unit
+        ChatKind.TEXT, ChatKind.PROMPT -> Unit
     }
 }
 
@@ -707,8 +784,8 @@ fun RoomBanner(kind: RoomBannerKind, roomName: String, modifier: Modifier = Modi
 
 /**
  * Who else is in the room, under its banner (and above any pinned announcement): "N here now", then a
- * row of faces with first names, in the order given (callers put friends first; see RoomPeople.hereNow).
- * A friend's face has an `accent` ring and a heart badge. A face in the room carries the online dot;
+ * row of tiny (24) faces, in the order given (callers put friends first; see RoomPeople.hereNow). A
+ * friend's face has a thin `accent` ring outside a small gap. A face in the room carries the online dot;
  * someone here recently (who left in the last half hour) the offline dot, or the push dot when they're
  * [RoomPerson.reachable] or in [reachable]. The viewer ([viewerId]) is "You", in the room, and counts
  * among "here now". Draws nothing when [people] is empty.
@@ -739,8 +816,9 @@ fun HereNowStrip(
             modifier = Modifier.padding(horizontal = Space.s4),
         )
         LazyRow(
-            contentPadding = PaddingValues(horizontal = Space.s4),
-            horizontalArrangement = Arrangement.spacedBy(Space.s2),
+            // Room for a friend's ring and the presence dot, which draw outside the faces.
+            contentPadding = PaddingValues(horizontal = Space.s4, vertical = Space.s1),
+            horizontalArrangement = Arrangement.spacedBy(Space.s3),
         ) {
             items(people, key = { it.userId }) { person ->
                 val viewer = RecordId.same(person.userId, viewerId)
@@ -755,57 +833,43 @@ fun HereNowStrip(
     }
 }
 
-/** One face in [HereNowStrip]: read out as "Aurora Bell, friend, here now", "You, here now", or "Jo P., here recently". */
+/**
+ * One face in [HereNowStrip], at chat's [TinyAvatarSize]: read out as "Aurora Bell, friend, here now",
+ * "You, here now", or "Jo P., here recently". A friend's has a 1.5dp `accent` ring outside a 2dp gap.
+ */
 @Composable
 private fun HereNowFace(person: RoomPerson, presence: Presence) {
     val name = person.name ?: "Someone"
     val whenHere = if (person.isRecent) "here recently" else "here now"
     val description = if (person.friend) "$name, friend, $whenHere" else "$name, $whenHere"
     val ringColor = tokens.accent
-    Column(
-        Modifier.width(56.dp).clearAndSetSemantics { contentDescription = description },
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        Box(Modifier.size(48.dp)) {
-            if (person.friend) Box(Modifier.matchParentSize().border(2.dp, ringColor, CircleShape))
-            Avatar(
-                person.avatarUrl,
-                name,
-                size = 40.dp,
-                modifier = Modifier.align(Alignment.Center),
-                presence = presence,
-                presenceRing = tokens.surfaceRaised,
-                showOffline = true,
-            )
-            if (person.friend) {
-                Box(
+    Avatar(
+        person.avatarUrl,
+        name,
+        size = TinyAvatarSize,
+        modifier = Modifier
+            .clearAndSetSemantics { contentDescription = description }
+            .then(
+                if (person.friend) {
+                    Modifier.drawBehind {
+                        val stroke = 1.5.dp.toPx()
+                        drawCircle(ringColor, radius = size.minDimension / 2f + 2.dp.toPx() + stroke / 2f, style = Stroke(width = stroke))
+                    }
+                } else {
                     Modifier
-                        .align(Alignment.TopEnd)
-                        .size(18.dp)
-                        .background(tokens.surfaceRaised, CircleShape)
-                        .padding(2.dp)
-                        .background(ringColor, CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Icons.Rounded.Favorite, contentDescription = null, tint = tokens.onAccent, modifier = Modifier.size(9.dp))
-                }
-            }
-        }
-        Text(
-            name.firstNameForDisplay(),
-            style = HotMessType.caption,
-            color = if (person.friend) tokens.ink else tokens.inkMuted,
-            fontWeight = if (person.friend) FontWeight.SemiBold else null,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
+                },
+            ),
+        presence = presence,
+        presenceRing = tokens.surfaceRaised,
+        showOffline = true,
+    )
 }
 
 /**
  * The message field and send button pinned under a room. Look only: [onSend] runs from the button
- * and the keyboard's send key; [sendEnabled] is the caller's (empty or offline disables it).
+ * and the keyboard's send key; [sendEnabled] is the caller's (empty or offline disables it). While
+ * [answering] a prompt (its text), an AnswerChip sits above the field, whose close button runs
+ * [onStopAnswering], and a hint under it says the answer shows with a Prompt label.
  */
 @Composable
 fun ChatComposer(
@@ -814,14 +878,35 @@ fun ChatComposer(
     onSend: () -> Unit,
     sendEnabled: Boolean,
     modifier: Modifier = Modifier,
+    answering: String? = null,
+    onStopAnswering: () -> Unit = {},
 ) {
     val hairline = tokens.border
-    Row(
+    Column(
         modifier
             .fillMaxWidth()
             .background(tokens.surfaceRaised)
             .drawBehind { drawLine(hairline, Offset(0f, 0f), Offset(size.width, 0f), strokeWidth = 1.dp.toPx()) }
             .padding(horizontal = Space.s3, vertical = Space.s2),
+        verticalArrangement = Arrangement.spacedBy(Space.s2),
+    ) {
+        if (answering != null) AnswerChip(answering, onClose = onStopAnswering)
+        ComposerRow(value, onValueChange, onSend, sendEnabled)
+        if (answering != null) {
+            Text(
+                "Your answer shows in the room with a Prompt label.",
+                style = HotMessType.caption,
+                color = tokens.inkMuted,
+                modifier = Modifier.padding(horizontal = Space.s1),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ComposerRow(value: String, onValueChange: (String) -> Unit, onSend: () -> Unit, sendEnabled: Boolean) {
+    Row(
+        Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.Bottom,
         horizontalArrangement = Arrangement.spacedBy(Space.s2),
     ) {
@@ -968,7 +1053,8 @@ fun ChatPeek(
             ) {
                 items(participants, key = { it.id }) { participant ->
                     Avatar(
-                        participant.avatarUrl, participant.name, size = 32.dp,
+                        // Tiny in a peek; the room's place keeps its 28.
+                        participant.avatarUrl, participant.name, size = if (participant.isPlace) ListingAvatarSize else PeekAvatarSize,
                         presence = participant.presence, presenceRing = panel,
                         shape = if (participant.isPlace) RoundedCornerShape(8.dp) else CircleShape,
                     )
@@ -989,6 +1075,7 @@ fun ChatPeek(
                             groupGap = if (index == entries.lastIndex) 0.dp else Space.s2,
                             maxLines = 2,
                             ring = panel,
+                            avatarSize = PeekAvatarSize,
                         )
                     }
                 }
@@ -1011,7 +1098,7 @@ fun ChatPeek(
 }
 
 /**
- * A flat, bubble-less chat line (the admin transcript's ChatLine): a 28 avatar, then the name (with
+ * A flat, bubble-less chat line (the admin transcript's ChatLine): a tiny (24) avatar, then the name (with
  * its RoleTag) and a pre-formatted time on one caption line, then the text in two lines. Rich messages
  * pass their summary as [text].
  */
@@ -1032,7 +1119,7 @@ fun ChatLineRow(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        Avatar(avatarUrl, author.orEmpty(), size = 28.dp, presence = presence)
+        Avatar(avatarUrl, author.orEmpty(), size = TinyAvatarSize, presence = presence)
         Column(Modifier.weight(1f)) {
             Row(horizontalArrangement = Arrangement.spacedBy(Space.s2), verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -1061,9 +1148,9 @@ fun ChatLineRow(
 private val previewStart: Instant = Instant.parse("2026-10-09T21:00:00Z")
 
 private val previewMessages = listOf(
-    ChatThreadMessage("1", "sam", "Sam", null, "Anyone else here for the drag show?", previewStart, own = false),
+    ChatThreadMessage("1", "sam", "Sam", null, "Anyone else here for the drag show?", previewStart, own = false, friend = true, promptLabel = "Prompt"),
     ChatThreadMessage("2", "sam", "Sam", null, "Front left by the bar", previewStart.plusSeconds(40), own = false),
-    ChatThreadMessage("3", "me", "Me", null, "On my way in now", previewStart.plusSeconds(120), own = true),
+    ChatThreadMessage("3", "me", "Me", null, "On my way in now", previewStart.plusSeconds(120), own = true, promptLabel = "Prompt"),
     ChatThreadMessage("4", "me", "Me", null, "Save me a spot!", previewStart.plusSeconds(150), own = true),
     ChatThreadMessage("5", "alex", "Alex", null, "Second set is starting", previewStart.plusSeconds(20 * 60), own = false),
 )
