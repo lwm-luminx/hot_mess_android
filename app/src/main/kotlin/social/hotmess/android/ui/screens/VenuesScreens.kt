@@ -84,6 +84,7 @@ import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.Radius
 import social.hotmess.android.ui.theme.Sizes
 import social.hotmess.android.ui.theme.tokens
+import social.hotmess.core.PostsSubject
 import social.hotmess.core.AppRoute
 import social.hotmess.core.CoverOffer
 import social.hotmess.core.Event
@@ -233,6 +234,10 @@ fun VenueScreen(id: String, navigator: Navigator) {
     }
 
     val venue = state.valueOrNull?.venue
+    val postsSubject = remember(id) { PostsSubject.Venue(id) }
+    val postsLoader = rememberPosts(postsSubject)
+    val posts by postsLoader.state.collectAsStateWithLifecycle()
+    val postActions = rememberPostActions(navigator) { poster -> postsLoader.update { list -> list.filterNot { it.poster == poster } } }
     val listState = rememberLazyListState()
     val scrolled by rememberHeroCollapsed(listState)
     var heroTone by remember { mutableStateOf(PhotoTone.PLACEHOLDER) }
@@ -308,6 +313,7 @@ fun VenueScreen(id: String, navigator: Navigator) {
                 pairUp.pairUp?.takeIf { it.here || it.mine != null }?.let { offer ->
                     item(key = "pair-up") { PairUpRow(offer) { pairingUp = true } }
                 }
+                postsSection("Posts", postsSubject, posts, postActions)
                 item {
                     DetailSection("About") {
                         loaded.description?.takeIf { it.isNotBlank() }?.let {

@@ -32,6 +32,7 @@ import androidx.compose.material3.TextButton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import social.hotmess.core.PostsSubject
 import social.hotmess.core.ApiError
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -233,6 +234,19 @@ fun NowScreen(navigator: Navigator) {
                     now.venue?.let { venue ->
                         item { SmallTalk(venue, now.event, now.friends, navigator) }
                     }
+                    // At an event or venue, its posts from the last 24 hours.
+                    now.venue?.let { venue ->
+                        val subject = now.event?.let { PostsSubject.Event(it.id) } ?: PostsSubject.Venue(venue.id)
+                        item(key = "tonight-posts") {
+                            NowPostsSection(
+                                "Latest from tonight",
+                                subject,
+                                seeAll = AppRoute.Posts(subject, now.event?.name ?: venue.name),
+                                navigator = navigator,
+                                withinHours = 24,
+                            )
+                        }
+                    }
                     now.locale?.takeIf { now.venue == null && it.chatOpen }?.let { locale ->
                         item { LocaleSmallTalk(locale, navigator) }
                     }
@@ -241,6 +255,18 @@ fun NowScreen(navigator: Navigator) {
                     } else {
                         cardSection("events", "Events", now.events.take(3), key = { it.id }) { event ->
                             EventCard(event, onClick = { navigator.open(AppRoute.EventDetail(event.id)) })
+                        }
+                    }
+                    // Away from venues, the locale's updates.
+                    now.locale?.takeIf { now.venue == null }?.let { locale ->
+                        val name = locale.name.orEmpty()
+                        item(key = "locale-posts") {
+                            NowPostsSection(
+                                if (name.isBlank()) "Updates nearby" else "Updates in $name",
+                                PostsSubject.Locale(locale.id),
+                                seeAll = AppRoute.Updates(locale.id, name),
+                                navigator = navigator,
+                            )
                         }
                     }
                     // At a venue with a cover tonight: your pass, or the way to skip the line.
