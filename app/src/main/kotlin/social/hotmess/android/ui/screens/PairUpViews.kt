@@ -209,7 +209,7 @@ fun PairUpRow(pairUp: VenuePairUp, onOpen: () -> Unit) {
         PairUpStatus.WAITING -> "Waiting for them to say yes"
         PairUpStatus.REVEALED -> "Go find each other"
         PairUpStatus.MET -> "You met someone tonight"
-        else -> "Pair me up to chat"
+        else -> "Quickie"
     }
     DetailSection("Meet someone") {
         Row(
@@ -225,7 +225,7 @@ fun PairUpRow(pairUp: VenuePairUp, onOpen: () -> Unit) {
                     color = tokens.inkMuted,
                 )
             }
-            PrimaryButton(if (status == null) "Pair me up" else "Open", onClick = onOpen)
+            PrimaryButton(if (status == null) "Start" else "Open", onClick = onOpen)
         }
     }
 }
@@ -300,7 +300,7 @@ fun PairUpSheet(controller: PairUpController, venueName: String, onDismiss: () -
         AlertDialog(
             onDismissRequest = { controller.error = null },
             confirmButton = { TextButton(onClick = { controller.error = null }) { Text("OK") } },
-            title = { Text("Pair me up") },
+            title = { Text("Quickie") },
             text = { Text(message) },
         )
     }
@@ -312,20 +312,20 @@ private fun Intro(controller: PairUpController, venueName: String) {
     Column(verticalArrangement = Arrangement.spacedBy(Space.s3)) {
         Text("Meet someone at $venueName", style = HotMessType.title)
         Text(
-            "We'll pair you with someone else here tonight who also tapped Pair me up, and give you both something " +
+            "We'll pair you with someone else here tonight who also tapped Quickie, and give you both something " +
                 "to talk about. You only see each other once you both say yes, and either of you can cancel any time.",
             style = HotMessType.body,
             color = tokens.inkMuted,
         )
         LookForField(lookFor) { lookFor = it }
         PrimaryButton(
-            "Pair me up to chat",
+            "Start a quickie",
             onClick = { controller.join(lookFor) },
             modifier = Modifier.fillMaxWidth(),
             enabled = controller.here && !controller.busy,
         )
         if (!controller.here) {
-            Text("Pair me up opens once you're at $venueName.", style = HotMessType.bodySmall, color = tokens.inkMuted)
+            Text("Quickie opens once you're at $venueName.", style = HotMessType.bodySmall, color = tokens.inkMuted)
         }
     }
 }
@@ -364,7 +364,7 @@ private fun Searching(controller: PairUpController, state: PairUpState) {
             enabled = !controller.busy && lookFor != state.lookFor.orEmpty(),
         )
         TextButton(onClick = { controller.leave() }, enabled = !controller.busy) {
-            Text("Stop pairing me up", color = tokens.danger)
+            Text("Leave Quickie", color = tokens.danger)
         }
         if (state.metCount > 0) MetBadge(state.metCount)
     }
@@ -434,7 +434,7 @@ private fun Met(controller: PairUpController, state: PairUpState) {
         }
         state.match?.partner?.let { Text("Hope you and ${it.name} are having fun.", style = HotMessType.body) }
         MetBadge(state.metCount)
-        PrimaryButton("Pair me up again", onClick = { controller.join(null) }, modifier = Modifier.fillMaxWidth(), enabled = !controller.busy)
+        PrimaryButton("Another quickie", onClick = { controller.join(null) }, modifier = Modifier.fillMaxWidth(), enabled = !controller.busy)
         TextButton(onClick = { controller.leave() }, enabled = !controller.busy) { Text("I'm done for tonight") }
     }
 }
