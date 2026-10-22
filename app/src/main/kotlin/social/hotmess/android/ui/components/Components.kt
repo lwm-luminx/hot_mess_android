@@ -300,7 +300,7 @@ fun TrackRow(track: Track, onClick: (() -> Unit)?) {
 
 /** A link elsewhere with its network's glyph; [namesService] names the network ("Instagram") with the handle beside it. */
 @Composable
-fun SocialLinkRow(link: SocialLink, onClick: (() -> Unit)?, namesService: Boolean = false) {
+fun SocialLinkRow(link: SocialLink, namesService: Boolean = false, onClick: (() -> Unit)?) {
     RowButton(onClick) {
         val glyph = when (link.network) {
             SocialLink.Network.FACEBOOK -> R.drawable.social_facebook
