@@ -6,6 +6,7 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import com.audiencekit.android.AudienceKitClient
+import com.newrelic.agent.android.NewRelic
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -120,6 +121,7 @@ class HotMessApplication : Application() {
         super.onCreate()
         MapLibre.getInstance(this)
         graph = AppGraph(this)
+        graph.configuration.newRelicToken?.let { NewRelic.withApplicationToken(it).start(this) }
         graph.errors.start()
         FacebookAppSignIn.initialize(this, graph.configuration)
 

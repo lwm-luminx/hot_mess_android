@@ -30,7 +30,9 @@ import androidx.compose.material.icons.rounded.Campaign
 import androidx.compose.material3.Icon
 import androidx.compose.material3.TextButton
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import social.hotmess.core.PostsSubject
 import social.hotmess.core.ApiError
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -42,7 +44,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import social.hotmess.android.payments.CoverCheckout
 import social.hotmess.android.payments.CoverCheckoutFailure
 import social.hotmess.android.payments.rememberCoverCheckout
@@ -91,6 +96,9 @@ import social.hotmess.core.PhotoTone
 import social.hotmess.core.Venue
 import java.time.Instant
 
+/** How often Now reloads while it's showing. */
+private const val NOW_REFRESH_MS = 60_000L
+
 /**
  * What's happening where you are: the venue you're in, with the last few lines of its chat and the
  * friends who are there, or the venues nearby; then what's on.
@@ -113,6 +121,20 @@ fun NowScreen(navigator: Navigator) {
         graph.pingUpdates.collect {
             val near = latestCoordinates
             loader.load(near, refresh = true) { graph.api.nowOrPings(near) }
+        }
+    }
+
+    // Standing still reports no new position, but the chat, the lineup and who's here keep changing:
+    // reload quietly on coming back to the screen and every minute while it's showing. The first pass
+    // finds the load above in flight and leaves it be.
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                val near = latestCoordinates
+                loader.load(near, refresh = true, quiet = true) { graph.api.nowOrPings(near) }
+                delay(NOW_REFRESH_MS)
+            }
         }
     }
 
@@ -212,6 +234,19 @@ fun NowScreen(navigator: Navigator) {
                     now.venue?.let { venue ->
                         item { SmallTalk(venue, now.event, now.friends, navigator) }
                     }
+                    // At an event or venue, its posts from the last 24 hours.
+                    now.venue?.let { venue ->
+                        val subject = now.event?.let { PostsSubject.Event(it.id) } ?: PostsSubject.Venue(venue.id)
+                        item(key = "tonight-posts") {
+                            NowPostsSection(
+                                "Latest from tonight",
+                                subject,
+                                seeAll = AppRoute.Posts(subject, now.event?.name ?: venue.name),
+                                navigator = navigator,
+                                withinHours = 24,
+                            )
+                        }
+                    }
                     now.locale?.takeIf { now.venue == null && it.chatOpen }?.let { locale ->
                         item { LocaleSmallTalk(locale, navigator) }
                     }
@@ -220,6 +255,18 @@ fun NowScreen(navigator: Navigator) {
                     } else {
                         cardSection("events", "Events", now.events.take(3), key = { it.id }) { event ->
                             EventCard(event, onClick = { navigator.open(AppRoute.EventDetail(event.id)) })
+                        }
+                    }
+                    // Away from venues, the locale's updates.
+                    now.locale?.takeIf { now.venue == null }?.let { locale ->
+                        val name = locale.name.orEmpty()
+                        item(key = "locale-posts") {
+                            NowPostsSection(
+                                if (name.isBlank()) "Updates nearby" else "Updates in $name",
+                                PostsSubject.Locale(locale.id),
+                                seeAll = AppRoute.Updates(locale.id, name),
+                                navigator = navigator,
+                            )
                         }
                     }
                     // At a venue with a cover tonight: your pass, or the way to skip the line.
@@ -375,8 +422,8 @@ private fun LocaleSmallTalk(locale: NowLocale, navigator: Navigator) {
 
 /**
  * A venue's recent chat lines as ChatPeek draws them: the viewer's own on the right, friends by their
- * full names, a post as the venue with its rounded-square photo, rich messages in words (their
- * summary), and specials gone once they've ended.
+ * full names, a post as the venue with its rounded-square photo, a prompt with the audience's mark,
+ * rich messages in words (their summary), and specials gone once they've ended.
  */
 @Composable
 internal fun rememberPeekMessages(lines: List<ChatLine>): List<ChatThreadMessage> {
@@ -388,14 +435,23 @@ internal fun rememberPeekMessages(lines: List<ChatLine>): List<ChatThreadMessage
         lines.filter { it.isShowing(now) }.map { line ->
             ChatThreadMessage(
                 id = line.id,
-                senderId = if (line.postedAsPerson) "person:${line.name}" else line.userId.ifEmpty { line.id }.lowercase(),
+                senderId = when {
+                    line.isPostedAsAudience -> "audience"
+                    line.postedAsPerson -> "person:${line.name}"
+                    else -> line.userId.ifEmpty { line.id }.lowercase()
+                },
                 senderName = if (line.isFromListing) line.name else graph.api.friends.displayName(line.userId, line.name),
-                avatarUrl = line.avatarUrl,
+                avatarUrl = if (line.isPostedAsAudience) null else line.avatarUrl,
                 text = line.message,
                 sentAt = line.sentAt,
-                own = viewerId != null && line.userId.equals(viewerId, ignoreCase = true),
-                role = line.role,
+                own = !line.isPostedAsAudience && viewerId != null && line.userId.equals(viewerId, ignoreCase = true),
+                role = if (line.isPostedAsAudience) null else line.role,
                 asPlace = line.postedAsVenue,
+                asAudience = line.isPostedAsAudience,
+                asListing = line.postedAsPerson,
+                friend = !line.isFromListing && graph.api.friends.fullName(line.userId) != null,
+                // A preview doesn't carry the prompt, so an answer is labelled "Prompt".
+                promptLabel = line.promptId?.let { "Prompt" },
             )
         }
     }

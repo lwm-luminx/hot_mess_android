@@ -51,17 +51,30 @@ data class VenueMessage(
     val reachable: Boolean = false,
     /** Posted by talent as their listing (role HOST): [name] and [avatarUrl] are this person's. */
     val personId: String? = null,
+    /** A [ChatKind.PROMPT] message's prompt: what it asks, and its place in the night's prompts. */
+    val prompt: ChatPrompt? = null,
+    /** The prompt a text message answers (a PROMPT message's [ChatPrompt.id]); its bubble gets a Prompt label. */
+    val promptId: String? = null,
+    /**
+     * Posted as the room's audience, like a prompt: [name] is the audience's ("Hot Mess"), with its mark,
+     * no avatar, no presence and no role.
+     */
+    val postedAsAudience: Boolean = false,
 ) {
     fun isOutgoing(currentUserId: String?): Boolean = currentUserId != null && userId.equals(currentUserId, ignoreCase = true)
 
     /** Posted as the venue: [name] and [avatarUrl] are the venue's, never the sender's. */
     val isPostedAsVenue: Boolean get() = role == ChatRole.VENUE
 
+    /** Posted as the audience (a prompt): an older server that doesn't say so still sends prompts as PROMPT. */
+    val isPostedAsAudience: Boolean get() = postedAsAudience || kind == ChatKind.PROMPT
+
     /**
-     * A listing, not the human who typed it: the venue, or talent posting as themselves from Backstage. It
-     * has no presence, never takes a friend's name, and groups apart from the sender's own lines.
+     * A listing, not the human who typed it: the venue, talent posting as themselves from Backstage, or the
+     * audience's prompts. It has no presence, never takes a friend's name, and groups apart from the sender's
+     * own lines.
      */
-    val isFromListing: Boolean get() = isPostedAsVenue || personId != null
+    val isFromListing: Boolean get() = isPostedAsVenue || personId != null || isPostedAsAudience
 
     /** Whether the room still shows it: a special stops at its end time. */
     fun isShowing(at: Instant = Instant.now()): Boolean = !(kind == ChatKind.SPECIAL && endsAt != null && !endsAt.isAfter(at))
@@ -92,6 +105,9 @@ enum class ChatKind {
     EVENT,
     PHOTO,
     SPECIAL,
+
+    /** One of the event's chat prompts, posted as the audience: the PromptBar (PINNED) or a PromptCard (CARD). */
+    PROMPT,
     ;
 
     val isRich: Boolean get() = this != TEXT
@@ -104,6 +120,100 @@ enum class ChatKind {
 
 /** The event an event message shares, as much as its frame carries. */
 data class SharedEvent(val id: String, val name: String? = null, val startAt: Instant? = null)
+
+/** What a chat prompt asks: something to talk about, or a trivia question with a hidden [ChatPrompt.answer]. */
+enum class ChatPromptKind {
+    CONVERSATION,
+    TRIVIA,
+    ;
+
+    companion object {
+        /** Any case; an unknown kind reads as [CONVERSATION], which shows its text and no answer. */
+        fun parse(raw: String?): ChatPromptKind = raw?.let { value -> entries.firstOrNull { it.name.equals(value, ignoreCase = true) } } ?: CONVERSATION
+    }
+}
+
+/** How a prompt went up: [PINNED] under the room's title (the rotation), or as a [CARD] in a quiet room. */
+enum class ChatPromptShownAs {
+    PINNED,
+    CARD,
+    ;
+
+    companion object {
+        /** Any case; an unknown one reads as [CARD], which shows in the thread where it went up. */
+        fun parse(raw: String?): ChatPromptShownAs = raw?.let { value -> entries.firstOrNull { it.name.equals(value, ignoreCase = true) } } ?: CARD
+    }
+}
+
+/**
+ * The prompt a PROMPT message puts to the room (GraphQL's `ChatPromptFrame`): [number] of the night's
+ * [total], what it asks, and for trivia the [answer], hidden until the reader taps or [revealAt].
+ */
+data class ChatPrompt(
+    val id: String,
+    val text: String,
+    val kind: ChatPromptKind = ChatPromptKind.CONVERSATION,
+    val answer: String? = null,
+    val revealAt: Instant? = null,
+    val shownAs: ChatPromptShownAs = ChatPromptShownAs.CARD,
+    val number: Int? = null,
+    val total: Int? = null,
+    /** When the next one rotates in, if one will. */
+    val nextAt: Instant? = null,
+) {
+    val isTrivia: Boolean get() = kind == ChatPromptKind.TRIVIA
+
+    /** Whether the answer shows for everyone: a trivia answer at [revealAt]. */
+    fun isRevealed(at: Instant = Instant.now()): Boolean = answer != null && revealAt != null && !revealAt.isAfter(at)
+
+    /** "2 of 6", or null when the frame doesn't say. */
+    val position: String?
+        get() {
+            val number = number?.takeIf { it > 0 } ?: return null
+            val total = total?.takeIf { it >= number } ?: return null
+            return "$number of $total"
+        }
+
+    /** The PromptBar's (or TriviaCard's) overline: "Tonight's prompt · 2 of 6", "Trivia · 3 of 6". */
+    val overline: String
+        get() {
+            val label = if (isTrivia) "Trivia" else "Tonight's prompt"
+            return position?.let { "$label · $it" } ?: label
+        }
+
+    /** The label on an answer's bubble: "Prompt", or "Trivia". */
+    val answerLabel: String get() = if (isTrivia) "Trivia" else "Prompt"
+}
+
+/** The room's prompts, worked out from its lines. */
+object ChatPrompts {
+    /** The newest PINNED prompt in [messages] (oldest first): what the PromptBar shows, or null. */
+    fun pinned(messages: List<VenueMessage>): VenueMessage? =
+        messages.lastOrNull { it.kind == ChatKind.PROMPT && it.prompt?.shownAs == ChatPromptShownAs.PINNED }
+
+    /** How many lines in [messages] answer the prompt [promptId]. */
+    fun answerCount(messages: List<VenueMessage>, promptId: String): Int = messages.count { it.promptId == promptId }
+
+    /** "14 answers", "1 answer", or null for none. */
+    fun answers(count: Int): String? = when {
+        count <= 0 -> null
+        count == 1 -> "1 answer"
+        else -> "$count answers"
+    }
+
+    /** The PromptBar's footer: "14 answers · Next one at 9:15pm", either half, or null for neither. */
+    fun footer(prompt: ChatPrompt, answerCount: Int, at: Instant = Instant.now(), zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): String? {
+        val next = prompt.nextAt?.takeIf { it.isAfter(at) }?.let { "Next one at ${Formatting.clock(it, zone)}" }
+        return listOfNotNull(answers(answerCount), next).joinToString(" · ").ifEmpty { null }
+    }
+
+    /** What a line answering [promptId] is labelled: "Prompt" or "Trivia" ("Prompt" when the prompt isn't in [messages]); null for none. */
+    fun label(promptId: String?, messages: List<VenueMessage>): String? {
+        promptId ?: return null
+        val prompt = messages.firstOrNull { it.prompt?.id == promptId }?.prompt
+        return prompt?.answerLabel ?: "Prompt"
+    }
+}
 
 /**
  * A chat room: a venue's, for people at the venue, or a locale's, for people out in the locale who
@@ -158,7 +268,8 @@ object ChatProtocol {
     /** A chat line's fields, as [message] reads them. */
     const val MESSAGE_FIELDS: String =
         "id message body name avatarUrl sentAt userId role kind title photoUrl event { id name startAt } endsAt pinned " +
-            "postedAsVenue postedAsPerson person { id }"
+            "postedAsVenue postedAsPerson person { id } postedAsAudience promptId " +
+            "prompt { id kind text answer revealAt shownAs number total nextAt }"
 
     /** The ChatRoomEvent selection every room's subscription reads, by `__typename`. */
     const val ROOM_EVENT_FIELDS: String = """
@@ -197,13 +308,23 @@ object ChatProtocol {
         ChatRoom.Kind.LOCALE -> LOCALE_ROOM_DOCUMENT
     }
 
-    /** Says something in a room as yourself; `$input` takes `venueId` or `localeId`, and `message`. */
+    /**
+     * Says something in a room as yourself; `$input` takes `venueId` or `localeId`, `message`, and `promptId`
+     * for an answer to a prompt.
+     */
     const val SEND_MESSAGE: String =
         "mutation SendMyChatMessage(\$input: ChatMessageSendOwnInput!) { sendMyChatMessage(input: \$input) { message { $MESSAGE_FIELDS } } }"
 
-    /** The mutation's input for saying [body] in [room]. */
-    fun sendInput(room: ChatRoom, body: String): JsonObject = JsonObject(
-        mapOf(room.kind.argument to JsonPrimitive(room.id.lowercase()), "message" to JsonPrimitive(body)),
+    /**
+     * The mutation's input for saying [body] in [room], answering the prompt [promptId] when given. Only a
+     * venue's room has prompts, so a locale's never sends one.
+     */
+    fun sendInput(room: ChatRoom, body: String, promptId: String? = null): JsonObject = JsonObject(
+        buildMap {
+            put(room.kind.argument, JsonPrimitive(room.id.lowercase()))
+            put("message", JsonPrimitive(body))
+            promptId?.takeIf { it.isNotBlank() && room.kind == ChatRoom.Kind.VENUE }?.let { put("promptId", JsonPrimitive(it)) }
+        },
     )
 
     sealed interface Frame {
@@ -424,6 +545,10 @@ object ChatProtocol {
         val pinned: Boolean? = null,
         val postedAsPerson: Boolean? = null,
         val person: IncomingPerson? = null,
+        val postedAsAudience: Boolean? = null,
+        val promptId: String? = null,
+        // Read on its own, so a malformed prompt drops only the prompt, never the line.
+        val prompt: JsonElement? = null,
     ) {
         fun toMessage(): VenueMessage {
             val base = VenueMessage(body = message, userId = userId, avatarUrl = avatarUrl.blankToNull())
@@ -440,9 +565,32 @@ object ChatProtocol {
                 endsAt = endsAt?.let(InstantSerializer::parse),
                 pinned = pinned ?: false,
                 personId = if (postedAsPerson == true) person?.id.blankToNull()?.lowercase() else null,
+                prompt = promptFrame(prompt),
+                promptId = promptId.blankToNull(),
+                postedAsAudience = postedAsAudience ?: false,
             )
         }
     }
+
+    /** A ChatPromptFrame; it needs its `id` and `text`, and anything else unreadable is left out. */
+    private fun promptFrame(element: JsonElement?): ChatPrompt? {
+        val frame = element as? JsonObject ?: return null
+        val id = frame.string("id") ?: return null
+        val text = frame.string("text") ?: return null
+        return ChatPrompt(
+            id = id,
+            text = text,
+            kind = ChatPromptKind.parse(frame.string("kind")),
+            answer = frame.string("answer"),
+            revealAt = frame.instant("revealAt"),
+            shownAs = ChatPromptShownAs.parse(frame.string("shownAs")),
+            number = frame.int("number"),
+            total = frame.int("total"),
+            nextAt = frame.instant("nextAt"),
+        )
+    }
+
+    private fun JsonObject.int(key: String): Int? = (this[key] as? JsonPrimitive)?.contentOrNull?.toIntOrNull()
 
     @Serializable
     private data class IncomingEvent(val id: String? = null, val name: String? = null, val startAt: String? = null)

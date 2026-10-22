@@ -18,6 +18,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -191,12 +193,58 @@ class HotMessApi(val client: AudienceKitClient) {
      * Says [body] in [room] as the signed-in user (`sendMyChatMessage`), returning the line as the room
      * sees it, or null if the response didn't carry one. The room also delivers it to everyone following,
      * the sender included. Errors written for people ("You're not at the venue") come through as they are.
+     * With [promptId] it answers that prompt, and comes back with `promptId` set.
      */
-    suspend fun sendChatMessage(room: ChatRoom, body: String): VenueMessage? {
-        val data = mutate(ChatProtocol.SEND_MESSAGE, JsonObject.serializer(), mapOf("input" to ChatProtocol.sendInput(room, body)))
+    suspend fun sendChatMessage(room: ChatRoom, body: String, promptId: String? = null): VenueMessage? {
+        val data = mutate(ChatProtocol.SEND_MESSAGE, JsonObject.serializer(), mapOf("input" to ChatProtocol.sendInput(room, body, promptId)))
         val payload = data["sendMyChatMessage"] as? JsonObject
         return ChatProtocol.message(payload?.get("message"))
     }
+
+    // endregion
+
+    // region Posts
+
+    /** A page of posts: a venue's, an event's, a person's or a locale's (filtered by [from]). */
+    suspend fun posts(subject: PostsSubject, from: PostsFilter = PostsFilter.ALL, first: Int = 20): List<Post> {
+        val variables = graphQLVariables("id" to subject.id, "first" to first)
+        return when (subject) {
+            is PostsSubject.Venue -> query(Documents.VENUE_POSTS, VenuePostsResponse.serializer(), variables).venues?.venue?.posts?.list?.nodes
+            is PostsSubject.Event -> query(Documents.EVENT_POSTS, EventPostsResponse.serializer(), variables).events?.event?.posts?.list?.nodes
+            is PostsSubject.Person -> query(Documents.PERSON_POSTS, PersonPostsResponse.serializer(), variables).people?.person?.posts?.list?.nodes
+            is PostsSubject.Locale -> query(
+                Documents.LOCALE_POSTS,
+                LocalePostsResponse.serializer(),
+                graphQLVariables("id" to subject.id, "first" to first, "from" to from.name),
+            ).locale?.posts?.list?.nodes
+        }.orEmpty().filterNotNull()
+    }
+
+    /** One post and its comments, oldest first; null once it's removed. */
+    suspend fun post(id: String): PostDetail? =
+        query(Documents.POST, PostResponse.serializer(), graphQLVariables("id" to id)).posts?.post?.let {
+            PostDetail(it.post, it.comments.nodes.filterNotNull())
+        }
+
+    suspend fun commentOnPost(postId: String, body: String): PostComment =
+        mutate(Documents.CREATE_POST_COMMENT, CreatePostCommentResponse.serializer(), graphQLVariables("postId" to postId, "body" to body.trim()))
+            .createPostComment.comment
+
+    suspend fun removePostComment(id: String) {
+        mutate(Documents.REMOVE_POST_COMMENT, RemovePostCommentResponse.serializer(), graphQLVariables("id" to id))
+    }
+
+    /** "Hide posts from {name}", or showing them again. */
+    suspend fun mutePosts(poster: PostPoster, muted: Boolean = true): Boolean =
+        mutate(
+            Documents.MUTE_POST_AUTHOR,
+            MutePostAuthorResponse.serializer(),
+            graphQLVariables(
+                "venueId" to poster.id.takeIf { poster.kind == PostPoster.Kind.VENUE },
+                "personId" to poster.id.takeIf { poster.kind == PostPoster.Kind.PERSON },
+                "muted" to muted,
+            ),
+        ).mutePostAuthor.muted
 
     // endregion
 
@@ -244,6 +292,7 @@ class HotMessApi(val client: AudienceKitClient) {
     /** Ends the signed-in user's active Ping early. */
     suspend fun endPing(): Boolean = mutate(Documents.END_PING, EndPingResponse.serializer()).endPing.ended
 
+
     /** What the send sheet offers in [localeId], and the Ping it would edit. Without a locale, only venues you pick elsewhere. */
     suspend fun pingChoices(localeId: String?): PingChoices = coroutineScope {
         val active = async { myPing() }
@@ -251,6 +300,52 @@ class HotMessApi(val client: AudienceKitClient) {
         val places = async { if (localeId == null) emptyList() else venues(localeId) }
         PingChoices.of(tonight.await(), places.await(), localeId, active.await())
     }
+
+    // endregion
+
+    // region Pair me up
+
+    /** Pair me up at a venue: null where the venue doesn't have it. */
+    suspend fun pairUp(venueId: String): VenuePairUp? =
+        query(Documents.VENUE_PAIR_UP, VenuePairUpResponse.serializer(), graphQLVariables("id" to venueId))
+            .venues?.venue?.pairUp
+
+    /** Opts in at the venue for tonight, or changes the hint; after a meeting, looks for someone new. */
+    suspend fun joinPairUp(venueId: String, lookFor: String?): PairUpState? =
+        pairUpMutation(Documents.JOIN_PAIR_UP, graphQLVariables("venueId" to venueId, "lookFor" to lookFor?.trim()))
+
+    suspend fun acceptPairUp(matchId: String): PairUpState? =
+        pairUpMutation(Documents.ACCEPT_PAIR_UP, graphQLVariables("matchId" to matchId))
+
+    /** A new topic for the two of them, or ([partner]) someone new for both. */
+    suspend fun skipPairUp(matchId: String, partner: Boolean): PairUpState? =
+        pairUpMutation(
+            Documents.SKIP_PAIR_UP,
+            graphQLVariables("matchId" to matchId, "what" to if (partner) "PARTNER" else "TOPIC"),
+        )
+
+    /** Cancels a pairing: neither sees the other from then on. */
+    suspend fun cancelPairUp(matchId: String): PairUpState? =
+        pairUpMutation(Documents.CANCEL_PAIR_UP, graphQLVariables("matchId" to matchId))
+
+    suspend fun leavePairUp(venueId: String): PairUpState? =
+        pairUpMutation(Documents.LEAVE_PAIR_UP, graphQLVariables("venueId" to venueId))
+
+    /** A fresh single-use code to show the partner. */
+    suspend fun showPairUpCode(matchId: String): String =
+        mutate(Documents.SHOW_PAIR_UP_CODE, ShowPairUpCodeResponse.serializer(), graphQLVariables("matchId" to matchId))
+            .showPairUpCode.code
+
+    suspend fun scanPairUpCode(venueId: String, code: String): PairUpScan =
+        mutate(
+            Documents.SCAN_PAIR_UP_CODE,
+            ScanPairUpCodeResponse.serializer(),
+            graphQLVariables("venueId" to venueId, "code" to code),
+        ).scanPairUpCode
+
+    /** Each Pair me up mutation answers with `{ pairUp }` under its own name. */
+    private suspend fun pairUpMutation(document: String, variables: Map<String, JsonElement>): PairUpState? =
+        mutate(document, PAIR_UP_PAYLOADS, variables).values.firstOrNull()?.pairUp
 
     // endregion
 
@@ -331,6 +426,17 @@ class HotMessApi(val client: AudienceKitClient) {
     suspend fun setRecentChatPush(enabled: Boolean): Boolean =
         mutate(Documents.SET_RECENT_CHAT_PUSH, SetRecentChatPushResponse.serializer(), graphQLVariables("enabled" to enabled))
             .setRecentChatPush.recentChatPush
+
+    /**
+     * Whether chat rooms show the user's initials instead of their photo (`me.chatInitials`), or null when
+     * there's no signed-in user.
+     */
+    suspend fun chatInitials(): Boolean? = query(Documents.CHAT_INITIALS, ChatInitialsResponse.serializer()).me?.chatInitials
+
+    /** Turns "Use my initials instead" on or off (`setChatInitials`); returns the setting as it now is. */
+    suspend fun setChatInitials(enabled: Boolean): Boolean =
+        mutate(Documents.SET_CHAT_INITIALS, SetChatInitialsResponse.serializer(), graphQLVariables("enabled" to enabled))
+            .setChatInitials.chatInitials
 
     // endregion
 
@@ -596,6 +702,16 @@ private data class SetRecentChatPushResponse(val setRecentChatPush: Payload) {
 }
 
 @Serializable
+private data class ChatInitialsResponse(val me: Me? = null) {
+    @Serializable data class Me(val chatInitials: Boolean = false)
+}
+
+@Serializable
+private data class SetChatInitialsResponse(val setChatInitials: Payload) {
+    @Serializable data class Payload(val chatInitials: Boolean = false)
+}
+
+@Serializable
 private data class ClosestLocaleResponse(val closestLocale: LocaleSummary? = null)
 
 @Serializable
@@ -747,4 +863,101 @@ private data class EndPingResponse(val endPing: Payload) {
 @Serializable
 private data class RegisterDeviceResponse(val registerDevice: Payload? = null) {
     @Serializable data class Payload(val registered: Boolean = false)
+}
+
+/** `venues { venue(id:) { pairUp } }`; a venue without it has no `pairUp`. */
+@Serializable
+private data class VenuePairUpResponse(val venues: Venues? = null) {
+    @Serializable data class Venues(val venue: Venue? = null)
+
+    @Serializable data class Venue(val pairUp: VenuePairUp? = null)
+}
+
+@Serializable
+private data class PairUpPayload(val pairUp: PairUpState? = null)
+
+private val PAIR_UP_PAYLOADS = MapSerializer(String.serializer(), PairUpPayload.serializer())
+
+@Serializable
+private data class ShowPairUpCodeResponse(val showPairUpCode: Payload) {
+    @Serializable data class Payload(val code: String)
+}
+
+@Serializable
+private data class ScanPairUpCodeResponse(val scanPairUpCode: PairUpScan)
+
+@Serializable
+private data class PostNodes(val nodes: List<Post?> = emptyList())
+
+@Serializable
+private data class PostList(val list: PostNodes? = null)
+
+@Serializable
+private data class PostsOwner(val posts: PostList? = null)
+
+@Serializable
+private data class VenuePostsResponse(val venues: Venues? = null) {
+    @Serializable
+    data class Venues(val venue: PostsOwner? = null)
+}
+
+@Serializable
+private data class EventPostsResponse(val events: Events? = null) {
+    @Serializable
+    data class Events(val event: PostsOwner? = null)
+}
+
+@Serializable
+private data class PersonPostsResponse(val people: People? = null) {
+    @Serializable
+    data class People(val person: PostsOwner? = null)
+}
+
+@Serializable
+private data class LocalePostsResponse(val locale: PostsOwner? = null)
+
+@Serializable
+private data class PostResponse(val posts: Posts? = null) {
+    @Serializable
+    data class Posts(val post: PostWithComments? = null)
+}
+
+/** `post(id:)`: the card's fields with its comments beside them. */
+@Serializable(with = PostWithCommentsSerializer::class)
+internal data class PostWithComments(val post: Post, val comments: CommentNodes)
+
+@Serializable
+internal data class CommentNodes(val nodes: List<PostComment?> = emptyList())
+
+/** Reads one object as both the [Post] and its `comments`. */
+internal object PostWithCommentsSerializer : KSerializer<PostWithComments> {
+    override val descriptor = Post.serializer().descriptor
+
+    override fun deserialize(decoder: kotlinx.serialization.encoding.Decoder): PostWithComments {
+        val input = decoder as kotlinx.serialization.json.JsonDecoder
+        val element = input.decodeJsonElement()
+        val comments = (element as? JsonObject)?.get("comments")
+        return PostWithComments(
+            post = input.json.decodeFromJsonElement(Post.serializer(), element),
+            comments = comments?.let { input.json.decodeFromJsonElement(CommentNodes.serializer(), it) } ?: CommentNodes(),
+        )
+    }
+
+    override fun serialize(encoder: kotlinx.serialization.encoding.Encoder, value: PostWithComments) =
+        throw UnsupportedOperationException("PostWithComments is only read")
+}
+
+@Serializable
+private data class CreatePostCommentResponse(val createPostComment: Payload) {
+    @Serializable
+    data class Payload(val comment: PostComment)
+}
+
+@Serializable
+private data class RemovePostCommentResponse(val removePostComment: JsonObject? = null)
+
+@Serializable
+private data class MutePostAuthorResponse(val mutePostAuthor: Payload) {
+    @Serializable
+    data class Payload(val muted: Boolean = true)
 }

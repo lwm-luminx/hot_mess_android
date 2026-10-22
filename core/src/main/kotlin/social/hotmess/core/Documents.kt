@@ -25,7 +25,8 @@ object Documents {
         "id name description distance point photoUrl bannerUrl profile { address phone facebook { facebookId isLiked link } }"
 
     /** A chat line as a preview shows it: rich messages in words (`message`), with the sender's role and presence. */
-    const val CHAT_LINE_FIELDS: String = "id message name userId avatarUrl sentAt presence role kind endsAt postedAsVenue postedAsPerson"
+    const val CHAT_LINE_FIELDS: String =
+        "id message name userId avatarUrl sentAt presence role kind endsAt postedAsVenue postedAsPerson postedAsAudience promptId"
 
     /**
      * A room's last few chat lines, oldest first, in the venue's or locale's chat mixin (`chat { ... }`); empty unless
@@ -106,6 +107,19 @@ object Documents {
     val SET_RECENT_CHAT_PUSH: String = """
         mutation SetRecentChatPush(${'$'}enabled: Boolean!) {
           setRecentChatPush(input: { enabled: ${'$'}enabled }) { recentChatPush }
+        }
+    """.trimIndent()
+
+    /** Whether chat rooms show the signed-in user's initials instead of their photo. Off unless they turn it on. */
+    val CHAT_INITIALS: String = """
+        query ChatInitials {
+          me { chatInitials }
+        }
+    """.trimIndent()
+
+    val SET_CHAT_INITIALS: String = """
+        mutation SetChatInitials(${'$'}enabled: Boolean!) {
+          setChatInitials(input: { enabled: ${'$'}enabled }) { chatInitials }
         }
     """.trimIndent()
 
@@ -217,6 +231,62 @@ object Documents {
         }
     """.trimIndent()
 
+    private const val PAIR_UP_MATCH_FIELDS =
+        "id accepted partnerAccepted bonus metAt endReason topic { key text } partner { id name avatarUrl lookFor }"
+
+    private const val PAIR_UP_STATE_FIELDS =
+        "status lookFor metCount match { $PAIR_UP_MATCH_FIELDS } bonus { $PAIR_UP_MATCH_FIELDS }"
+
+    val VENUE_PAIR_UP: String = """
+        query VenuePairUp(${'$'}id: ID!) {
+          venues { venue(id: ${'$'}id) { pairUp { here mine { $PAIR_UP_STATE_FIELDS } } } }
+        }
+    """.trimIndent()
+
+    val JOIN_PAIR_UP: String = """
+        mutation JoinPairUp(${'$'}venueId: ID!, ${'$'}lookFor: String) {
+          joinPairUp(input: { venueId: ${'$'}venueId, lookFor: ${'$'}lookFor }) { pairUp { $PAIR_UP_STATE_FIELDS } }
+        }
+    """.trimIndent()
+
+    val ACCEPT_PAIR_UP: String = """
+        mutation AcceptPairUp(${'$'}matchId: ID!) {
+          acceptPairUp(input: { matchId: ${'$'}matchId }) { pairUp { $PAIR_UP_STATE_FIELDS } }
+        }
+    """.trimIndent()
+
+    val SKIP_PAIR_UP: String = """
+        mutation SkipPairUp(${'$'}matchId: ID!, ${'$'}what: PairUpSkip!) {
+          skipPairUp(input: { matchId: ${'$'}matchId, what: ${'$'}what }) { pairUp { $PAIR_UP_STATE_FIELDS } }
+        }
+    """.trimIndent()
+
+    val CANCEL_PAIR_UP: String = """
+        mutation CancelPairUp(${'$'}matchId: ID!) {
+          cancelPairUp(input: { matchId: ${'$'}matchId }) { pairUp { $PAIR_UP_STATE_FIELDS } }
+        }
+    """.trimIndent()
+
+    val LEAVE_PAIR_UP: String = """
+        mutation LeavePairUp(${'$'}venueId: ID!) {
+          leavePairUp(input: { venueId: ${'$'}venueId }) { pairUp { $PAIR_UP_STATE_FIELDS } }
+        }
+    """.trimIndent()
+
+    val SHOW_PAIR_UP_CODE: String = """
+        mutation ShowPairUpCode(${'$'}matchId: ID!) {
+          showPairUpCode(input: { matchId: ${'$'}matchId }) { code }
+        }
+    """.trimIndent()
+
+    val SCAN_PAIR_UP_CODE: String = """
+        mutation ScanPairUpCode(${'$'}venueId: ID!, ${'$'}code: String!) {
+          scanPairUpCode(input: { venueId: ${'$'}venueId, code: ${'$'}code }) {
+            outcome match { $PAIR_UP_MATCH_FIELDS } pairUp { $PAIR_UP_STATE_FIELDS }
+          }
+        }
+    """.trimIndent()
+
     /** What the signed-in user has said about their own safety: when they agreed to the terms, and who they block. */
     val SAFETY: String = """
         query Safety {
@@ -262,4 +332,69 @@ object Documents {
           registerDevice(input: { notificationToken: ${'$'}notificationToken, appId: ${'$'}appId, sandbox: ${'$'}sandbox }) { registered }
         }
     """.trimIndent()
+
+    // region Posts
+
+    /** A post card's fields: its poster, photos, the event it's on and its comment count. */
+    const val POST_FIELDS: String =
+        "id body posterName posterAvatarUrl roleLabel actingPersonName createdAt edited pinned commentsOpen commentCount " +
+            "photos { url altText } event { id name startAt } person { id } venue { id }"
+
+    const val POST_COMMENT_FIELDS: String = "id authorId authorName authorAvatarUrl body createdAt viewerCanRemove"
+
+    /** A venue's own posts: on it, its events and its series, pinned first. */
+    val VENUE_POSTS: String = """
+        query VenuePosts(${'$'}id: ID!, ${'$'}first: Int!) {
+          venues { venue(id: ${'$'}id) { posts { list(first: ${'$'}first) { nodes { $POST_FIELDS } } } } }
+        }
+    """.trimIndent()
+
+    /** Posts on an event by its venue and the people on it. */
+    val EVENT_POSTS: String = """
+        query EventPosts(${'$'}id: ID!, ${'$'}first: Int!) {
+          events { event(id: ${'$'}id) { posts { list(first: ${'$'}first) { nodes { $POST_FIELDS } } } } }
+        }
+    """.trimIndent()
+
+    /** A talent listing's own posts. */
+    val PERSON_POSTS: String = """
+        query PersonPosts(${'$'}id: ID!, ${'$'}first: Int!) {
+          people { person(id: ${'$'}id) { posts { list(first: ${'$'}first) { nodes { $POST_FIELDS } } } } }
+        }
+    """.trimIndent()
+
+    /** A locale's updates from the last 14 days, newest first, from everyone, venues, talent or the events you're going to. */
+    val LOCALE_POSTS: String = """
+        query LocalePosts(${'$'}id: ID!, ${'$'}first: Int!, ${'$'}from: PostsFrom!) {
+          locale(id: ${'$'}id) { posts { list(first: ${'$'}first, from: ${'$'}from) { nodes { $POST_FIELDS } } } }
+        }
+    """.trimIndent()
+
+    /** One post and its comments, oldest first. */
+    val POST: String = """
+        query Post(${'$'}id: ID!) {
+          posts { post(id: ${'$'}id) { $POST_FIELDS comments(first: 100) { nodes { $POST_COMMENT_FIELDS } } } }
+        }
+    """.trimIndent()
+
+    val CREATE_POST_COMMENT: String = """
+        mutation CreatePostComment(${'$'}postId: ID!, ${'$'}body: String!) {
+          createPostComment(input: { postId: ${'$'}postId, body: ${'$'}body }) { comment { $POST_COMMENT_FIELDS } }
+        }
+    """.trimIndent()
+
+    val REMOVE_POST_COMMENT: String = """
+        mutation RemovePostComment(${'$'}id: ID!) {
+          removePostComment(input: { id: ${'$'}id }) { comment { id } }
+        }
+    """.trimIndent()
+
+    /** "Hide posts from {name}": a venue's or a person's, or shows them again. */
+    val MUTE_POST_AUTHOR: String = """
+        mutation MutePostAuthor(${'$'}venueId: ID, ${'$'}personId: ID, ${'$'}muted: Boolean) {
+          mutePostAuthor(input: { venueId: ${'$'}venueId, personId: ${'$'}personId, muted: ${'$'}muted }) { muted }
+        }
+    """.trimIndent()
+
+    // endregion
 }

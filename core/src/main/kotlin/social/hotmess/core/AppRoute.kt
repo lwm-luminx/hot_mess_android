@@ -17,6 +17,15 @@ sealed interface AppRoute {
     /** A chat room by its venue's or locale's id ([room]), from a link or a push about a room the user left. */
     data class Chat(val room: ChatRoom) : AppRoute
 
+    /** A post and its comments. */
+    data class PostDetail(val id: String) : AppRoute
+
+    /** Every post on a page, from its section's "See all". */
+    data class Posts(val subject: PostsSubject, val title: String) : AppRoute
+
+    /** A locale's updates feed, from Now. */
+    data class Updates(val localeId: String, val localeName: String) : AppRoute
+
     /** Which tab the route opens in. */
     val tab: AppTab
         get() = when (this) {
@@ -26,13 +35,21 @@ sealed interface AppRoute {
             is NowPing -> AppTab.NOW
             // A venue's room over its page; a locale's is reached from Now.
             is Chat -> if (room.kind == ChatRoom.Kind.VENUE) AppTab.VENUES else AppTab.NOW
+            // A post opens wherever it's linked from; a link from outside lands on Now.
+            is PostDetail, is Updates -> AppTab.NOW
+            is Posts -> when (subject) {
+                is PostsSubject.Venue -> AppTab.VENUES
+                is PostsSubject.Event -> AppTab.EVENTS
+                is PostsSubject.Person -> AppTab.PEOPLE
+                is PostsSubject.Locale -> AppTab.NOW
+            }
         }
 }
 
 object DeepLink {
     /**
      * Reads `hotmess://venues/<uuid>` (the type is the host) and
-     * `https://hotmess.social/venues/<uuid>`; likewise `events`, `people` and `pings` (a Ping opens Now).
+     * `https://hotmess.social/venues/<uuid>`; likewise `events`, `people`, `posts` and `pings` (a Ping opens Now).
      * A room's link, `venues/<uuid>/chat` or `locales/<uuid>/chat`, opens its chat. Pushes carry such a
      * URL in `url`, which is what the app routes on (a `recent_chat` push carries its room's).
      */
@@ -60,6 +77,7 @@ object DeepLink {
             "events" -> AppRoute.EventDetail(id)
             "people" -> AppRoute.PersonDetail(id)
             "pings" -> AppRoute.NowPing(id)
+            "posts" -> AppRoute.PostDetail(id)
             else -> null
         }
     }

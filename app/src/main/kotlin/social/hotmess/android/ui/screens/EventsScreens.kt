@@ -57,6 +57,7 @@ import social.hotmess.android.ui.openUrl
 import social.hotmess.android.ui.rememberLoader
 import social.hotmess.android.ui.share
 import social.hotmess.android.ui.theme.HotMessType
+import social.hotmess.core.PostsSubject
 import social.hotmess.core.ApiError
 import social.hotmess.core.AppRoute
 import social.hotmess.core.CoverOffer
@@ -151,6 +152,10 @@ fun EventScreen(id: String, navigator: Navigator) {
     var rsvpError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(id) { loader.load(id) { graph.api.event(id) } }
+    val postsSubject = remember(id) { PostsSubject.Event(id) }
+    val postsLoader = rememberPosts(postsSubject)
+    val posts by postsLoader.state.collectAsStateWithLifecycle()
+    val postActions = rememberPostActions(navigator) { poster -> postsLoader.update { list -> list.filterNot { it.poster == poster } } }
 
     val checkout = rememberCoverCheckout { pass ->
         loader.load(id, refresh = true) { graph.api.event(id) }
@@ -245,6 +250,7 @@ fun EventScreen(id: String, navigator: Navigator) {
                         }
                     }
                 }
+                postsSection("From the venue and hosts", postsSubject, posts, postActions)
                 item {
                     DetailSection("When") {
                         InfoRow("Starts", Formatting.dateTime(loaded.startAt))

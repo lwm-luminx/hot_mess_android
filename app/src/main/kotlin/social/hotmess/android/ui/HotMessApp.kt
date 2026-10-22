@@ -58,6 +58,9 @@ import social.hotmess.android.ui.screens.PassScreen
 import social.hotmess.android.ui.screens.PassesScreen
 import social.hotmess.android.ui.screens.PeopleScreen
 import social.hotmess.android.ui.screens.PersonScreen
+import social.hotmess.android.ui.screens.PostScreen
+import social.hotmess.android.ui.screens.PostsScreen
+import social.hotmess.android.ui.screens.UpdatesScreen
 import social.hotmess.android.ui.screens.UpdateRequiredScreen
 import social.hotmess.android.ui.screens.VenueChatScreen
 import social.hotmess.android.ui.screens.VenueScreen
@@ -67,6 +70,7 @@ import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.AppRoute
 import social.hotmess.core.AppTab
 import social.hotmess.core.ChatRoom
+import social.hotmess.core.postsSubject
 
 // Routes. Each tab's root, and the detail screens any tab can push.
 @Serializable data object NowRoute
@@ -81,6 +85,10 @@ import social.hotmess.core.ChatRoom
 @Serializable data class ChatRoute(val id: String, val name: String, val locale: Boolean = false)
 /** A cover pass, with its live QR code. */
 @Serializable data class PassRoute(val id: String)
+@Serializable data class PostRoute(val id: String)
+/** [kind] is the [PostsSubject]'s: venue, event, person or locale. */
+@Serializable data class PostsRoute(val kind: String, val id: String, val title: String)
+@Serializable data class UpdatesRoute(val localeId: String, val localeName: String)
 @Serializable data object PassesRoute
 
 private val AppTab.route: Any
@@ -124,7 +132,7 @@ interface Navigator {
 
 /** Update required, launch, sign-in or the app, by session state. */
 @Composable
-fun HotMessApp(links: Flow<AppRoute>, onSignIn: () -> Unit, onGoogleSignIn: () -> Unit) {
+fun HotMessApp(links: Flow<AppRoute>, onSignIn: () -> Unit, onGoogleSignIn: () -> Unit, onAppleSignIn: () -> Unit = {}) {
     val graph = LocalAppGraph.current
     val state by graph.session.state.collectAsStateWithLifecycle()
     val requiredVersion by graph.session.requiredVersion.collectAsStateWithLifecycle()
@@ -141,7 +149,7 @@ fun HotMessApp(links: Flow<AppRoute>, onSignIn: () -> Unit, onGoogleSignIn: () -
         when (screen) {
             0 -> UpdateRequiredScreen(requiredVersion)
             1 -> LaunchScreen()
-            2 -> LoginScreen(onSignIn = onSignIn, onGoogleSignIn = onGoogleSignIn)
+            2 -> LoginScreen(onSignIn = onSignIn, onGoogleSignIn = onGoogleSignIn, onAppleSignIn = onAppleSignIn)
             else -> MainShell(links)
         }
     }
@@ -188,6 +196,9 @@ private fun MainShell(links: Flow<AppRoute>) {
                         if (!locale) navController.navigate(VenueRoute(route.room.id))
                         ChatRoute(route.room.id, "", locale = locale)
                     }
+                    is AppRoute.PostDetail -> PostRoute(route.id)
+                    is AppRoute.Posts -> PostsRoute(route.subject.kind, route.subject.id, route.title)
+                    is AppRoute.Updates -> UpdatesRoute(route.localeId, route.localeName)
                 },
             )
         }
@@ -259,6 +270,15 @@ private fun MainShell(links: Flow<AppRoute>) {
             }
             composable<PassRoute> { PassScreen(it.toRoute<PassRoute>().id, navigator) }
             composable<PassesRoute> { PassesScreen(navigator) }
+            composable<PostRoute> { PostScreen(it.toRoute<PostRoute>().id, navigator) }
+            composable<PostsRoute> {
+                val route = it.toRoute<PostsRoute>()
+                PostsScreen(postsSubject(route.kind, route.id), route.title, navigator)
+            }
+            composable<UpdatesRoute> {
+                val route = it.toRoute<UpdatesRoute>()
+                UpdatesScreen(route.localeId, route.localeName, navigator)
+            }
         }
     }
 }
