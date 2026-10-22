@@ -225,7 +225,7 @@ fun VenueScreen(id: String, navigator: Navigator) {
     val userId = rememberUserId()
     var pingHere by rememberSaveable { mutableStateOf(false) }
     val pairUpScope = rememberCoroutineScope()
-    val pairUp = remember(id) { PairUpController(graph.api, id, pairUpScope) }
+    val pairUp = remember(id) { PairUpController(graph.api, id, pairUpScope) { graph.location.reportAgain() } }
     var pairingUp by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(id) { pairUp.load() }
     val actions = rememberPingActions { ping ->

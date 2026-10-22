@@ -2,6 +2,7 @@ package social.hotmess.android.ui.screens
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.SystemClock
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
@@ -92,7 +93,18 @@ import java.util.concurrent.Executors
  * state, so the sheet moves on at once; [poll] picks up what the partner did.
  */
 @Stable
-class PairUpController(private val api: HotMessApi, val venueId: String, private val scope: CoroutineScope) {
+class PairUpController(
+    private val api: HotMessApi,
+    val venueId: String,
+    private val scope: CoroutineScope,
+    /**
+     * Reports the device's position again. The API only opts in, and only pairs, people the app placed at the venue
+     * in the last 15 minutes, and the phone otherwise reports only after moving ~100 m (like chat's heartbeat).
+     */
+    private val reportLocation: suspend () -> Unit = {},
+) {
+    private var reportedAt = 0L
+
     var pairUp by mutableStateOf<VenuePairUp?>(null)
         private set
     var loaded by mutableStateOf(false)
@@ -124,13 +136,22 @@ class PairUpController(private val api: HotMessApi, val venueId: String, private
     /** Refreshes while the sheet is open: quickly while waiting on the other person, slowly otherwise. */
     suspend fun poll() {
         while (true) {
+            if (state != null && SystemClock.elapsedRealtime() - reportedAt > REPORT_EVERY_MS) report()
             load()
             val waiting = state?.let { it.status == PairUpStatus.SEARCHING || it.isPaired } == true
             delay(if (waiting) 3_000 else 15_000)
         }
     }
 
-    fun join(lookFor: String?) = perform { api.joinPairUp(venueId, lookFor) }
+    fun join(lookFor: String?) = perform {
+        report()
+        api.joinPairUp(venueId, lookFor)
+    }
+
+    private suspend fun report() {
+        reportedAt = SystemClock.elapsedRealtime()
+        reportLocation()
+    }
     fun accept() = state?.match?.let { match -> perform { api.acceptPairUp(match.id) } }
     fun skip(partner: Boolean) = state?.match?.let { match -> perform { api.skipPairUp(match.id, partner) } }
     fun cancel(match: PairUpMatch) = perform { api.cancelPairUp(match.id) }
@@ -194,6 +215,11 @@ class PairUpController(private val api: HotMessApi, val venueId: String, private
                 busy = false
             }
         }
+    }
+
+    private companion object {
+        /** Well inside the API's 15-minute presence window. */
+        const val REPORT_EVERY_MS = 5 * 60_000L
     }
 
     private fun message(e: Exception): String =

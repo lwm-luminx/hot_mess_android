@@ -147,7 +147,7 @@ fun NowScreen(navigator: Navigator) {
 
     // Pair me up at the venue you're at, or your event's: reloaded with Now, while the screen shows.
     val pairUpVenue = state.valueOrNull?.venue
-    val pairUp = remember(pairUpVenue?.id) { pairUpVenue?.let { PairUpController(graph.api, it.id, scope) } }
+    val pairUp = remember(pairUpVenue?.id) { pairUpVenue?.let { PairUpController(graph.api, it.id, scope) { graph.location.reportAgain() } } }
     var pairingUp by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(pairUp, lifecycle) {
         val controller = pairUp ?: return@LaunchedEffect
