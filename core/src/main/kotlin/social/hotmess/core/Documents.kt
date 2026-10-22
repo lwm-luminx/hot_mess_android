@@ -140,6 +140,7 @@ object Documents {
           venues {
             venue(id: ${'$'}id) {
               $VENUE_FIELDS
+              bannerPhotos { url }
               chat { open $RECENT_MESSAGES }
               tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } viewerAdmission { ${Queries.ADMISSION_FIELDS} } } }
               $ON_NOW_FIELDS

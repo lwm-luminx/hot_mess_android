@@ -10,7 +10,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
-import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.LocationOff
@@ -71,6 +70,7 @@ import social.hotmess.android.ui.components.OnNowSection
 import social.hotmess.android.ui.components.RowDivider
 import social.hotmess.android.ui.components.SocialLinkRow
 import social.hotmess.android.ui.components.TextRow
+import social.hotmess.android.ui.components.ToneSettings
 import social.hotmess.android.ui.components.VenueCard
 import social.hotmess.android.ui.components.VenueMap
 import social.hotmess.android.ui.components.cardSection
@@ -89,10 +89,12 @@ import social.hotmess.core.AppRoute
 import social.hotmess.core.CoverOffer
 import social.hotmess.core.Event
 import social.hotmess.core.Formatting
+import social.hotmess.core.ImageTone
 import social.hotmess.core.PhotoTone
 import social.hotmess.core.PingPick
 import social.hotmess.core.ReportSubject
 import social.hotmess.core.ReportTarget
+import social.hotmess.core.SocialLink
 import social.hotmess.core.Venue
 import social.hotmess.core.VenueOverview
 import social.hotmess.core.isIn
@@ -207,7 +209,10 @@ private fun MapButton(
     }
 }
 
-/** One venue: its photo, how to get there, where else to find it, its chat room and what's on. */
+/** The venue hero keeps 7:1 contrast over at least a light scrim, since its photos change under the name. */
+private val VenueHeroContrast = ToneSettings(target = 7.0, scrimFloor = ImageTone.SCRIM_FLOOR)
+
+/** One venue: its photos, what's coming up, its chat room, what's on, how to get there and its links. */
 @Composable
 fun VenueScreen(id: String, navigator: Navigator) {
     val graph = LocalAppGraph.current
@@ -264,7 +269,8 @@ fun VenueScreen(id: String, navigator: Navigator) {
             HeroFeed(
                 listState,
                 hero = {
-                    HeroHeader(loaded.bannerUrl ?: loaded.photoUrl, topInset, onTone = { heroTone = it }) {
+                    // Its photos in turn, over a firmer scrim than a still hero so the name reads the same on each.
+                    HeroHeader(loaded.heroPhotos, topInset, onTone = { heroTone = it }, minimum = VenueHeroContrast) {
                         Text(
                             loaded.name,
                             style = HotMessType.title,
@@ -295,6 +301,27 @@ fun VenueScreen(id: String, navigator: Navigator) {
                         }
                     }
                 }
+                // The next two events sit up top, above the fold; the rest wait at the bottom.
+                if (overview.comingUp.isNotEmpty()) {
+                    cardSection("coming-up", "Coming up", overview.comingUp, key = { it.id }) { event ->
+                        EventCard(
+                            event,
+                            onClick = { navigator.open(AppRoute.EventDetail(event.id)) },
+                            photoUrl = event.photoUrl(Event.PhotoPriority.PERSON_FIRST, venueFallback = venue),
+                        )
+                    }
+                }
+                if (overview.chatOpen) {
+                    item {
+                        ChatPeek(
+                            rememberPeekMessages(loaded.recentMessages),
+                            title = "Chat",
+                            room = loaded.name,
+                            onOpen = { navigator.openChat(loaded.id, loaded.name) },
+                            presence = remember(loaded.recentMessages) { peekPresence(loaded.recentMessages) },
+                        )
+                    }
+                }
                 if (overview.onNow.isNotEmpty()) {
                     item(key = "on-now") {
                         OnNowSection(overview.onNow) { navigator.open(AppRoute.PersonDetail(it.person.id)) }
@@ -312,6 +339,9 @@ fun VenueScreen(id: String, navigator: Navigator) {
                 // Pair me up, where the venue has it: once you're here, or while you're in it tonight.
                 pairUp.pairUp?.takeIf { it.here || it.mine != null }?.let { offer ->
                     item(key = "pair-up") { PairUpRow(offer) { pairingUp = true } }
+                }
+                if (overview.friends.isNotEmpty()) {
+                    item { FriendsHere(overview.friends) }
                 }
                 postsSection("Posts", postsSubject, posts, postActions)
                 item {
@@ -338,34 +368,15 @@ fun VenueScreen(id: String, navigator: Navigator) {
                             InfoRow("Distance", Formatting.distance(it), icon = Icons.Rounded.NearMe)
                             RowDivider()
                         }
-                        val facebook = loaded.facebookUrl
-                        if (facebook != null) {
-                            InfoRow("Open in Facebook", icon = Icons.AutoMirrored.Rounded.OpenInNew, onClick = { context.openUrl(facebook) })
-                        } else {
+                        // Its links in one order, each naming where it goes; Share when it has none.
+                        val links = SocialLink.aboutLinks(loaded.socialLinks, loaded.facebookUrl)
+                        if (links.isEmpty()) {
                             InfoRow("Share", icon = Icons.Rounded.Share, onClick = { context.share(loaded.shareUrl, loaded.name) })
                         }
-                    }
-                }
-                if (overview.friends.isNotEmpty()) {
-                    item { FriendsHere(overview.friends) }
-                }
-                val links = loaded.socialLinks.filter { it.url != null }
-                if (links.isNotEmpty()) {
-                    item {
-                        DetailSection("Elsewhere") {
-                            CardRows(links) { link -> SocialLinkRow(link) { link.url?.let(context::openUrl) } }
+                        links.forEachIndexed { index, link ->
+                            if (index > 0) RowDivider()
+                            SocialLinkRow(link, onClick = { link.url?.let(context::openUrl) }, namesService = true)
                         }
-                    }
-                }
-                if (overview.chatOpen) {
-                    item {
-                        ChatPeek(
-                            rememberPeekMessages(loaded.recentMessages),
-                            title = "Chat",
-                            room = loaded.name,
-                            onOpen = { navigator.openChat(loaded.id, loaded.name) },
-                            presence = remember(loaded.recentMessages) { peekPresence(loaded.recentMessages) },
-                        )
                     }
                 }
                 loaded.coordinate?.takeIf { graph.configuration.isTestBuild }?.let { coordinate ->
@@ -378,8 +389,8 @@ fun VenueScreen(id: String, navigator: Navigator) {
                 }
                 if (overview.events.isEmpty()) {
                     item { DetailSection("Events") { EmptyRow("There's nothing coming up here yet.") } }
-                } else {
-                    cardSection("events", "Events", overview.events, key = { it.id }) { event ->
+                } else if (overview.laterEvents.isNotEmpty()) {
+                    cardSection("events", "More events", overview.laterEvents, key = { it.id }) { event ->
                         EventCard(
                             event,
                             onClick = { navigator.open(AppRoute.EventDetail(event.id)) },

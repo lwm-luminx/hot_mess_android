@@ -3,14 +3,20 @@ package social.hotmess.android.ui.components
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.provider.Settings
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -47,6 +53,8 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextOverflow
@@ -54,6 +62,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
+import coil3.SingletonImageLoader
+import coil3.request.ImageRequest
+import kotlinx.coroutines.delay
 import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.PhotoColors
 import social.hotmess.android.ui.theme.Sizes
@@ -77,6 +88,12 @@ private val HeroFade = 90.dp
 /** The fade under the status bar when neither bar style reaches 3:1. */
 private val TopFade = 40.dp
 
+/** How long each of a carousel hero's photos shows before the next fades in. */
+private const val CarouselIntervalMillis = 5_000L
+
+/** How long one photo takes to fade into the next. */
+private const val CarouselFadeMillis = 900
+
 /**
  * The hero itself. Put it first in a [HeroFeed] under a [HeroScaffold], which passes [topInset] (the
  * status bar plus the top bar). The body is `size-hero` (256) below that, taller if [content] needs
@@ -89,8 +106,37 @@ fun HeroHeader(
     onTone: (PhotoTone) -> Unit,
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
+) = HeroHeader(listOfNotNull(url), topInset, onTone, modifier, content = content)
+
+/**
+ * A hero over several photos: it fades from one to the next every few seconds, once the next has
+ * loaded, re-reading each for the text, with dots for where it is. It holds on the first with the
+ * system's animations off. [minimum] raises the contrast it keeps, for photos that change under the
+ * text.
+ */
+@Composable
+fun HeroHeader(
+    urls: List<String>,
+    topInset: Dp,
+    onTone: (PhotoTone) -> Unit,
+    modifier: Modifier = Modifier,
+    minimum: ToneSettings? = null,
+    content: @Composable ColumnScope.() -> Unit,
 ) {
     val density = LocalDensity.current
+    val context = LocalContext.current
+    var index by remember(urls) { mutableIntStateOf(0) }
+    val url = urls.getOrNull(index % max(1, urls.size))
+    val animates = remember(context) { animationsEnabled(context) }
+    LaunchedEffect(urls, animates) {
+        if (urls.size < 2 || !animates) return@LaunchedEffect
+        while (true) {
+            delay(CarouselIntervalMillis)
+            val next = (index + 1) % urls.size
+            SingletonImageLoader.get(context).execute(ImageRequest.Builder(context).data(urls[next]).build())
+            index = next
+        }
+    }
     var size by remember { mutableStateOf(IntSize.Zero) }
     var textHeight by remember { mutableIntStateOf(0) }
 
@@ -108,7 +154,7 @@ fun HeroHeader(
     val band = areas?.first
     val top = areas?.second
 
-    val tone = rememberPhotoTone(url, size, band, top, kind = "hero")
+    val tone = rememberPhotoTone(url, size, band, top, kind = "hero", minimum = minimum)
     LaunchedEffect(tone) { onTone(tone) }
 
     val textColor by animateColorAsState(tone.textColor, toneAnimation(), label = "hero text")
@@ -125,7 +171,9 @@ fun HeroHeader(
             .background(PhotoColors.placeholder)
             .onSizeChanged { size = it },
     ) {
-        PhotoLayer(url, Modifier.matchParentSize())
+        Crossfade(url, Modifier.matchParentSize(), animationSpec = tween(CarouselFadeMillis), label = "hero photo") { shown ->
+            PhotoLayer(shown, Modifier.fillMaxSize())
+        }
         Box(
             Modifier
                 .fillMaxWidth()
@@ -137,13 +185,34 @@ fun HeroHeader(
             Modifier
                 .align(Alignment.BottomStart)
                 .fillMaxWidth()
-                .padding(start = HeroInset, end = HeroInset, bottom = HeroInset, top = topInset + 16.dp)
+                .padding(start = HeroInset, end = HeroInset, bottom = if (urls.size > 1) HeroInset + 8.dp else HeroInset, top = topInset + 16.dp)
                 .onSizeChanged { textHeight = it.height },
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             CompositionLocalProvider(LocalContentColor provides textColor, LocalTextStyle provides tone.textStyle()) { content() }
         }
+        if (urls.size > 1) {
+            Row(
+                Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp).clearAndSetSemantics { },
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                urls.indices.forEach { position ->
+                    Box(
+                        Modifier
+                            .size(6.dp)
+                            .background(textColor.copy(alpha = if (position == index % urls.size) 0.95f else 0.4f), CircleShape),
+                    )
+                }
+            }
+        }
     }
+}
+
+/** Whether the system runs animations: off when the animator duration scale is 0 (Remove animations). */
+private fun animationsEnabled(context: Context): Boolean = try {
+    Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) != 0f
+} catch (e: Exception) {
+    true
 }
 
 /**

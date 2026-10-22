@@ -47,6 +47,7 @@ import social.hotmess.android.ui.components.RoomBanner
 import social.hotmess.android.ui.components.RoomBannerKind
 import social.hotmess.core.AppRoute
 import social.hotmess.core.BlockedUser
+import social.hotmess.core.ChatClearMark
 import social.hotmess.core.ChatKind
 import social.hotmess.core.ChatPrompts
 import social.hotmess.core.ChatRoom
@@ -92,6 +93,13 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
      */
     private val _reachable = MutableStateFlow<Set<String>>(emptySet())
     val reachable: StateFlow<Set<String>> = _reachable.asStateFlow()
+
+    /**
+     * Where the transcript marks what has cleared from what is current: an admin clearing the room, or (for its
+     * admins, who still see them) the lines older than the room shows everyone else.
+     */
+    private val _clearMark = MutableStateFlow<ChatClearMark?>(null)
+    val clearMark: StateFlow<ChatClearMark?> = _clearMark.asStateFlow()
 
     /** A line on its way to the room; the composer waits for it. */
     private val _sending = MutableStateFlow(false)
@@ -174,11 +182,15 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
                             val id = event.userId.lowercase()
                             _reachable.value = if (event.reachable) _reachable.value + id else _reachable.value - id
                         }
-                        is VenueChatConnection.Event.History -> history(event.messages, event.pinned)
+                        is VenueChatConnection.Event.History -> history(event.messages, event.pinned, event.expiresBefore)
                         is VenueChatConnection.Event.Pin -> pin(event.id, event.announcement)
                         // An admin removed a line, or cleared the room; a pinned announcement goes with its line.
                         is VenueChatConnection.Event.Removed -> _messages.value = _messages.value.filterNot { it.id == event.id }
-                        VenueChatConnection.Event.Cleared -> _messages.value = emptyList()
+                        is VenueChatConnection.Event.Cleared -> {
+                            // Lines sent since stay; an admin's clearing is marked where it happened.
+                            _messages.value = ChatClearMark.remaining(_messages.value, event.at)
+                            _clearMark.value = ChatClearMark.afterClear(_clearMark.value, _messages.value, event.at, event.expired)
+                        }
                         is VenueChatConnection.Event.Disconnected -> {
                             // Reconnecting (or over): the next roster says who's here; until then nobody is known to be.
                             _status.value = Status.OFFLINE
@@ -220,10 +232,11 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
      * What the room sent on joining replaces what was shown, so a reconnect doesn't repeat lines. A
      * pinned announcement older than the lines the room shows goes first, so its bar has it.
      */
-    private fun history(messages: List<VenueMessage>, pinned: VenueMessage?) {
+    private fun history(messages: List<VenueMessage>, pinned: VenueMessage?, expiresBefore: Instant?) {
         val lines = messages
         val older = pinned?.takeIf { p -> lines.none { it.id == p.id } }
         _messages.value = listOfNotNull(older) + lines
+        _clearMark.value = ChatClearMark.forHistory(lines, expiresBefore)
         _reachable.value = lines.filter { it.reachable && !it.isFromListing }.map { it.userId.lowercase() }.toSet()
     }
 
@@ -300,6 +313,7 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
     val outOfRange by model.outOfRange.collectAsStateWithLifecycle()
     val people by model.people.collectAsStateWithLifecycle()
     val reachable by model.reachable.collectAsStateWithLifecycle()
+    val clearMark by model.clearMark.collectAsStateWithLifecycle()
     val user by graph.session.user.collectAsStateWithLifecycle()
     val safety by graph.safety.state.collectAsStateWithLifecycle()
     var draft by rememberSaveable { mutableStateOf("") }
@@ -414,6 +428,7 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
                     dismissedPrompts = dismissedPrompts + line.id
                     if (answering == line.prompt?.id) answering = null
                 },
+                clearMark = clearMark,
             )
             ChatComposer(
                 value = draft,
