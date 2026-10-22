@@ -311,7 +311,12 @@ fun VenueScreen(id: String, navigator: Navigator) {
                 }
                 // Pair me up, where the venue has it: once you're here, or while you're in it tonight.
                 pairUp.pairUp?.takeIf { it.here || it.mine != null }?.let { offer ->
-                    item(key = "pair-up") { PairUpRow(offer) { pairingUp = true } }
+                    item(key = "pair-up") {
+                        PairUpRow(offer, onOpen = { pairingUp = true }, onGoAgain = {
+                            pairUp.join(null)
+                            pairingUp = true
+                        })
+                    }
                 }
                 postsSection("Posts", postsSubject, posts, postActions)
                 item {

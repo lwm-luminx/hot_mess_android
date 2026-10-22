@@ -135,6 +135,7 @@ class PairUpController(private val api: HotMessApi, val venueId: String, private
     fun skip(partner: Boolean) = state?.match?.let { match -> perform { api.skipPairUp(match.id, partner) } }
     fun cancel(match: PairUpMatch) = perform { api.cancelPairUp(match.id) }
     fun leave() = perform { api.leavePairUp(venueId) }
+    fun share() = state?.match?.let { match -> perform { api.sharePairUp(match.id) } }
 
     /** A fresh code to show, or null when the API refused one. */
     suspend fun code(): String? {
@@ -201,14 +202,14 @@ class PairUpController(private val api: HotMessApi, val venueId: String, private
 
 /** The venue screen's way into Pair me up: where the venue has it and the user is there, or already in tonight. */
 @Composable
-fun PairUpRow(pairUp: VenuePairUp, onOpen: () -> Unit) {
+fun PairUpRow(pairUp: VenuePairUp, onOpen: () -> Unit, onGoAgain: (() -> Unit)? = null) {
     val status = pairUp.mine?.status?.takeIf { it != PairUpStatus.LEFT }
     val headline = when (status) {
         PairUpStatus.SEARCHING -> "Finding someone to chat with"
         PairUpStatus.PROPOSED -> "You've got a match"
         PairUpStatus.WAITING -> "Waiting for them to say yes"
         PairUpStatus.REVEALED -> "Go find each other"
-        PairUpStatus.MET -> "You met someone tonight"
+        PairUpStatus.MET -> "You met someone!"
         else -> "Quickie"
     }
     DetailSection("Meet someone") {
@@ -220,12 +221,21 @@ fun PairUpRow(pairUp: VenuePairUp, onOpen: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text(headline, style = HotMessType.subheading)
                 Text(
-                    if (status == null) "Get paired with someone here and a topic to talk about." else "Open to see where you're at.",
+                    when (status) {
+                        null -> "Get paired with someone here and a topic to talk about."
+                        PairUpStatus.MET -> "Up for another quickie?"
+                        else -> "Open to see where you're at."
+                    },
                     style = HotMessType.bodySmall,
                     color = tokens.inkMuted,
                 )
             }
-            PrimaryButton(if (status == null) "Start" else "Open", onClick = onOpen)
+            // After a meeting the row starts the next quickie itself rather than reopening the finished one.
+            when (status) {
+                null -> PrimaryButton("Start", onClick = onOpen)
+                PairUpStatus.MET -> PrimaryButton("Go again", onClick = onGoAgain ?: onOpen)
+                else -> PrimaryButton("Open", onClick = onOpen)
+            }
         }
     }
 }
@@ -281,7 +291,14 @@ fun PairUpSheet(controller: PairUpController, venueName: String, onDismiss: () -
                         reporting = ReportSubject(ReportTarget.PERSON, partner.id, BlockedUser(partner.id, partner.name))
                     },
                 )
-                state.status == PairUpStatus.MET -> Met(controller, state)
+                state.status == PairUpStatus.MET -> Met(
+                    controller,
+                    state,
+                    onReport = { partner ->
+                        reporting = ReportSubject(ReportTarget.PERSON, partner.id, BlockedUser(partner.id, partner.name))
+                    },
+                    onDone = onDismiss,
+                )
             }
         }
     }
@@ -425,17 +442,58 @@ private fun Revealed(
     }
 }
 
+/** The end of a quickie: share it if you both like, then go again or call it a night. Each person chooses. */
 @Composable
-private fun Met(controller: PairUpController, state: PairUpState) {
+private fun Met(controller: PairUpController, state: PairUpState, onReport: (PairUpPartner) -> Unit, onDone: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(Space.s3)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s2)) {
             Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = tokens.accent)
             Text("You met!", style = HotMessType.title)
         }
-        state.match?.partner?.let { Text("Hope you and ${it.name} are having fun.", style = HotMessType.body) }
+        state.match?.partner?.let { Text("Hope you and ${it.name} had a good chat.", style = HotMessType.body) }
         MetBadge(state.metCount)
-        PrimaryButton("Another quickie", onClick = { controller.join(null) }, modifier = Modifier.fillMaxWidth(), enabled = !controller.busy)
-        TextButton(onClick = { controller.leave() }, enabled = !controller.busy) { Text("I'm done for tonight") }
+        state.match?.let { ShareRow(controller, it) }
+        PrimaryButton("Let's go again", onClick = { controller.join(null) }, modifier = Modifier.fillMaxWidth(), enabled = !controller.busy)
+        SecondaryButton(
+            "I'm done",
+            onClick = {
+                controller.leave()
+                onDone()
+            },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !controller.busy,
+        )
+        state.match?.partner?.let { partner ->
+            TextButton(onClick = { onReport(partner) }, modifier = Modifier.fillMaxWidth()) {
+                Text("Something not right? Report or block", style = HotMessType.bodySmall, color = tokens.inkMuted)
+            }
+        }
+    }
+}
+
+/** Nothing names them in the venue's chat unless both say so. */
+@Composable
+private fun ShareRow(controller: PairUpController, match: PairUpMatch) {
+    when {
+        match.isShared -> Text("Shared in the venue chat", style = HotMessType.subheading)
+        match.shared -> Text("Waiting for them to share too", style = HotMessType.body, color = tokens.inkMuted)
+        else -> Column(verticalArrangement = Arrangement.spacedBy(Space.s1)) {
+            SecondaryButton(
+                "Share in the venue chat",
+                onClick = { controller.share() },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !controller.busy,
+            )
+            Text(
+                if (match.partnerShared) {
+                    "They'd like to share. If you do too, the chat gets your first names and topic."
+                } else {
+                    "If you both share, the chat gets your first names and what you talked about."
+                },
+                style = HotMessType.caption,
+                color = tokens.inkMuted,
+            )
+        }
     }
 }
 
@@ -490,7 +548,7 @@ private fun BonusCard(match: PairUpMatch, onDone: () -> Unit) {
     }
 }
 
-/** The night's badge: how many people they met. */
+/** The night's badge: how many conversations they had (the same person twice is two conversations). */
 @Composable
 private fun MetBadge(count: Int) {
     Row(
@@ -499,7 +557,10 @@ private fun MetBadge(count: Int) {
         horizontalArrangement = Arrangement.spacedBy(Space.s2),
     ) {
         Icon(Icons.Rounded.WorkspacePremium, contentDescription = null, tint = tokens.accentInk)
-        Text(if (count == 1) "Met someone new tonight" else "Met $count people tonight", style = HotMessType.subheading)
+        Text(
+            if (count == 1) "You've had a conversation tonight" else "You've had $count conversations tonight",
+            style = HotMessType.subheading,
+        )
     }
 }
 
