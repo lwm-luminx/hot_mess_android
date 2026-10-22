@@ -145,6 +145,20 @@ fun NowScreen(navigator: Navigator) {
     var endError by rememberSaveable { mutableStateOf<String?>(null) }
     val actions = rememberPingActions { ping -> loader.update { it.replacingPing(ping) } }
 
+    // Pair me up at the venue you're at, or your event's: reloaded with Now, while the screen shows.
+    val pairUpVenue = state.valueOrNull?.venue
+    val pairUp = remember(pairUpVenue?.id) { pairUpVenue?.let { PairUpController(graph.api, it.id, scope) } }
+    var pairingUp by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(pairUp, lifecycle) {
+        val controller = pairUp ?: return@LaunchedEffect
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                controller.load()
+                delay(NOW_REFRESH_MS)
+            }
+        }
+    }
+
     fun endPing() {
         ending = true
         scope.launch {
@@ -234,6 +248,10 @@ fun NowScreen(navigator: Navigator) {
                     now.venue?.let { venue ->
                         item { SmallTalk(venue, now.event, now.friends, navigator) }
                     }
+                    // Pair me up, just under the chat: once you're at a venue that has it, or while you're in it.
+                    pairUp?.pairUp?.takeIf { it.here || it.mine != null }?.let { offer ->
+                        item(key = "pair-up") { PairUpRow(offer) { pairingUp = true } }
+                    }
                     // At an event or venue, its posts from the last 24 hours.
                     now.venue?.let { venue ->
                         val subject = now.event?.let { PostsSubject.Event(it.id) } ?: PostsSubject.Venue(venue.id)
@@ -318,6 +336,12 @@ fun NowScreen(navigator: Navigator) {
     }
 
     CoverCheckoutFailure(checkout)
+    if (pairingUp && pairUp != null && pairUpVenue != null) {
+        PairUpSheet(pairUp, pairUpVenue.name) {
+            pairingUp = false
+            scope.launch { pairUp.load() }
+        }
+    }
     if (sheetOpen) {
         PingSheet(
             preselect = null,
