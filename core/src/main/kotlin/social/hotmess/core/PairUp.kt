@@ -82,6 +82,6 @@ data class PairUpScan(
             "USED" -> "That code was refreshed. Ask them to show it again."
             "ENDED" -> "That pairing has ended."
             "OWN" -> "That's your own code. Scan theirs instead."
-            else -> "That isn't a Pair me up code. Try scanning again."
+            else -> "That isn't a Quickie code. Try scanning again."
         }
 }

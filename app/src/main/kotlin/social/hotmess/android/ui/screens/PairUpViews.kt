@@ -12,6 +12,7 @@ import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,7 +26,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material.icons.rounded.QrCode
 import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.WorkspacePremium
 import androidx.compose.material3.AlertDialog
@@ -47,7 +47,6 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -210,7 +209,7 @@ fun PairUpRow(pairUp: VenuePairUp, onOpen: () -> Unit) {
         PairUpStatus.WAITING -> "Waiting for them to say yes"
         PairUpStatus.REVEALED -> "Go find each other"
         PairUpStatus.MET -> "You met someone tonight"
-        else -> "Pair me up to chat"
+        else -> "Quickie"
     }
     DetailSection("Meet someone") {
         Row(
@@ -226,7 +225,7 @@ fun PairUpRow(pairUp: VenuePairUp, onOpen: () -> Unit) {
                     color = tokens.inkMuted,
                 )
             }
-            PrimaryButton(if (status == null) "Pair me up" else "Open", onClick = onOpen)
+            PrimaryButton(if (status == null) "Start" else "Open", onClick = onOpen)
         }
     }
 }
@@ -239,9 +238,7 @@ fun PairUpRow(pairUp: VenuePairUp, onOpen: () -> Unit) {
 @Composable
 fun PairUpSheet(controller: PairUpController, venueName: String, onDismiss: () -> Unit) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
-    var code by remember { mutableStateOf<String?>(null) }
     var scanning by remember { mutableStateOf(false) }
     var reporting by remember { mutableStateOf<ReportSubject?>(null) }
     val state = controller.state
@@ -279,7 +276,6 @@ fun PairUpSheet(controller: PairUpController, venueName: String, onDismiss: () -
                 state.status == PairUpStatus.REVEALED -> Revealed(
                     controller,
                     state,
-                    onShowCode = { scope.launch { code = controller.code() } },
                     onScan = { scanning = true },
                     onReport = { partner ->
                         reporting = ReportSubject(ReportTarget.PERSON, partner.id, BlockedUser(partner.id, partner.name))
@@ -290,7 +286,6 @@ fun PairUpSheet(controller: PairUpController, venueName: String, onDismiss: () -
         }
     }
 
-    code?.let { shown -> CodeDialog(shown, state?.match?.partner?.name) { code = null } }
     if (scanning) {
         ScannerDialog(onCode = { scanned ->
             scanning = false
@@ -305,7 +300,7 @@ fun PairUpSheet(controller: PairUpController, venueName: String, onDismiss: () -
         AlertDialog(
             onDismissRequest = { controller.error = null },
             confirmButton = { TextButton(onClick = { controller.error = null }) { Text("OK") } },
-            title = { Text("Pair me up") },
+            title = { Text("Quickie") },
             text = { Text(message) },
         )
     }
@@ -317,20 +312,20 @@ private fun Intro(controller: PairUpController, venueName: String) {
     Column(verticalArrangement = Arrangement.spacedBy(Space.s3)) {
         Text("Meet someone at $venueName", style = HotMessType.title)
         Text(
-            "We'll pair you with someone else here tonight who also tapped Pair me up, and give you both something " +
+            "We'll pair you with someone else here tonight who also tapped Quickie, and give you both something " +
                 "to talk about. You only see each other once you both say yes, and either of you can cancel any time.",
             style = HotMessType.body,
             color = tokens.inkMuted,
         )
         LookForField(lookFor) { lookFor = it }
         PrimaryButton(
-            "Pair me up to chat",
+            "Start a quickie",
             onClick = { controller.join(lookFor) },
             modifier = Modifier.fillMaxWidth(),
             enabled = controller.here && !controller.busy,
         )
         if (!controller.here) {
-            Text("Pair me up opens once you're at $venueName.", style = HotMessType.bodySmall, color = tokens.inkMuted)
+            Text("Quickie opens once you're at $venueName.", style = HotMessType.bodySmall, color = tokens.inkMuted)
         }
     }
 }
@@ -369,7 +364,7 @@ private fun Searching(controller: PairUpController, state: PairUpState) {
             enabled = !controller.busy && lookFor != state.lookFor.orEmpty(),
         )
         TextButton(onClick = { controller.leave() }, enabled = !controller.busy) {
-            Text("Stop pairing me up", color = tokens.danger)
+            Text("Leave Quickie", color = tokens.danger)
         }
         if (state.metCount > 0) MetBadge(state.metCount)
     }
@@ -405,7 +400,6 @@ private fun Proposed(controller: PairUpController, state: PairUpState) {
 private fun Revealed(
     controller: PairUpController,
     state: PairUpState,
-    onShowCode: () -> Unit,
     onScan: () -> Unit,
     onReport: (PairUpPartner) -> Unit,
 ) {
@@ -413,11 +407,20 @@ private fun Revealed(
     Column(verticalArrangement = Arrangement.spacedBy(Space.s3)) {
         match.partner?.let { PartnerCard(it) { onReport(it) } }
         TopicCard(match.topic)
-        Text("Found each other? One of you shows a code and the other scans it.", style = HotMessType.body)
-        Row(horizontalArrangement = Arrangement.spacedBy(Space.s3)) {
-            PrimaryButton("Show my code", onClick = onShowCode, modifier = Modifier.weight(1f), icon = Icons.Rounded.QrCode, enabled = !controller.busy)
-            SecondaryButton("Scan theirs", onClick = onScan, modifier = Modifier.weight(1f), enabled = !controller.busy)
-        }
+        Text("Found each other? Either of you scans the other's code.", style = HotMessType.body)
+        // Both phones show their code straight away, so whoever's quicker scans: no deciding who shows and who
+        // scans. A new topic clears the old code, so it's fetched again per match and topic.
+        val key = "${match.id}-${match.topic.key}"
+        var shown by remember { mutableStateOf<Pair<String, String>?>(null) }
+        LaunchedEffect(key) { controller.code()?.let { shown = key to it } }
+        CodeCard(shown?.takeIf { it.first == key }?.second)
+        PrimaryButton(
+            "Scan theirs",
+            onClick = onScan,
+            modifier = Modifier.fillMaxWidth(),
+            icon = Icons.Rounded.QrCodeScanner,
+            enabled = !controller.busy,
+        )
         CancelButton(controller, match)
     }
 }
@@ -431,7 +434,7 @@ private fun Met(controller: PairUpController, state: PairUpState) {
         }
         state.match?.partner?.let { Text("Hope you and ${it.name} are having fun.", style = HotMessType.body) }
         MetBadge(state.metCount)
-        PrimaryButton("Pair me up again", onClick = { controller.join(null) }, modifier = Modifier.fillMaxWidth(), enabled = !controller.busy)
+        PrimaryButton("Another quickie", onClick = { controller.join(null) }, modifier = Modifier.fillMaxWidth(), enabled = !controller.busy)
         TextButton(onClick = { controller.leave() }, enabled = !controller.busy) { Text("I'm done for tonight") }
     }
 }
@@ -512,21 +515,17 @@ private fun MetDialog(count: Int, onDone: () -> Unit) {
 }
 
 /** The code to show: big, bright, and only for their partner. */
+/** The code to show, on white so it scans in a dark room. It works once, and only for their match. */
 @Composable
-private fun CodeDialog(code: String, partnerName: String?, onDismiss: () -> Unit) {
-    Dialog(onDismissRequest = onDismiss) {
-        Card {
-            Column(
-                Modifier.padding(Space.s6),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(Space.s4),
-            ) {
-                Text(partnerName?.let { "Let $it scan this" } ?: "Let them scan this", style = HotMessType.heading)
-                QrCode(code, Modifier.widthIn(max = 300.dp).fillMaxWidth())
-                Text("It works once, and only for your match.", style = HotMessType.bodySmall, color = tokens.inkMuted)
-                TextButton(onClick = onDismiss) { Text("Done") }
-            }
+private fun CodeCard(code: String?) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Space.s2)) {
+        val codeSize = Modifier.widthIn(max = 260.dp).fillMaxWidth()
+        if (code != null) {
+            QrCode(code, codeSize)
+        } else {
+            Box(codeSize.aspectRatio(1f), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         }
+        Text("Your code. It works once, and only for your match.", style = HotMessType.bodySmall, color = tokens.inkMuted)
     }
 }
 
