@@ -389,6 +389,44 @@ object Documents {
         }
     """.trimIndent()
 
+    /** A photo's fields: who took it, a photographer's or a member's, who's on stage in it, and its event. */
+    const val PHOTO_FIELDS: String =
+        "id url altText caption source takenBy takenAt viewUrl viewerCanRemove people { id name } event { id name }"
+
+    /** A venue's photos, newest first: photographers' and members'. */
+    val VENUE_PHOTOS: String = """
+        query VenuePhotos(${'$'}id: ID!, ${'$'}first: Int!) {
+          venues { venue(id: ${'$'}id) { posts { photos(first: ${'$'}first) { nodes { $PHOTO_FIELDS } } } } }
+        }
+    """.trimIndent()
+
+    /** An event's photos, newest first. */
+    val EVENT_PHOTOS: String = """
+        query EventPhotos(${'$'}id: ID!, ${'$'}first: Int!) {
+          events { event(id: ${'$'}id) { posts { photos(first: ${'$'}first) { nodes { $PHOTO_FIELDS } } } } }
+        }
+    """.trimIndent()
+
+    /** The photos a person was on stage in, newest first. */
+    val PERSON_PHOTOS: String = """
+        query PersonPhotos(${'$'}id: ID!, ${'$'}first: Int!) {
+          people { person(id: ${'$'}id) { posts { photos(first: ${'$'}first) { nodes { $PHOTO_FIELDS } } } } }
+        }
+    """.trimIndent()
+
+    /** A photo just taken with the camera at the venue you're at; the API tags whoever is on stage. */
+    val ADD_EVENT_PHOTO: String = """
+        mutation AddEventPhoto(${'$'}venueId: ID!, ${'$'}photo: String!, ${'$'}altText: String) {
+          addEventPhoto(input: { venueId: ${'$'}venueId, photo: ${'$'}photo, altText: ${'$'}altText }) { photo { $PHOTO_FIELDS } }
+        }
+    """.trimIndent()
+
+    val REMOVE_EVENT_PHOTO: String = """
+        mutation RemoveEventPhoto(${'$'}id: ID!) {
+          removeEventPhoto(input: { id: ${'$'}id }) { id }
+        }
+    """.trimIndent()
+
     /** "Hide posts from {name}": a venue's or a person's, or shows them again. */
     val MUTE_POST_AUTHOR: String = """
         mutation MutePostAuthor(${'$'}venueId: ID, ${'$'}personId: ID, ${'$'}muted: Boolean) {

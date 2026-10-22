@@ -245,6 +245,10 @@ fun NowScreen(navigator: Navigator) {
                             OnNowSection(now.onNow) { navigator.open(AppRoute.PersonDetail(it.person.id)) }
                         }
                     }
+                    // At a venue: its photos, led by the camera; what you take goes on the stage's pages too.
+                    now.venue?.let { venue ->
+                        item(key = "photos") { PhotosSection(PostsSubject.Venue(venue.id), navigator, cameraVenueId = venue.id) }
+                    }
                     now.venue?.let { venue ->
                         item { SmallTalk(venue, now.event, now.friends, navigator) }
                     }

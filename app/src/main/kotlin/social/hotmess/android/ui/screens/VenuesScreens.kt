@@ -300,6 +300,10 @@ fun VenueScreen(id: String, navigator: Navigator) {
                         OnNowSection(overview.onNow) { navigator.open(AppRoute.PersonDetail(it.person.id)) }
                     }
                 }
+                // Photos of the venue, and the camera once you're here: what you take goes on the stage's pages too.
+                item(key = "photos") {
+                    PhotosSection(postsSubject, navigator, cameraVenueId = loaded.id.takeIf { overview.chatOpen })
+                }
                 item {
                     PingStripSection(
                         pings = overview.friendPings,
