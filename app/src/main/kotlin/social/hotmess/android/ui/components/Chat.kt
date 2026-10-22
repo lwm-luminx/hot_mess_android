@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -96,6 +97,7 @@ import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.Radius
 import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
+import social.hotmess.core.ChatClearMark
 import social.hotmess.core.ChatKind
 import social.hotmess.core.ChatPrompt
 import social.hotmess.core.ChatPromptShownAs
@@ -238,6 +240,11 @@ private sealed interface ThreadEntry {
 
     data class Divider(override val key: String, val label: String) : ThreadEntry
 
+    /** Where what has cleared ends and what is current begins, as a labelled rule. */
+    data class Cleared(val mark: ChatClearMark) : ThreadEntry {
+        override val key: String get() = "cleared-${mark.at}"
+    }
+
     data class BubbleEntry(val message: ChatThreadMessage, val first: Boolean, val last: Boolean) : ThreadEntry {
         override val key: String get() = message.id
     }
@@ -282,9 +289,15 @@ private fun sameGroup(messages: List<ChatThreadMessage>, index: Int): Boolean {
     return between < GroupGap
 }
 
-private fun threadEntries(messages: List<ChatThreadMessage>): List<ThreadEntry> {
-    val entries = ArrayList<ThreadEntry>(messages.size + 4)
+/**
+ * The transcript's rows. The [clearMark] goes above the first line sent since it, with older lines above; with none
+ * since, after them all.
+ */
+private fun threadEntries(messages: List<ChatThreadMessage>, clearMark: ChatClearMark? = null): List<ThreadEntry> {
+    val entries = ArrayList<ThreadEntry>(messages.size + 5)
+    val firstAfterClear = clearMark?.let { mark -> messages.indexOfFirst { it.sentAt?.isBefore(mark.at) == false } }
     messages.forEachIndexed { index, message ->
+        if (clearMark != null && index == firstAfterClear && index > 0) entries += ThreadEntry.Cleared(clearMark)
         if (dividerBefore(messages, index)) {
             entries += ThreadEntry.Divider("divider-${message.id}", Formatting.shortTime(message.sentAt!!))
         }
@@ -302,6 +315,7 @@ private fun threadEntries(messages: List<ChatThreadMessage>): List<ThreadEntry> 
         val last = index == messages.lastIndex || !sameGroup(messages, index + 1)
         entries += ThreadEntry.BubbleEntry(message, first, last)
     }
+    if (clearMark != null && messages.isNotEmpty() && firstAfterClear == -1) entries += ThreadEntry.Cleared(clearMark)
     return entries
 }
 
@@ -316,7 +330,8 @@ private fun threadEntries(messages: List<ChatThreadMessage>): List<ThreadEntry> 
  * [promptBar] draws the night's pinned prompt under any PinnedBar, told to collapse to one line once the
  * reader scrolls up or when an announcement is pinned too, so the header never holds more than two strips.
  * Pinned prompts never show in the thread; a quiet room's prompt card does, with [onAnswerPrompt] and
- * [onDismissPrompt] ("Not now") for its buttons.
+ * [onDismissPrompt] ("Not now") for its buttons. [clearMark] draws a rule where the room was cleared, or where
+ * what admins alone still see ends.
  */
 @Composable
 fun ChatThread(
@@ -331,12 +346,13 @@ fun ChatThread(
     promptBar: (@Composable (collapsed: Boolean) -> Unit)? = null,
     onAnswerPrompt: (ChatThreadMessage) -> Unit = {},
     onDismissPrompt: (ChatThreadMessage) -> Unit = {},
+    clearMark: ChatClearMark? = null,
 ) {
     val clock by rememberMinuteClock()
     val visible = remember(messages, clock) {
         messages.filter { it.isShowing(clock) && it.prompt?.shownAs != ChatPromptShownAs.PINNED }
     }
-    val entries = remember(visible) { threadEntries(visible) }
+    val entries = remember(visible, clearMark) { threadEntries(visible, clearMark) }
     val pinned = remember(visible) { visible.lastOrNull { it.rich?.kind == ChatKind.ANNOUNCEMENT && it.rich?.pinned == true } }
     val scope = rememberCoroutineScope()
     Column(modifier.background(tokens.surface)) {
@@ -358,6 +374,9 @@ fun ChatThread(
                     "Say hello.",
                     if (isLocale) "Everyone out in $roomName can see what you write here." else "Everyone at $roomName can see what you write here.",
                 )
+                if (clearMark != null) {
+                    ClearDivider(clearMark, Modifier.align(Alignment.TopCenter).padding(horizontal = Space.s4, vertical = Space.s3))
+                }
             } else {
                 Transcript(entries, presence, state, onOpenEvent, onMessageActions, onAnswerPrompt, onDismissPrompt)
             }
@@ -396,6 +415,7 @@ private fun BoxScope.Transcript(
             items(entries, key = { it.key }) { entry ->
                 when (entry) {
                     is ThreadEntry.Divider -> TimeDivider(entry.label)
+                    is ThreadEntry.Cleared -> ClearDivider(entry.mark, Modifier.padding(top = Space.s3, bottom = Space.s1))
                     is ThreadEntry.BubbleEntry -> BubbleRow(
                         entry,
                         bubbleMax,
@@ -415,6 +435,21 @@ private fun BoxScope.Transcript(
                 }
             }
         }
+    }
+}
+
+/** A rule across the transcript with what cleared in the middle. */
+@Composable
+private fun ClearDivider(mark: ChatClearMark, modifier: Modifier = Modifier) {
+    val label = mark.label()
+    Row(
+        modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = label },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Space.s2),
+    ) {
+        Box(Modifier.weight(1f).height(1.dp).background(tokens.inkMuted.copy(alpha = 0.4f)))
+        Text(label, style = HotMessType.caption, color = tokens.inkMuted, textAlign = TextAlign.Center)
+        Box(Modifier.weight(1f).height(1.dp).background(tokens.inkMuted.copy(alpha = 0.4f)))
     }
 }
 

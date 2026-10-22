@@ -73,7 +73,10 @@ val PhotoTone.barScrimColor: Color
 
 /** What the viewer's accessibility settings ask of text over photos. */
 @Immutable
-data class ToneSettings(val target: Double, val scrimFloor: Double)
+data class ToneSettings(val target: Double, val scrimFloor: Double) {
+    /** The stricter of these and [other], for a hero that asks for more than the device does. */
+    fun atLeast(other: ToneSettings) = ToneSettings(maxOf(target, other.target), maxOf(scrimFloor, other.scrimFloor))
+}
 
 /**
  * The contrast target and scrim floor for this device: 7:1 and a 0.3 floor when the system's high
@@ -118,12 +121,20 @@ private const val ANALYSIS_SIZE = 256
  * for most nightlife photos), or as the last tone decided for this photo, and updates once a small
  * software copy of the photo has loaded and been read. With no [url] it's the tone for the accent
  * gradient that stands in for the photo. [kind] separates cached tones for the same photo drawn in
- * differently shaped places.
+ * differently shaped places. [minimum] raises the device's contrast target and scrim floor.
  */
 @Composable
-fun rememberPhotoTone(url: String?, viewSize: IntSize, band: Rect?, top: Rect? = band, kind: String = ""): PhotoTone {
+fun rememberPhotoTone(
+    url: String?,
+    viewSize: IntSize,
+    band: Rect?,
+    top: Rect? = band,
+    kind: String = "",
+    minimum: ToneSettings? = null,
+): PhotoTone {
     val context = LocalContext.current
-    val settings = rememberToneSettings()
+    val device = rememberToneSettings()
+    val settings = remember(device, minimum) { minimum?.let { device.atLeast(it) } ?: device }
     val cacheKey = url?.let { "$kind|$it|${settings.target}|${settings.scrimFloor}" }
     // With no photo the accent gradient shows: white (on-accent) on the light accent, ink on the
     // dark theme's brighter one.

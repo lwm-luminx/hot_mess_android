@@ -11,6 +11,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import java.time.Instant
+import java.time.ZoneId
 import java.util.UUID
 
 /**
@@ -283,12 +284,13 @@ object ChatProtocol {
           }
           history { senderPresence message { $MESSAGE_FIELDS } }
           pinnedMessage { senderPresence message { $MESSAGE_FIELDS } }
+          expiresBefore
         }
         ... on ChatMessagePosted { senderPresence message { $MESSAGE_FIELDS } }
         ... on ChatMessageUpdated { message { $MESSAGE_FIELDS } }
         ... on ChatMessageRemoved { messageId }
         ... on ChatPinChanged { messageId pinned announcement { $MESSAGE_FIELDS } }
-        ... on ChatRoomCleared { clearedAt }
+        ... on ChatRoomCleared { clearedAt expired }
         ... on ChatPresenceChanged { userId presence name avatarUrl recentUntil }
         ... on ChatRangeChanged { outOfRange }
         ... on ChatLeft { reason }
@@ -376,8 +378,11 @@ object ChatProtocol {
             val recentUntil: Instant? = null,
         ) : Frame
 
-        /** The room's recent lines, oldest first, and its pinned announcement, sent on joining. */
-        data class History(val messages: List<VenueMessage>, val pinned: VenueMessage? = null) : Frame
+        /**
+         * The room's recent lines, oldest first, and its pinned announcement, sent on joining, with when the room
+         * stops showing lines to everyone but its admins ([expiresBefore]; null from an API that doesn't say).
+         */
+        data class History(val messages: List<VenueMessage>, val pinned: VenueMessage? = null, val expiresBefore: Instant? = null) : Frame
 
         /** An announcement (by [id]) was pinned, with the [announcement], or unpinned (null). */
         data class Pin(val id: String, val announcement: VenueMessage?) : Frame
@@ -385,8 +390,11 @@ object ChatProtocol {
         /** An admin removed a line (by [id]); nobody sees it again. */
         data class Removed(val id: String) : Frame
 
-        /** An admin cleared the room: every line so far is gone. */
-        data object Cleared : Frame
+        /**
+         * An admin cleared the room, or ([expired]) its oldest lines expired: every line sent up to [at] is gone (all
+         * of them when [at] is unreadable).
+         */
+        data class Cleared(val at: Instant? = null, val expired: Boolean = false) : Frame
     }
 
     /** The channel's identifier (see [GraphQLCable.identifier]). */
@@ -435,7 +443,7 @@ object ChatProtocol {
         "ChatMessageUpdated" -> listOfNotNull(message(event["message"])?.let(Frame::Message))
         "ChatMessageRemoved" -> listOfNotNull(event.string("messageId")?.let(Frame::Removed))
         "ChatPinChanged" -> listOfNotNull(pin(event))
-        "ChatRoomCleared" -> listOf(Frame.Cleared)
+        "ChatRoomCleared" -> listOf(Frame.Cleared(event.instant("clearedAt"), event.boolean("expired")))
         "ChatPresenceChanged" -> listOfNotNull(presence(event))
         "ChatRangeChanged" -> listOf(Frame.Range(event.boolean("outOfRange")))
         "ChatLeft" -> listOf(Frame.Left)
@@ -480,7 +488,7 @@ object ChatProtocol {
             Frame.Connected,
             Frame.Range(event.boolean("outOfRange")),
             Frame.Roster(people.map { it.userId }.toSet(), people, friends, recent),
-            Frame.History(history, posted((event["pinnedMessage"] ?: event["pinned"]) as? JsonObject)),
+            Frame.History(history, posted((event["pinnedMessage"] ?: event["pinned"]) as? JsonObject), event.instant("expiresBefore")),
         )
     }
 
@@ -647,10 +655,10 @@ class VenueChatConnection(
             val recentUntil: Instant? = null,
         ) : Event
 
-        data class History(val messages: List<VenueMessage>, val pinned: VenueMessage?) : Event
+        data class History(val messages: List<VenueMessage>, val pinned: VenueMessage?, val expiresBefore: Instant? = null) : Event
         data class Pin(val id: String, val announcement: VenueMessage?) : Event
         data class Removed(val id: String) : Event
-        data object Cleared : Event
+        data class Cleared(val at: Instant?, val expired: Boolean) : Event
     }
 
     /**
@@ -681,12 +689,43 @@ class VenueChatConnection(
                     is ChatProtocol.Frame.Roster -> emit(Event.Roster(frame.online, frame.people, frame.friends, frame.recent))
                     is ChatProtocol.Frame.PresenceChanged ->
                         emit(Event.PresenceChanged(frame.userId, frame.online, frame.name, frame.avatarUrl, frame.reachable, frame.recentUntil))
-                    is ChatProtocol.Frame.History -> emit(Event.History(frame.messages, frame.pinned))
+                    is ChatProtocol.Frame.History -> emit(Event.History(frame.messages, frame.pinned, frame.expiresBefore))
                     is ChatProtocol.Frame.Pin -> emit(Event.Pin(frame.id, frame.announcement))
                     is ChatProtocol.Frame.Removed -> emit(Event.Removed(frame.id))
-                    ChatProtocol.Frame.Cleared -> emit(Event.Cleared)
+                    is ChatProtocol.Frame.Cleared -> emit(Event.Cleared(frame.at, frame.expired))
                 }
             }
+        }
+    }
+}
+
+/**
+ * Where a chat transcript divides what has cleared from what is current: an admin clearing the room at [at], or
+ * ([expired]) the line before which only the room's admins still see messages.
+ */
+data class ChatClearMark(val at: Instant, val expired: Boolean) {
+    /** What the divider says. */
+    fun label(zone: ZoneId = ZoneId.systemDefault()): String =
+        if (expired) "Cleared for everyone but admins above" else "Chat cleared at ${Formatting.clock(at, zone)}"
+
+    companion object {
+        /** The mark a room's history gets: only admins are sent lines older than [expiresBefore], and they get it. */
+        fun forHistory(history: List<VenueMessage>, expiresBefore: Instant?): ChatClearMark? =
+            expiresBefore?.takeIf { cutoff -> history.any { line -> line.sentAt?.isBefore(cutoff) == true } }
+                ?.let { ChatClearMark(it, expired = true) }
+
+        /** What's left of [lines] once the room clears everything sent up to [at] (everything, without one). */
+        fun remaining(lines: List<VenueMessage>, at: Instant?): List<VenueMessage> =
+            if (at == null) emptyList() else lines.filterNot { line -> line.sentAt?.isAfter(at) == false }
+
+        /**
+         * The mark after the room clears up to [at]: an admin's clearing leaves one where it happened; lines expiring
+         * keep [current] while lines it divides remain in [lines].
+         */
+        fun afterClear(current: ChatClearMark?, lines: List<VenueMessage>, at: Instant?, expired: Boolean, now: Instant = Instant.now()): ChatClearMark? {
+            if (!expired) return ChatClearMark(at ?: now, expired = false)
+            val mark = current ?: return null
+            return mark.takeIf { lines.any { line -> line.sentAt?.isBefore(mark.at) == true } }
         }
     }
 }

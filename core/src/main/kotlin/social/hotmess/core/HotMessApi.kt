@@ -573,7 +573,13 @@ data class VenueOverview(
     val friendPings: List<Ping> = emptyList(),
     /** Who's on there right now. */
     val onNow: List<Appearance> = emptyList(),
-)
+) {
+    /** The next two events, near the top of the venue screen. */
+    val comingUp: List<Event> get() = events.take(2)
+
+    /** The events after those, at the bottom. */
+    val laterEvents: List<Event> get() = events.drop(2)
+}
 
 /** Visible venues, those in [localeId] first, then by the audience's order and name. */
 fun List<Venue>.sortedForList(localeId: String?): List<Venue> =
@@ -735,6 +741,7 @@ private data class VenueNode(
     val distance: Double? = null,
     val photoUrl: String? = null,
     val bannerUrl: String? = null,
+    val bannerPhotos: List<BannerPhoto> = emptyList(),
     val point: String? = null,
     val profile: ListingProfile? = null,
     val chat: ChatMixin? = null,
@@ -753,6 +760,7 @@ private data class VenueNode(
         distance = distance,
         photoUrl = photoUrl,
         bannerUrl = bannerUrl,
+        bannerPhotos = bannerPhotos,
         point = point,
         profile = profile,
         chat = chat,

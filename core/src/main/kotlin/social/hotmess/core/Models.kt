@@ -38,6 +38,8 @@ data class Venue(
     val photoUrl: String? = null,
     /** Its wide image: its first banner, else [photoUrl], else its Facebook Page's cover; null when it has none. */
     val bannerUrl: String? = null,
+    /** Its banner images, in the order the venue screen's hero rotates through them; only the venue screen asks. */
+    val bannerPhotos: List<BannerPhoto> = emptyList(),
     /** Where it is, as WKT: `POINT (<longitude> <latitude>)`. */
     val point: String? = null,
     val locale: LocaleSummary? = null,
@@ -83,7 +85,15 @@ data class Venue(
     val facebookUrl: String? get() = profile?.facebook?.link ?: facebookId?.let { "https://facebook.com/$it" }
 
     val shareUrl: String get() = "https://hotmess.social/venues/${id.lowercase()}"
+
+    /** What the venue screen's hero rotates through: its banner, then its banner images, once each; else its photo. */
+    val heroPhotos: List<String>
+        get() = (listOfNotNull(bannerUrl) + bannerPhotos.mapNotNull { it.url }).distinct().ifEmpty { listOfNotNull(photoUrl) }
 }
+
+/** One of a venue's banner images (`Venue.bannerPhotos`). */
+@Serializable
+data class BannerPhoto(val url: String? = null)
 
 /** A venue's tickets mixin (`Venue.tickets`), read for the cover mixin the cover module nests in it. */
 @Serializable
@@ -327,6 +337,47 @@ data class SocialLink(
             "venmo" -> "Venmo"
             else -> null
         }
+
+    /** The network by name ("Instagram"), so a row says where it goes; the label for anything else. */
+    val serviceName: String
+        get() = when (provider.lowercase(Locale.ROOT)) {
+            "facebook" -> "Facebook"
+            "instagram" -> "Instagram"
+            "twitter", "x" -> "X"
+            "soundcloud" -> "SoundCloud"
+            "tiktok" -> "TikTok"
+            "youtube" -> "YouTube"
+            else -> label
+        }
+
+    private val aboutRank: Int
+        get() = when (provider.lowercase(Locale.ROOT)) {
+            "facebook" -> 0
+            "instagram" -> 1
+            "tiktok" -> 2
+            "twitter", "x" -> 3
+            "youtube" -> 4
+            "soundcloud" -> 5
+            else -> 6
+        }
+
+    companion object {
+        /** The ID of the Facebook link made from a venue's own Facebook Page. */
+        const val PAGE_FACEBOOK_ID = "page-facebook"
+
+        /**
+         * A venue's links for its About section, in one order on every venue and platform: Facebook, Instagram,
+         * TikTok, X, YouTube, SoundCloud, then the rest as listed. Its Facebook Page stands in for a Facebook
+         * profile it doesn't list, links without a URL and tip links are left out, and a link listed twice shows once.
+         */
+        fun aboutLinks(links: List<SocialLink>, facebookUrl: String?): List<SocialLink> {
+            val about = links.filter { it.url != null && it.tipApp == null }.distinctBy { it.url }.toMutableList()
+            if (facebookUrl != null && about.none { it.network == Network.FACEBOOK || it.url == facebookUrl }) {
+                about += SocialLink(PAGE_FACEBOOK_ID, provider = "facebook", url = facebookUrl)
+            }
+            return about.sortedBy { it.aboutRank }
+        }
+    }
 }
 
 @Serializable

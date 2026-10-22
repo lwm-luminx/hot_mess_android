@@ -18,6 +18,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -623,9 +624,64 @@ class ChatProtocolTest {
         )
         assertEquals(emptyList(), ChatProtocol.parse(result("""{"__typename":"ChatMessageRemoved"}""")))
         assertEquals(
-            listOf(ChatProtocol.Frame.Cleared),
+            listOf(ChatProtocol.Frame.Cleared(Instant.parse("2026-10-09T04:00:00.123Z"), expired = false)),
             ChatProtocol.parse(result("""{"__typename":"ChatRoomCleared","clearedAt":"2026-10-09T04:00:00.123Z"}""")),
         )
+        assertEquals(
+            listOf(ChatProtocol.Frame.Cleared(Instant.parse("2026-10-09T04:00:00Z"), expired = true)),
+            ChatProtocol.parse(result("""{"__typename":"ChatRoomCleared","clearedAt":"2026-10-09T04:00:00Z","expired":true}""")),
+        )
+    }
+
+    @Test
+    fun aVenuePageListsItsLinksOnceInOneOrderAndRotatesItsPhotos() {
+        val instagram = SocialLink("ig", handle = "clubtriangles", provider = "instagram", url = "https://instagram.com/clubtriangles")
+        val tiktok = SocialLink("tt", handle = "triangles", provider = "tiktok", url = "https://tiktok.com/@triangles")
+        val venmo = SocialLink("v", handle = "triangles", provider = "venmo", url = "https://venmo.com/triangles")
+        val bare = SocialLink("x", handle = "x", provider = "x")
+        val page = "https://www.facebook.com/clubtriangles"
+
+        val links = SocialLink.aboutLinks(listOf(tiktok, instagram, instagram, venmo, bare), page)
+        assertEquals(listOf("facebook", "instagram", "tiktok"), links.map { it.provider })
+        assertEquals(page, links.first().url)
+        assertEquals("Facebook", links.first().serviceName)
+        // A listed Facebook profile wins over the page's own link.
+        val listed = SocialLink("fb", handle = "triangles.sf", provider = "facebook", url = "https://facebook.com/triangles.sf")
+        assertEquals(listOf("fb", "ig"), SocialLink.aboutLinks(listOf(instagram, listed), page).map { it.id })
+
+        val venue = Venue("v-1", bannerUrl = "g.jpg", bannerPhotos = listOf(BannerPhoto("1.jpg"), BannerPhoto("g.jpg"), BannerPhoto(null)))
+        assertEquals(listOf("g.jpg", "1.jpg"), venue.heroPhotos)
+        assertEquals(listOf("p.jpg"), Venue("v-2", photoUrl = "p.jpg").heroPhotos)
+
+        val events = (1..4).map { Event(id = "e-$it", name = "Night $it", startAt = Instant.parse("2026-10-2${it}T04:00:00Z")) }
+        val overview = VenueOverview(Venue("v-3"), events = events)
+        assertEquals(listOf("e-1", "e-2"), overview.comingUp.map { it.id })
+        assertEquals(listOf("e-3", "e-4"), overview.laterEvents.map { it.id })
+    }
+
+    @Test
+    fun marksWhereTheRoomCleared() {
+        val cutoff = Instant.parse("2026-10-22T04:00:00Z")
+        val old = VenueMessage(id = "old", body = "last night", userId = "u-1", sentAt = cutoff.minusSeconds(3_600))
+        val new = VenueMessage(id = "new", body = "tonight", userId = "u-1", sentAt = cutoff.plusSeconds(60))
+
+        // Only admins get lines from before the cutoff, and only they get the divider.
+        assertNull(ChatClearMark.forHistory(listOf(new), cutoff))
+        val mark = assertNotNull(ChatClearMark.forHistory(listOf(old, new), cutoff))
+        assertEquals(ChatClearMark(cutoff, expired = true), mark)
+        assertEquals("Cleared for everyone but admins above", mark.label())
+
+        // Expiring keeps what came after, and the mark goes with what it divided.
+        val left = ChatClearMark.remaining(listOf(old, new), cutoff)
+        assertEquals(listOf("new"), left.map { it.id })
+        assertNull(ChatClearMark.afterClear(mark, left, cutoff, expired = true))
+
+        // An admin clearing the room leaves a mark where it happened.
+        val clearedAt = Instant.parse("2026-10-22T09:10:00Z")
+        val cleared = ChatClearMark.afterClear(null, emptyList(), clearedAt, expired = false)
+        assertEquals(ChatClearMark(clearedAt, expired = false), cleared)
+        assertEquals("Chat cleared at 2:10am", cleared?.label(ZoneId.of("America/Los_Angeles")))
+        assertEquals(emptyList(), ChatClearMark.remaining(listOf(old, new), null))
     }
 
     @Test
