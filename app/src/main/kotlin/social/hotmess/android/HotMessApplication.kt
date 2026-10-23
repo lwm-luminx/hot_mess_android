@@ -29,6 +29,7 @@ import social.hotmess.android.session.SafetyStore
 import social.hotmess.android.session.SessionStore
 import social.hotmess.android.session.TribeStore
 import social.hotmess.android.support.ErrorReporter
+import social.hotmess.android.ui.screens.CardSettings
 import social.hotmess.core.AppRoute
 import social.hotmess.core.CableConnection
 import social.hotmess.core.ChatMutes
@@ -49,6 +50,9 @@ class AppGraph(context: Context, val configuration: AppConfiguration = AppConfig
 
     /** Terms of use, blocking and reporting, as the API keeps them for the signed-in user. */
     val safety = SafetyStore(api)
+
+    /** Which promoted cards the user turned off (on this device only), and the reports of the ones they saw. */
+    val cards = CardSettings(context.applicationContext, audienceKit, scope)
 
     /** The user's tribes and whether the API has them; chat shows who shares one only when it does. */
     val tribes = TribeStore(api)

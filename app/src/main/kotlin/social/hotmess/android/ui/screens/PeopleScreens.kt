@@ -74,6 +74,12 @@ import social.hotmess.core.PhotoTone
 import social.hotmess.core.ReportSubject
 import social.hotmess.core.ReportTarget
 import social.hotmess.core.SocialLink
+import com.audiencekit.CardKind
+import com.audiencekit.CardLayout
+import com.audiencekit.LayoutScreen
+
+/** Android's People is one list (no Local/Everyone picker yet), so it draws the server's everyone group. */
+private val PEOPLE_CARD_KINDS = listOf(CardKind.PEOPLE_EVERYONE, CardKind.WEB, CardKind.PROMO_SLOT)
 
 /** The DJs, hosts and performers. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -85,6 +91,8 @@ fun PeopleScreen(navigator: Navigator) {
     val refreshing by loader.isRefreshing.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) { loader.load(Unit) { graph.api.people() } }
+    // The list is everyone, in the server's order; it can put an announcement or a promoted card above it.
+    val cardLayout = rememberScreenCards(LayoutScreen.PEOPLE, PEOPLE_CARD_KINDS, listOf(CardKind.PEOPLE_EVERYONE))
 
     ScreenScaffold(title = "People") {
         LoadStateView(state, onRetry = { loader.load(Unit) { graph.api.people() } }) { people ->
@@ -93,8 +101,17 @@ fun PeopleScreen(navigator: Navigator) {
                     Message(Icons.Rounded.People, "No one here yet", "DJs, hosts and performers will show up here.")
                 } else {
                     Feed {
-                        cardSection("people", null, people, key = { it.id }) { person ->
-                            PersonCard(person, onClick = { navigator.open(AppRoute.PersonDetail(person.id)) })
+                        val cards = cardLayout.takeIf { it.card(CardKind.PEOPLE_EVERYONE) != null }
+                            ?: CardLayout.fallback(listOf(CardKind.PEOPLE_EVERYONE))
+                        cards.cards.forEach { card ->
+                            when (card.kind) {
+                                CardKind.PEOPLE_EVERYONE ->
+                                    cardSection("people", null, people.rankedBy(card) { it.id }, key = { it.id }) { person ->
+                                        PersonCard(person, onClick = { navigator.open(AppRoute.PersonDetail(person.id)) })
+                                    }
+                                CardKind.WEB -> card.web?.let { content -> item(key = card.id) { WebCardView(content) } }
+                                CardKind.PROMO_SLOT -> item(key = card.id) { PromoSlotView(card, cards.id, navigator) }
+                            }
                         }
                     }
                 }

@@ -52,6 +52,7 @@ import social.hotmess.android.location.LocationAccess
 import social.hotmess.android.session.AuthState
 import social.hotmess.android.ui.screens.EventScreen
 import social.hotmess.android.ui.screens.GetHelpScreen
+import social.hotmess.android.ui.screens.CardsYouSeeScreen
 import social.hotmess.android.ui.screens.GettingHelpScreen
 import social.hotmess.android.ui.screens.SafetyAlertsScreen
 import social.hotmess.android.ui.screens.SupportScreen
@@ -106,6 +107,7 @@ import social.hotmess.core.postsSubject
 @Serializable data class SupportRoute(val note: String = "")
 @Serializable data object SafetyAlertsRoute
 @Serializable data object GettingHelpRoute
+@Serializable data object CardsYouSeeRoute
 /** "Your tribes", from Me. */
 @Serializable data object TribesRoute
 
@@ -151,6 +153,8 @@ interface Navigator {
     fun openSupport(note: String?)
     fun openSafetyAlerts()
     fun openGettingHelp()
+    /** Me > Cards you see: the promoted-card categories to show. */
+    fun openCardsYouSee()
     fun openTribes()
     fun back()
 }
@@ -271,6 +275,10 @@ private fun MainShell(links: Flow<AppRoute>) {
             navController.navigate(GettingHelpRoute)
         }
 
+        override fun openCardsYouSee() {
+            navController.navigate(CardsYouSeeRoute)
+        }
+
         override fun openTribes() {
             navController.navigate(TribesRoute) { launchSingleTop = true }
         }
@@ -348,6 +356,7 @@ private fun MainShell(links: Flow<AppRoute>) {
             composable<SupportRoute> { SupportScreen(it.toRoute<SupportRoute>().note.ifBlank { null }, navigator) }
             composable<SafetyAlertsRoute> { SafetyAlertsScreen(navigator) }
             composable<GettingHelpRoute> { GettingHelpScreen(navigator) }
+            composable<CardsYouSeeRoute> { CardsYouSeeScreen(navigator) }
             composable<TribesRoute> { TribePickerScreen(navigator) }
             composable<UpdatesRoute> {
                 val route = it.toRoute<UpdatesRoute>()

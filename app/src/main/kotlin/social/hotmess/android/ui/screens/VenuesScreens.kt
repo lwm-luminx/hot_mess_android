@@ -101,6 +101,14 @@ import social.hotmess.core.SocialLink
 import social.hotmess.core.Venue
 import social.hotmess.core.VenueOverview
 import social.hotmess.core.isIn
+import com.audiencekit.CardKind
+import com.audiencekit.CardLayout
+import com.audiencekit.LayoutScreen
+
+/** Under the map: the city's venues. The server can add what's on tonight, what's nearby, announcements and promoted cards. */
+private val VENUES_FALLBACK_CARDS = listOf(CardKind.VENUES_ALL)
+private val VENUES_CARD_KINDS =
+    listOf(CardKind.VENUES_TONIGHT, CardKind.VENUES_NEARBY, CardKind.VENUES_ALL, CardKind.WEB, CardKind.PROMO_SLOT)
 
 /** Every venue on a map, then as a list: the ones in your city, then everywhere else. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -117,6 +125,7 @@ fun VenuesScreen(navigator: Navigator) {
     var mapExpanded by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(localeId) { loader.load(localeId) { graph.api.venues(localeId) } }
+    val cardLayout = rememberScreenCards(LayoutScreen.VENUES, VENUES_CARD_KINDS, VENUES_FALLBACK_CARDS)
 
     ScreenScaffold(title = branding?.audience?.name?.let { "$it venues" } ?: "Venues") {
         LoadStateView(state, onRetry = { loader.load(localeId) { graph.api.venues(localeId) } }) { venues ->
@@ -147,8 +156,20 @@ fun VenuesScreen(navigator: Navigator) {
                     if (venues.isEmpty()) {
                         item { DetailSection("All venues") { EmptyRow("There are no venues here yet.") } }
                     }
-                    if (name != null) {
-                        cardSection("here", name, here, key = { it.id }) { venue -> VenueCard(venue, onClick = { open(venue) }) }
+                    // The city's cards in the server's order when it sent the city's list, else the built-in one.
+                    val cards = cardLayout.takeIf { it.card(CardKind.VENUES_ALL) != null } ?: CardLayout.fallback(VENUES_FALLBACK_CARDS)
+                    cards.cards.forEach { card ->
+                        when (card.kind) {
+                            CardKind.VENUES_ALL -> if (name != null) {
+                                val title = card.title.takeUnless { card.isFallback } ?: name
+                                cardSection("here", title, here.rankedBy(card) { it.id }, key = { it.id }) { venue -> VenueCard(venue, onClick = { open(venue) }) }
+                            }
+                            // Only the server sends these, with their own headings.
+                            CardKind.VENUES_TONIGHT, CardKind.VENUES_NEARBY ->
+                                cardSection(card.id, card.title, venues.pickedBy(card) { it.id }, key = { it.id }) { venue -> VenueCard(venue, onClick = { open(venue) }) }
+                            CardKind.WEB -> card.web?.let { content -> item(key = card.id) { WebCardView(content) } }
+                            CardKind.PROMO_SLOT -> item(key = card.id) { PromoSlotView(card, cards.id, navigator) }
+                        }
                     }
                     val elsewhereTitle = if (here.isEmpty() || name == null) "All venues" else "Elsewhere"
                     cardSection("elsewhere", elsewhereTitle, if (name == null) here + elsewhere else elsewhere, key = { it.id }) { venue ->
