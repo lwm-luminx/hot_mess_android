@@ -452,7 +452,7 @@ private fun ChatPhotoSample(name: String, avatarUrl: String?) {
         Avatar(avatarUrl, name.ifBlank { "You" }, size = TinyAvatarSize)
         Column {
             Text(shown, style = HotMessType.caption, color = tokens.inkMuted, modifier = Modifier.padding(start = Space.s1, bottom = 2.dp))
-            ChatBubble("anyone want to split a pitcher?", own = false, last = true)
+            ChatBubble("anyone know who's on next?", own = false, last = true)
         }
     }
 }

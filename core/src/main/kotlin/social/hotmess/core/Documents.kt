@@ -313,6 +313,16 @@ object Documents {
         }
     """.trimIndent()
 
+    /**
+     * Asks someone to be friends (`sendFriendRequest`), from a chat room's profile sheet; returns where the request
+     * stands (PENDING until they answer, ACCEPTED when they'd already asked the viewer).
+     */
+    val SEND_FRIEND_REQUEST: String = """
+        mutation SendFriendRequest(${'$'}userId: ID!) {
+          sendFriendRequest(input: { userId: ${'$'}userId }) { friendRequest { id status } }
+        }
+    """.trimIndent()
+
     /** Files a report with the audience's admins, and blocks the person behind it when [block] is true and there is one. */
     val REPORT_CONTENT: String = """
         mutation ReportContent(${'$'}targetType: ReportTarget!, ${'$'}targetId: ID!, ${'$'}reason: String, ${'$'}block: Boolean) {

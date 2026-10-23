@@ -443,7 +443,7 @@ class ChatProtocolTest {
     fun aSpecialStopsShowingAtItsEnd() {
         val special = line(
             """"message":"Special: Two for one","userId":"u-1","role":"VENUE",
-              "kind":"SPECIAL","title":"Two for one","body":"Well drinks","endsAt":"2026-10-10T06:00:00Z"""",
+              "kind":"SPECIAL","title":"Two for one","body":"At the merch table","endsAt":"2026-10-10T06:00:00Z"""",
         )
         assertEquals(ChatKind.SPECIAL, special.kind)
         assertEquals(Instant.parse("2026-10-10T06:00:00Z"), special.endsAt)

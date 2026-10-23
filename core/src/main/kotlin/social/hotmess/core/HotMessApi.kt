@@ -495,6 +495,14 @@ class HotMessApi(val client: AudienceKitClient) {
         mutate(Documents.UNBLOCK_USER, UnblockUserResponse.serializer(), graphQLVariables("userId" to userId)).unblockUser.blockedUsers
 
     /**
+     * Asks [userId] to be friends (`sendFriendRequest`); returns the request's status as the API names it
+     * ("PENDING", "ACCEPTED"). A refusal the API words for people is shown as written.
+     */
+    suspend fun sendFriendRequest(userId: String): String =
+        mutate(Documents.SEND_FRIEND_REQUEST, SendFriendRequestResponse.serializer(), graphQLVariables("userId" to userId))
+            .sendFriendRequest.friendRequest.status
+
+    /**
      * Reports something to the audience's admins (`reportContent`), who see it at once. With [block], the person
      * behind it is blocked too when there is one; the result says whether they were.
      */
@@ -887,6 +895,12 @@ private data class BlockUserResponse(val blockUser: Payload) {
 
 @Serializable
 private data class UnblockUserResponse(val unblockUser: BlockUserResponse.Payload)
+
+@Serializable
+private data class SendFriendRequestResponse(val sendFriendRequest: Payload) {
+    @Serializable data class Payload(val friendRequest: Request)
+    @Serializable data class Request(val id: String, val status: String)
+}
 
 @Serializable
 private data class ReportContentResponse(val reportContent: ReportResult)
