@@ -17,6 +17,8 @@ data class RoomPerson(
     val friend: Boolean = false,
     val recentUntil: Instant? = null,
     val reachable: Boolean = false,
+    /** The tribes the viewer and they both picked, as the roster said; null when it didn't (see [SharedTribe]). */
+    val sharedTribes: List<SharedTribe>? = null,
 ) {
     /** They left, and the room still lists them until [recentUntil]. */
     val isRecent: Boolean get() = recentUntil != null

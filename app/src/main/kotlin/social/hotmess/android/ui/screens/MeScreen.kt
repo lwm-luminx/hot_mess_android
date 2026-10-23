@@ -18,6 +18,7 @@ import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Email
 import androidx.compose.material.icons.rounded.Face
+import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.Notifications
@@ -85,6 +86,8 @@ fun MeScreen(navigator: Navigator) {
     val locale by graph.location.locale.collectAsStateWithLifecycle()
     val access by graph.location.access.collectAsStateWithLifecycle()
     val safety by graph.safety.state.collectAsStateWithLifecycle()
+    // "Your tribes", shown once the API answers with them (hidden signed out, or on an older API).
+    val tribes by graph.tribes.choices.collectAsStateWithLifecycle()
     var unblocking by remember { mutableStateOf<String?>(null) }
     var deleting by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<String?>(null) }
@@ -104,6 +107,7 @@ fun MeScreen(navigator: Navigator) {
 
     LaunchedEffect(Unit) { graph.session.refreshUser() }
     LaunchedEffect(Unit) { graph.safety.refresh() }
+    LaunchedEffect(Unit) { if (graph.session.isSignedIn) graph.tribes.load() }
     LaunchedEffect(Unit) {
         if (!graph.session.isSignedIn) return@LaunchedEffect
         recentChatPush = try {
@@ -276,6 +280,28 @@ fun MeScreen(navigator: Navigator) {
                             checked = initials,
                             icon = Icons.Rounded.Face,
                             onCheckedChange = ::setChatInitials,
+                        )
+                    }
+                }
+            }
+            tribes?.let { choices ->
+                item {
+                    DetailSection(
+                        "Tribes",
+                        footer = {
+                            Text(
+                                "Nobody sees your list. When you and someone in a venue chat share one, just the two of you see it.",
+                                style = HotMessType.bodySmall,
+                                color = tokens.inkMuted,
+                            )
+                        },
+                    ) {
+                        InfoRow(
+                            "Your tribes",
+                            value = if (choices.picked.isEmpty()) "None yet" else "${choices.picked.size} picked",
+                            icon = Icons.Rounded.Groups,
+                            onClick = navigator::openTribes,
+                            trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                         )
                     }
                 }

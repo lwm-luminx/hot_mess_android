@@ -61,6 +61,11 @@ data class VenueMessage(
      * no avatar, no presence and no role.
      */
     val postedAsAudience: Boolean = false,
+    /**
+     * The tribes the viewer and the sender both picked, for the "You're both" mark; null when the room didn't say
+     * (it's only asked where the API has tribes). Never anyone's other tribes.
+     */
+    val sharedTribes: List<SharedTribe>? = null,
 ) {
     fun isOutgoing(currentUserId: String?): Boolean = currentUserId != null && userId.equals(currentUserId, ignoreCase = true)
 
@@ -277,6 +282,15 @@ object ChatProtocol {
             "postedAsVenue postedAsPerson person { id } postedAsAudience promptId " +
             "prompt { id kind text answer revealAt shownAs number total nextAt }"
 
+    /**
+     * The tribes the viewer and a person both picked, for the "You're both" mark: only asked of an API that has
+     * tribes (see [document]), since one without would refuse the whole room.
+     */
+    const val TRIBE_FIELDS: String = "sharedTribes { id name bothPhrase }"
+
+    /** [MESSAGE_FIELDS] and the tribes the viewer shares with the sender. */
+    const val MESSAGE_FIELDS_WITH_TRIBES: String = "$MESSAGE_FIELDS $TRIBE_FIELDS"
+
     /** The ChatRoomEvent selection every room's subscription reads, by `__typename`. */
     const val ROOM_EVENT_FIELDS: String = """
         __typename
@@ -301,6 +315,30 @@ object ChatProtocol {
         ... on ChatLeft { reason }
     """
 
+    /** [ROOM_EVENT_FIELDS] with the tribes the viewer shares with each person and line ([TRIBE_FIELDS]). */
+    const val ROOM_EVENT_FIELDS_WITH_TRIBES: String = """
+        __typename
+        ... on ChatJoined {
+          outOfRange
+          roster {
+            people { userId name avatarUrl friend $TRIBE_FIELDS }
+            friends { userId name }
+            recent { userId name avatarUrl friend presence lastSeenAt recentUntil $TRIBE_FIELDS }
+          }
+          history { senderPresence message { $MESSAGE_FIELDS_WITH_TRIBES } }
+          pinnedMessage { senderPresence message { $MESSAGE_FIELDS_WITH_TRIBES } }
+          expiresBefore
+        }
+        ... on ChatMessagePosted { senderPresence message { $MESSAGE_FIELDS_WITH_TRIBES } }
+        ... on ChatMessageUpdated { message { $MESSAGE_FIELDS_WITH_TRIBES } }
+        ... on ChatMessageRemoved { messageId }
+        ... on ChatPinChanged { messageId pinned announcement { $MESSAGE_FIELDS_WITH_TRIBES } }
+        ... on ChatRoomCleared { clearedAt expired }
+        ... on ChatPresenceChanged { userId presence name avatarUrl recentUntil $TRIBE_FIELDS }
+        ... on ChatRangeChanged { outOfRange }
+        ... on ChatLeft { reason }
+    """
+
     /** A venue's room, `venueChat(venueId: $id)`. One constant per room kind, so the schema check can read each. */
     const val VENUE_ROOM_DOCUMENT: String =
         "subscription ChatRoom(\$id: ID!) { venueChat(venueId: \$id) { $ROOM_EVENT_FIELDS } }"
@@ -309,10 +347,18 @@ object ChatProtocol {
     const val LOCALE_ROOM_DOCUMENT: String =
         "subscription ChatRoom(\$id: ID!) { localeChat(localeId: \$id) { $ROOM_EVENT_FIELDS } }"
 
-    /** The room's subscription document, for `$id`. */
-    fun document(room: ChatRoom): String = when (room.kind) {
-        ChatRoom.Kind.VENUE -> VENUE_ROOM_DOCUMENT
-        ChatRoom.Kind.LOCALE -> LOCALE_ROOM_DOCUMENT
+    /** A venue's room with shared tribes. */
+    const val VENUE_ROOM_TRIBES_DOCUMENT: String =
+        "subscription ChatRoom(\$id: ID!) { venueChat(venueId: \$id) { $ROOM_EVENT_FIELDS_WITH_TRIBES } }"
+
+    /** A locale's room with shared tribes. */
+    const val LOCALE_ROOM_TRIBES_DOCUMENT: String =
+        "subscription ChatRoom(\$id: ID!) { localeChat(localeId: \$id) { $ROOM_EVENT_FIELDS_WITH_TRIBES } }"
+
+    /** The room's subscription document, for `$id`; with [sharedTribes], each person and line carries them. */
+    fun document(room: ChatRoom, sharedTribes: Boolean = false): String = when (room.kind) {
+        ChatRoom.Kind.VENUE -> if (sharedTribes) VENUE_ROOM_TRIBES_DOCUMENT else VENUE_ROOM_DOCUMENT
+        ChatRoom.Kind.LOCALE -> if (sharedTribes) LOCALE_ROOM_TRIBES_DOCUMENT else LOCALE_ROOM_DOCUMENT
     }
 
     /**
@@ -386,6 +432,8 @@ object ChatProtocol {
             val avatarUrl: String? = null,
             val reachable: Boolean = false,
             val recentUntil: Instant? = null,
+            /** What the viewer shares with them; null when the room didn't say. */
+            val sharedTribes: List<SharedTribe>? = null,
         ) : Frame
 
         /**
@@ -486,6 +534,7 @@ object ChatProtocol {
                 name = person.string("name"),
                 avatarUrl = person.string("avatarUrl"),
                 friend = person.boolean("friend"),
+                sharedTribes = person.tribes(),
             )
         }
         val friends = (roster?.get("friends") as? JsonArray).orEmpty().mapNotNull { entry ->
@@ -505,6 +554,7 @@ object ChatProtocol {
                 friend = person.boolean("friend"),
                 recentUntil = until,
                 reachable = person.string("presence").equals("PUSH", ignoreCase = true),
+                sharedTribes = person.tribes(),
             )
         }
         // A malformed line drops only itself.
@@ -539,7 +589,13 @@ object ChatProtocol {
             avatarUrl = if (online) event.string("avatarUrl") else null,
             reachable = presence.equals("PUSH", ignoreCase = true),
             recentUntil = if (online) null else event.instant("recentUntil"),
+            sharedTribes = event.tribes(),
         )
+    }
+
+    /** `sharedTribes`, when the room sent it; a malformed tribe drops only itself. */
+    private fun JsonObject.tribes(): List<SharedTribe>? = (this["sharedTribes"] as? JsonArray)?.mapNotNull { tribe ->
+        runCatching { json.decodeFromJsonElement(SharedTribe.serializer(), tribe) }.getOrNull()
     }
 
     /** A ChatMessage, as [MESSAGE_FIELDS] asks for it, or null when it's malformed. */
@@ -582,6 +638,7 @@ object ChatProtocol {
         val promptId: String? = null,
         // Read on its own, so a malformed prompt drops only the prompt, never the line.
         val prompt: JsonElement? = null,
+        val sharedTribes: JsonArray? = null,
     ) {
         fun toMessage(): VenueMessage {
             val base = VenueMessage(body = message, userId = userId, avatarUrl = avatarUrl.blankToNull())
@@ -601,6 +658,9 @@ object ChatProtocol {
                 prompt = promptFrame(prompt),
                 promptId = promptId.blankToNull(),
                 postedAsAudience = postedAsAudience ?: false,
+                sharedTribes = sharedTribes?.mapNotNull { tribe ->
+                    runCatching { json.decodeFromJsonElement(SharedTribe.serializer(), tribe) }.getOrNull()
+                },
             )
         }
     }
@@ -643,6 +703,8 @@ class VenueChatConnection(
     private val room: ChatRoom,
     private val audienceId: String,
     private val cable: CableConnection,
+    /** Ask for the tribes the viewer shares with each person and line: only where the API has tribes. */
+    private val sharedTribes: Boolean = false,
 ) {
     sealed interface Event {
         data object Connected : Event
@@ -685,6 +747,7 @@ class VenueChatConnection(
             val avatarUrl: String? = null,
             val reachable: Boolean = false,
             val recentUntil: Instant? = null,
+            val sharedTribes: List<SharedTribe>? = null,
         ) : Event
 
         data class History(val messages: List<VenueMessage>, val pinned: VenueMessage?, val expiresBefore: Instant? = null) : Event
@@ -699,7 +762,7 @@ class VenueChatConnection(
      */
     fun events(): Flow<Event> = cable.subscribe(
         audienceId,
-        ChatProtocol.document(room),
+        ChatProtocol.document(room, sharedTribes),
         JsonObject(mapOf("id" to JsonPrimitive(room.id.lowercase()))),
     ).transform { event ->
         when (event) {
@@ -721,7 +784,12 @@ class VenueChatConnection(
                     is ChatProtocol.Frame.Roster -> emit(Event.Roster(frame.online, frame.people, frame.friends, frame.recent, frame.lineup))
                     is ChatProtocol.Frame.LineupChanged -> emit(Event.LineupChanged(frame.lineup))
                     is ChatProtocol.Frame.PresenceChanged ->
-                        emit(Event.PresenceChanged(frame.userId, frame.online, frame.name, frame.avatarUrl, frame.reachable, frame.recentUntil))
+                        emit(
+                            Event.PresenceChanged(
+                                frame.userId, frame.online, frame.name, frame.avatarUrl, frame.reachable, frame.recentUntil,
+                                frame.sharedTribes,
+                            ),
+                        )
                     is ChatProtocol.Frame.History -> emit(Event.History(frame.messages, frame.pinned, frame.expiresBefore))
                     is ChatProtocol.Frame.Pin -> emit(Event.Pin(frame.id, frame.announcement))
                     is ChatProtocol.Frame.Removed -> emit(Event.Removed(frame.id))
