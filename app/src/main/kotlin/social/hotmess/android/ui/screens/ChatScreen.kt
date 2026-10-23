@@ -36,9 +36,11 @@ import social.hotmess.android.ui.LocalAppGraph
 import social.hotmess.android.ui.Navigator
 import social.hotmess.android.ui.ScreenScaffold
 import social.hotmess.android.ui.components.ChatComposer
+import social.hotmess.android.ui.components.ChatPlace
 import social.hotmess.android.ui.components.ChatThread
 import social.hotmess.android.ui.components.ChatThreadMessage
 import social.hotmess.android.ui.components.HereNowStrip
+import social.hotmess.android.ui.components.InThisRoomSheet
 import social.hotmess.android.ui.components.Message
 import social.hotmess.android.ui.components.Presence
 import social.hotmess.android.ui.components.PromptBar
@@ -52,12 +54,17 @@ import social.hotmess.core.ChatKind
 import social.hotmess.core.ChatPrompts
 import social.hotmess.core.ChatRoom
 import social.hotmess.core.FriendDirectory
+import social.hotmess.core.LineupFace
+import social.hotmess.core.LineupPresence
 import social.hotmess.core.RecordId
 import social.hotmess.core.ReportSubject
 import social.hotmess.core.ReportTarget
+import social.hotmess.core.RoomLineup
 import social.hotmess.core.RoomPeople
+import social.hotmess.core.RoomPerson
 import social.hotmess.core.VenueChatConnection
 import social.hotmess.core.VenueMessage
+import social.hotmess.core.VenueNight
 import java.time.Instant
 
 /**
@@ -101,6 +108,20 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
     private val _clearMark = MutableStateFlow<ChatClearMark?>(null)
     val clearMark: StateFlow<ChatClearMark?> = _clearMark.asStateFlow()
 
+    /**
+     * Presence for each person on tonight's lineup, by lowercase person id: in chat, reachable by push, or neither.
+     * Null until (and unless) the room sends it, when lineup faces carry no dot.
+     */
+    private val _lineupPresence = MutableStateFlow<Map<String, LineupPresence>?>(null)
+    val lineupPresence: StateFlow<Map<String, LineupPresence>?> = _lineupPresence.asStateFlow()
+
+    /**
+     * The venue's night, for a venue's room (an event's too): its face and tonight's running order, reloaded every
+     * minute while the room is open, since the lineup advances. Null for a locale's room, and until it loads.
+     */
+    private val _night = MutableStateFlow<VenueNight?>(null)
+    val night: StateFlow<VenueNight?> = _night.asStateFlow()
+
     /** A line on its way to the room; the composer waits for it. */
     private val _sending = MutableStateFlow(false)
     val sending: StateFlow<Boolean> = _sending.asStateFlow()
@@ -108,6 +129,7 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
     private var job: Job? = null
     private var heartbeat: Job? = null
     private var prune: Job? = null
+    private var lineup: Job? = null
 
     /**
      * Follows the room on the app's shared cable while the screen is showing. The cable reconnects after
@@ -130,6 +152,20 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
                 while (true) {
                     delay(PRUNE_MS)
                     _people.value = _people.value.pruned()
+                }
+            }
+        }
+        if (room.kind == ChatRoom.Kind.VENUE && lineup?.isActive != true) {
+            lineup = viewModelScope.launch {
+                while (true) {
+                    try {
+                        _night.value = graph.api.venueLineup(room.id)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // Keeps the last night it had; until one loads the room shows no venue face or lineup.
+                    }
+                    delay(LINEUP_REFRESH_MS)
                 }
             }
         }
@@ -171,7 +207,9 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
                             // All the viewer's friends, by full name, so the room and its lines show them that way.
                             graph.api.friends.record(event.friends)
                             _people.value = _people.value.roster(event.online, event.people, event.recent)
+                            _lineupPresence.value = event.lineup
                         }
+                        is VenueChatConnection.Event.LineupChanged -> _lineupPresence.value = event.lineup
                         is VenueChatConnection.Event.PresenceChanged -> {
                             _people.value = if (event.online) {
                                 _people.value.joined(event.userId, event.name, event.avatarUrl)
@@ -196,6 +234,7 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
                             _status.value = Status.OFFLINE
                             _people.value = RoomPeople()
                             _reachable.value = emptySet()
+                            _lineupPresence.value = null
                         }
                         VenueChatConnection.Event.Ended -> ended = true
                         VenueChatConnection.Event.Rejected, VenueChatConnection.Event.Left -> away = true
@@ -256,8 +295,11 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
         heartbeat = null
         prune?.cancel()
         prune = null
+        lineup?.cancel()
+        lineup = null
         _people.value = RoomPeople()
         _reachable.value = emptySet()
+        _lineupPresence.value = null
     }
 
     /**
@@ -289,6 +331,7 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
 
     private companion object {
         const val HEARTBEAT_MS = 4 * 60 * 1000L
+        const val LINEUP_REFRESH_MS = 60 * 1000L
         const val PRUNE_MS = 15 * 1000L
     }
 }
@@ -314,8 +357,28 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
     val people by model.people.collectAsStateWithLifecycle()
     val reachable by model.reachable.collectAsStateWithLifecycle()
     val clearMark by model.clearMark.collectAsStateWithLifecycle()
+    val night by model.night.collectAsStateWithLifecycle()
+    val lineupPresence by model.lineupPresence.collectAsStateWithLifecycle()
     val user by graph.session.user.collectAsStateWithLifecycle()
     val safety by graph.safety.state.collectAsStateWithLifecycle()
+    val userId = user?.id
+    val friends = graph.api.friends
+    // Who's here, the viewer then friends first; a roster can add friends' full names, so it redraws the thread too.
+    val hereNow = remember(people, userId, safety) {
+        RoomPeople.hereNow(people.byId.values, userId) { friends.fullName(it) }
+            .filterNot { safety?.isBlocked(it.userId) == true }
+    }
+    // A venue's room (an event's at the venue too) leads with the venue's face and tonight's lineup; a locale's has neither.
+    val place = night?.let { ChatPlace(it.venueId, it.name.ifBlank { venueName }, it.photoUrl) }
+    val lineup = remember(night, lineupPresence) {
+        night?.let { RoomLineup.faces(it.entries, it.upNextId, lineupPresence) }.orEmpty()
+    }
+    var seeingEveryone by rememberSaveable { mutableStateOf(false) }
+    var actingOnGuest by remember { mutableStateOf<RoomPerson?>(null) }
+    val openPlace = { place?.let { navigator.open(AppRoute.VenueDetail(it.id)) } ?: Unit }
+    val openLineup = { face: LineupFace ->
+        face.entry.people.firstOrNull()?.let { navigator.open(AppRoute.PersonDetail(it.id)) } ?: Unit
+    }
     var draft by rememberSaveable { mutableStateOf("") }
     // Reporting and blocking from a long press on someone's line, and the terms asked before the first message.
     var acting by remember { mutableStateOf<VenueMessage?>(null) }
@@ -373,14 +436,16 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
                 else -> null
             }
             if (banner != null) RoomBanner(banner, venueName, isLocale = isLocale)
-            val userId = user?.id
-            val friends = graph.api.friends
-            // Who's here, the viewer then friends first; a roster can add friends' full names, so it redraws the thread too.
-            val hereNow = remember(people, userId, safety) {
-                RoomPeople.hereNow(people.byId.values, userId) { friends.fullName(it) }
-                    .filterNot { safety?.isBlocked(it.userId) == true }
-            }
-            HereNowStrip(hereNow, reachable, viewerId = userId)
+            HereNowStrip(
+                hereNow,
+                reachable,
+                viewerId = userId,
+                place = place,
+                lineup = lineup,
+                onSeeEveryone = { seeingEveryone = true },
+                onOpenPlace = openPlace,
+                onOpenLineup = openLineup,
+            )
             // Blocked people's lines leave the room at once; the API stops sending new ones.
             val shown = remember(messages, safety) { messages.filterNot { !it.isFromListing && safety?.isBlocked(it.userId) == true } }
             val notDismissed = remember(shown, dismissedPrompts) { shown.filterNot { it.kind == ChatKind.PROMPT && it.id in dismissedPrompts } }
@@ -457,6 +522,42 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
                 blocking = it
             },
             onDismiss = { acting = null },
+        )
+    }
+    if (seeingEveryone) {
+        InThisRoomSheet(
+            subtitle = RoomLineup.subtitle(venueName, night?.name),
+            place = place,
+            lineup = lineup,
+            people = hereNow,
+            viewerId = userId,
+            onOpenPlace = {
+                seeingEveryone = false
+                openPlace()
+            },
+            onOpenLineup = { face ->
+                seeingEveryone = false
+                openLineup(face)
+            },
+            onGuest = { actingOnGuest = it },
+            onDismiss = { seeingEveryone = false },
+        )
+    }
+    actingOnGuest?.let { person ->
+        val guest = BlockedUser(person.userId, person.name.orEmpty(), person.avatarUrl)
+        ReportOrBlockDialog(
+            title = person.name?.takeIf { it.isNotBlank() } ?: "Someone in the room",
+            reportLabel = "Report ${person.name?.takeIf { it.isNotBlank() } ?: "them"}",
+            person = guest,
+            onReport = {
+                actingOnGuest = null
+                reporting = ReportSubject(ReportTarget.PERSON, person.userId, guest)
+            },
+            onBlock = {
+                actingOnGuest = null
+                blocking = it
+            },
+            onDismiss = { actingOnGuest = null },
         )
     }
     reporting?.let { ReportDialog(it) { reporting = null } }

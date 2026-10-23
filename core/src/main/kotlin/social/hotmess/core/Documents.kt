@@ -54,6 +54,10 @@ object Documents {
     /** Who's on at a venue right now, in its people mixin. */
     const val ON_NOW_FIELDS: String = "people { onNow { nodes { id role startsAt endsAt person { id name avatarUrl } } } }"
 
+    /** A lineup entry as a chat room shows it: who, as what, where it is in the night, and its set when it has a hard start. */
+    const val LINEUP_ENTRY_FIELDS: String =
+        "id kind role state startTiming startsAt endsAt title person { id name avatarUrl } people { nodes { id name avatarUrl } }"
+
     const val FRIEND_FIELDS: String = "id name facebookId avatarUrl"
 
     /** Friends out now, with whether they can be reached (in chat, or by push). */
@@ -148,6 +152,21 @@ object Documents {
               $PROFILE_SOCIAL_LINKS
               friends { list { nodes { $FRIEND_OUT_FIELDS } } }
               ping { friendPings { $PING_FIELDS } }
+            }
+          }
+        }
+    """.trimIndent()
+
+    /**
+     * A venue's night for its chat room: its name and photo (the room's venue face), tonight's running order (acts,
+     * intermissions and entries with no set time) and what's up next.
+     */
+    val VENUE_LINEUP: String = """
+        query VenueLineup(${'$'}id: ID!) {
+          venues {
+            venue(id: ${'$'}id) {
+              id name photoUrl
+              people { runningOrder { nodes { $LINEUP_ENTRY_FIELDS } } upNext { id } }
             }
           }
         }

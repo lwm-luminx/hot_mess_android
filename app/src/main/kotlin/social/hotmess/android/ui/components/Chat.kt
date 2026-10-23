@@ -103,6 +103,11 @@ import social.hotmess.core.ChatPrompt
 import social.hotmess.core.ChatPromptShownAs
 import social.hotmess.core.ChatRole
 import social.hotmess.core.Formatting
+import social.hotmess.core.LineupEntry
+import social.hotmess.core.LineupFace
+import social.hotmess.core.LineupPresence
+import social.hotmess.core.Person
+import social.hotmess.core.RoomLineup
 import social.hotmess.core.RecordId
 import social.hotmess.core.RoomPerson
 import social.hotmess.core.SharedEvent
@@ -823,7 +828,12 @@ fun RoomBanner(kind: RoomBannerKind, roomName: String, modifier: Modifier = Modi
  * friend's face has a thin `accent` ring outside a small gap. A face in the room carries the online dot;
  * someone here recently (who left in the last half hour) the offline dot, or the push dot when they're
  * [RoomPerson.reachable] or in [reachable]. The viewer ([viewerId]) is "You", in the room, and counts
- * among "here now". Draws nothing when [people] is empty.
+ * among "here now".
+ *
+ * A venue's room (an event's too) leads with the [place]'s face and the night's [lineup] (NowHosts.md): the
+ * header becomes "Tonight · N here", the first [RoomLineup.STRIP_LIMIT] lineup faces follow the venue's and
+ * the rest fold into a "+N on the lineup" chip, then a hairline, then everyone else. "See everyone" and the
+ * chip run [onSeeEveryone]. Draws nothing when there's nobody, no place and no lineup.
  */
 @Composable
 fun HereNowStrip(
@@ -831,11 +841,18 @@ fun HereNowStrip(
     reachable: Set<String> = emptySet(),
     viewerId: String? = null,
     modifier: Modifier = Modifier,
+    place: ChatPlace? = null,
+    lineup: List<LineupFace> = emptyList(),
+    onSeeEveryone: (() -> Unit)? = null,
+    onOpenPlace: () -> Unit = {},
+    onOpenLineup: (LineupFace) -> Unit = {},
 ) {
-    if (people.isEmpty()) return
+    val hosted = place != null || lineup.isNotEmpty()
+    if (people.isEmpty() && !hosted) return
     val here = people.count { !it.isRecent }
     val recently = people.size - here
     val hairline = tokens.border
+    val (shown, folded) = remember(lineup) { RoomLineup.strip(lineup) }
     Column(
         modifier
             .fillMaxWidth()
@@ -844,17 +861,44 @@ fun HereNowStrip(
             .padding(vertical = Space.s2),
         verticalArrangement = Arrangement.spacedBy(Space.s1),
     ) {
-        Text(
-            if (recently == 0) "$here here now" else "$here here now · $recently here recently",
-            style = HotMessType.caption,
-            color = tokens.inkMuted,
-            modifier = Modifier.padding(horizontal = Space.s4),
-        )
+        Row(Modifier.fillMaxWidth().padding(horizontal = Space.s4), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                when {
+                    hosted -> RoomLineup.header(here)
+                    recently == 0 -> "$here here now"
+                    else -> "$here here now · $recently here recently"
+                },
+                style = HotMessType.caption,
+                color = tokens.inkMuted,
+                modifier = Modifier.weight(1f),
+            )
+            if (onSeeEveryone != null) {
+                Row(
+                    Modifier.clickable(role = Role.Button, onClick = onSeeEveryone),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("See everyone", style = HotMessType.caption, color = tokens.accentInk)
+                    Icon(
+                        Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = tokens.accentInk,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+        }
         LazyRow(
             // Room for a friend's ring and the presence dot, which draw outside the faces.
             contentPadding = PaddingValues(horizontal = Space.s4, vertical = Space.s1),
             horizontalArrangement = Arrangement.spacedBy(Space.s3),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
+            place?.let { item(key = "place") { PlaceFace(it, onOpenPlace) } }
+            items(shown, key = { "lineup-${it.id}" }) { face -> LineupStripFace(face) { onOpenLineup(face) } }
+            if (folded > 0) item(key = "lineup-more") { LineupMoreChip(folded) { onSeeEveryone?.invoke() } }
+            if (hosted && people.isNotEmpty()) {
+                item(key = "divider") { Box(Modifier.width(1.dp).height(48.dp).background(hairline)) }
+            }
             items(people, key = { it.userId }) { person ->
                 val viewer = RecordId.same(person.userId, viewerId)
                 val presence = when {
@@ -1009,6 +1053,8 @@ data class ChatPeekParticipant(
     val avatarUrl: String?,
     val presence: Presence? = null,
     val isPlace: Boolean = false,
+    /** Starts a new group: friends, after the venue and the lineup, sit a gap apart. */
+    val gapBefore: Boolean = false,
 )
 
 
@@ -1018,7 +1064,8 @@ data class ChatPeekParticipant(
  * [messages] (oldest first) as the room's own ChatBubbles clamped to two lines, and a "Join the
  * chat" call to action. The whole panel is one button that runs [onOpen]; screen readers hear
  * "Open the chat at [room], N recent messages" instead of each bubble. It holds no connection;
- * callers refresh [messages] when their screen appears.
+ * callers refresh [messages] when their screen appears. [subtitle], under the title, says who's in
+ * the room ("The Wildrose, 3 from tonight's lineup and Jordan · 23 here").
  */
 
 @Composable
@@ -1032,6 +1079,7 @@ fun ChatPeek(
     presence: Map<String, Presence> = emptyMap(),
     limit: Int = 3,
     participants: List<ChatPeekParticipant> = emptyList(),
+    subtitle: String? = null,
 ) {
     val entries = remember(messages, limit) { peekEntries(messages.takeLast(limit)) }
     val count = entries.size
@@ -1047,7 +1095,7 @@ fun ChatPeek(
             .clip(Radius.photo)
             .background(panel)
             .clearAndSetSemantics {
-                contentDescription = description + participants.joinToString(prefix = if (participants.isEmpty()) "" else "; ", separator = "; ") {
+                contentDescription = description + (subtitle?.let { "; $it" } ?: "") + participants.joinToString(prefix = if (participants.isEmpty()) "" else "; ", separator = "; ") {
                     it.name + when (it.presence) {
                         Presence.ONLINE -> ", in chat"
                         Presence.PUSH -> ", reachable by notification"
@@ -1081,6 +1129,9 @@ fun ChatPeek(
                 }
             }
         }
+        if (subtitle != null) {
+            Text(subtitle, style = HotMessType.bodySmall, color = tokens.inkMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
         if (participants.isNotEmpty()) {
             LazyRow(
                 horizontalArrangement = Arrangement.spacedBy(Space.s2),
@@ -1092,6 +1143,7 @@ fun ChatPeek(
                         participant.avatarUrl, participant.name, size = if (participant.isPlace) ListingAvatarSize else PeekAvatarSize,
                         presence = participant.presence, presenceRing = panel,
                         shape = if (participant.isPlace) RoundedCornerShape(8.dp) else CircleShape,
+                        modifier = if (participant.gapBefore) Modifier.padding(start = Space.s2) else Modifier,
                     )
                 }
             }
@@ -1352,5 +1404,23 @@ private fun HereNowPreview() {
 private fun HereNowDarkPreview() {
     HotMessTheme(darkTheme = true) {
         HereNowStrip(previewHereNow.take(3))
+    }
+}
+
+private val previewLineup = RoomLineup.faces(
+    listOf(
+        LineupEntry("opener", kindName = "ACT", roleName = "PERFORMER", stateName = "DONE", person = Person("p-bunny", "Lady Bunny Hop")),
+        LineupEntry("dj", kindName = "ACT", roleName = "DJ", stateName = "UPCOMING", person = Person("p-kiko", "DJ Kiko")),
+        LineupEntry("host", kindName = "ACT", roleName = "HOST", stateName = "ON", person = Person("p-aurora", "Aurora Borealis")),
+    ),
+    upNextId = "dj",
+    presence = mapOf("p-aurora" to LineupPresence.ONLINE),
+)
+
+@Preview(name = "Here now, at an event", widthDp = 360)
+@Composable
+private fun HereNowHostedPreview() {
+    HotMessTheme(darkTheme = false) {
+        HereNowStrip(previewHereNow, place = ChatPlace("wildrose", "The Wildrose"), lineup = previewLineup, onSeeEveryone = {})
     }
 }

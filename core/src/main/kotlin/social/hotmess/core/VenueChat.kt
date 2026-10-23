@@ -254,6 +254,11 @@ data class ChatRoom(val kind: Kind, val id: String) {
  *
  * Saying something is the `sendMyChatMessage` mutation (see [SEND_MESSAGE]); the room delivers the line
  * to everyone following it, the sender included.
+ *
+ * Presence for the night's lineup (ChatRoster `lineup { personId presence }`, and ChatLineupChanged, the whole
+ * list again whenever any of it changes) is read when the server sends it, but [ROOM_EVENT_FIELDS] doesn't ask
+ * for it yet: the API doesn't have it, and a field or type it doesn't know fails the whole subscription (and the
+ * schema check). Ask for both here once it ships; until then the room has no lineup presence (null).
  */
 object ChatProtocol {
     /** How long a room lists someone after they leave, when the event doesn't say (the server's ChatVisit::RECENT). */
@@ -362,7 +367,12 @@ object ChatProtocol {
             val people: List<RoomPerson> = emptyList(),
             val friends: List<Friend> = emptyList(),
             val recent: List<RoomPerson> = emptyList(),
+            /** Presence for each person on tonight's lineup, by lowercase person id; null when the roster doesn't say. */
+            val lineup: Map<String, LineupPresence>? = null,
         ) : Frame
+
+        /** A lineup person's presence changed: the whole lineup's again, by lowercase person id (ChatLineupChanged). */
+        data class LineupChanged(val lineup: Map<String, LineupPresence>) : Frame
 
         /**
          * Someone (by lowercase user id) came into the room or left it; a newcomer with their [name] and
@@ -446,8 +456,23 @@ object ChatProtocol {
         "ChatRoomCleared" -> listOf(Frame.Cleared(event.instant("clearedAt"), event.boolean("expired")))
         "ChatPresenceChanged" -> listOfNotNull(presence(event))
         "ChatRangeChanged" -> listOf(Frame.Range(event.boolean("outOfRange")))
+        "ChatLineupChanged" -> listOfNotNull(lineupPresence(event["lineup"])?.let(Frame::LineupChanged))
         "ChatLeft" -> listOf(Frame.Left)
         else -> emptyList()
+    }
+
+    /**
+     * `[{ personId, presence }]`, by lowercase person id, or null when it isn't a list (an API without it). A
+     * malformed entry, or a presence this build doesn't know, drops only itself.
+     */
+    fun lineupPresence(element: JsonElement?): Map<String, LineupPresence>? {
+        val entries = element as? JsonArray ?: return null
+        return entries.mapNotNull { entry ->
+            val item = entry as? JsonObject ?: return@mapNotNull null
+            val id = item.string("personId") ?: item.string("person_id") ?: return@mapNotNull null
+            val presence = LineupPresence.of(item.string("presence")) ?: return@mapNotNull null
+            id.lowercase() to presence
+        }.toMap()
     }
 
     private fun joined(event: JsonObject): List<Frame> {
@@ -487,7 +512,7 @@ object ChatProtocol {
         return listOf(
             Frame.Connected,
             Frame.Range(event.boolean("outOfRange")),
-            Frame.Roster(people.map { it.userId }.toSet(), people, friends, recent),
+            Frame.Roster(people.map { it.userId }.toSet(), people, friends, recent, lineupPresence(roster?.get("lineup"))),
             Frame.History(history, posted((event["pinnedMessage"] ?: event["pinned"]) as? JsonObject), event.instant("expiresBefore")),
         )
     }
@@ -638,13 +663,20 @@ class VenueChatConnection(
         data object Ended : Event
         data class Range(val outOfRange: Boolean) : Event
 
-        /** Everyone in the room now, by lowercase user id, and who they are, the viewer's friends and who left lately. */
+        /**
+         * Everyone in the room now, by lowercase user id, and who they are, the viewer's friends and who left lately;
+         * and the lineup's presence by person id, null when the room doesn't send it.
+         */
         data class Roster(
             val online: Set<String>,
             val people: List<RoomPerson> = emptyList(),
             val friends: List<Friend> = emptyList(),
             val recent: List<RoomPerson> = emptyList(),
+            val lineup: Map<String, LineupPresence>? = null,
         ) : Event
+
+        /** The lineup's presence again, by lowercase person id. */
+        data class LineupChanged(val lineup: Map<String, LineupPresence>) : Event
 
         data class PresenceChanged(
             val userId: String,
@@ -686,7 +718,8 @@ class VenueChatConnection(
                     ChatProtocol.Frame.Ended -> emit(Event.Ended)
                     is ChatProtocol.Frame.Message -> emit(Event.Received(frame.message))
                     is ChatProtocol.Frame.Range -> emit(Event.Range(frame.outOfRange))
-                    is ChatProtocol.Frame.Roster -> emit(Event.Roster(frame.online, frame.people, frame.friends, frame.recent))
+                    is ChatProtocol.Frame.Roster -> emit(Event.Roster(frame.online, frame.people, frame.friends, frame.recent, frame.lineup))
+                    is ChatProtocol.Frame.LineupChanged -> emit(Event.LineupChanged(frame.lineup))
                     is ChatProtocol.Frame.PresenceChanged ->
                         emit(Event.PresenceChanged(frame.userId, frame.online, frame.name, frame.avatarUrl, frame.reachable, frame.recentUntil))
                     is ChatProtocol.Frame.History -> emit(Event.History(frame.messages, frame.pinned, frame.expiresBefore))
