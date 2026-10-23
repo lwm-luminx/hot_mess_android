@@ -511,6 +511,64 @@ class HotMessApi(val client: AudienceKitClient) {
 
     // endregion
 
+    // region Safety alerts
+
+    /**
+     * Whether the user can send a safety alert at the venue and whether anyone on shift hears them. Its own
+     * request, so an API without these fields still shows the venue.
+     */
+    suspend fun venueSafety(venueId: String): VenueSafety? =
+        query(SafetyAlertDocuments.VENUE_SAFETY, VenueSafetyResponse.serializer(), graphQLVariables("id" to venueId))
+            .venues?.venue
+
+    /** "I feel unsafe" to the staff on shift. While the user's alert there is open, the API adds to it instead. */
+    suspend fun sendSafetyAlert(venueId: String, draft: SafetyAlertDraft): SafetyAlert =
+        safetyAlertMutation(SafetyAlertDocuments.SEND, draft.variables("venueId" to venueId))
+
+    /** "Add more": where they are and what's going on, after sending. */
+    suspend fun updateSafetyAlert(id: String, draft: SafetyAlertDraft): SafetyAlert =
+        safetyAlertMutation(SafetyAlertDocuments.UPDATE, draft.variables("id" to id))
+
+    /** "Tell staff again": rings the staff on shift and the venue's managers. */
+    suspend fun remindSafetyAlert(id: String): SafetyAlert =
+        safetyAlertMutation(SafetyAlertDocuments.REMIND, graphQLVariables("id" to id))
+
+    /** "I'm OK now, cancel the alert". */
+    suspend fun cancelSafetyAlert(id: String): SafetyAlert =
+        safetyAlertMutation(SafetyAlertDocuments.CANCEL, graphQLVariables("id" to id))
+
+    /** A message in the alert's private thread, never shown in venue chat. */
+    suspend fun sendSafetyAlertMessage(id: String, body: String): SafetyAlert =
+        safetyAlertMutation(SafetyAlertDocuments.MESSAGE, graphQLVariables("id" to id, "body" to body.trim()))
+
+    /** One of the user's alerts as it stands now. */
+    suspend fun safetyAlert(id: String): SafetyAlert? =
+        query(SafetyAlertDocuments.ONE, OneSafetyAlertResponse.serializer(), graphQLVariables("id" to id)).me?.safetyAlert
+
+    /** The user's alerts that are still open, and those closed in the last day. */
+    suspend fun safetyAlerts(): List<SafetyAlert> =
+        query(SafetyAlertDocuments.MINE, MySafetyAlertsResponse.serializer()).me?.safetyAlerts.orEmpty()
+
+    /** "Need support?" for a region (ISO 3166-2 like US-UT, or a country); the API falls back to its default. */
+    suspend fun supportResources(region: String?): SupportResources =
+        query(SafetyAlertDocuments.SUPPORT, SupportResourcesResponse.serializer(), graphQLVariables("region" to region))
+            .supportResources
+
+    /** Each safety alert mutation answers with `{ safetyAlert }` under its own name. */
+    private suspend fun safetyAlertMutation(document: String, variables: Map<String, JsonElement>): SafetyAlert =
+        mutate(document, SAFETY_ALERT_PAYLOADS, variables).values.firstOrNull()?.safetyAlert
+            ?: throw failed(ApiError.Decoding("safetyAlert"), operationName(document))
+
+    private fun SafetyAlertDraft.variables(vararg extra: Pair<String, Any?>): Map<String, JsonElement> =
+        graphQLVariables(
+            "place" to place,
+            "concerns" to SafetyConcern.entries.filter { it in concerns },
+            "description" to trimmedDescription,
+            *extra,
+        )
+
+    // endregion
+
     private suspend fun <T> query(
         document: String,
         serializer: KSerializer<T>,
@@ -918,6 +976,8 @@ private data class VenuePairUpResponse(val venues: Venues? = null) {
 private data class PairUpPayload(val pairUp: PairUpState? = null)
 
 private val PAIR_UP_PAYLOADS = MapSerializer(String.serializer(), PairUpPayload.serializer())
+
+private val SAFETY_ALERT_PAYLOADS = MapSerializer(String.serializer(), SafetyAlertPayload.serializer())
 
 @Serializable
 private data class ShowPairUpCodeResponse(val showPairUpCode: Payload) {
