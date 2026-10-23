@@ -3,9 +3,10 @@
 
 Used by .github/workflows/play.yml. Reads a short-lived OAuth token (androidpublisher scope) from
 GOOGLE_PLAY_ACCESS_TOKEN and never prints it. Creates an edit, uploads the bundle, replaces the track's release
-with the new version, validates and commits. A failure leaves the edit uncommitted and exits nonzero.
+with the new version (with its R8 mapping when --mapping is given), validates and commits. A failure leaves the edit uncommitted and exits nonzero.
 
-  scripts/play-upload.py --package social.hotmess.android.app --bundle app-release.aab --track internal
+  scripts/play-upload.py --package social.hotmess.android.app --bundle app-release.aab \
+    --mapping mapping.txt --track internal
 """
 import argparse
 import json
@@ -50,6 +51,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--package", required=True)
     parser.add_argument("--bundle", required=True, type=Path)
+    parser.add_argument("--mapping", type=Path, help="R8 mapping.txt, so Play shows readable stack traces")
     parser.add_argument("--track", default="internal", choices=["internal", "alpha", "beta"])
     parser.add_argument("--release-name", help="defaults to the bundle's version code")
     args = parser.parse_args()
@@ -66,6 +68,9 @@ def main():
         raise
     try:
         version = play(token, "POST", f"upload/{base}/{edit}/bundles?uploadType=media", bundle=args.bundle)["versionCode"]
+        if args.mapping:
+            play(token, "POST", f"upload/{base}/{edit}/apks/{version}/deobfuscationFiles/proguard?uploadType=media",
+                 bundle=args.mapping)
         release = {"name": args.release_name or str(version), "versionCodes": [str(version)], "status": "completed"}
         play(token, "PUT", f"{base}/{edit}/tracks/{args.track}", {"track": args.track, "releases": [release]})
         play(token, "POST", f"{base}/{edit}:validate", {})
@@ -73,7 +78,8 @@ def main():
     except Exception:
         print(f"Upload failed; the Play edit {edit} was left uncommitted.", file=sys.stderr)
         raise
-    summary(f"Committed {args.package} version {version} ({release['name']}) to the Play {args.track} track.")
+    mapped = " with its R8 mapping" if args.mapping else ""
+    summary(f"Committed {args.package} version {version} ({release['name']}){mapped} to the Play {args.track} track.")
 
 
 if __name__ == "__main__":
