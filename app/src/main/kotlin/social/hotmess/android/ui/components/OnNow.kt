@@ -1,6 +1,7 @@
 package social.hotmess.android.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -29,6 +30,7 @@ import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.Appearance
 import social.hotmess.core.AppearanceRole
+import social.hotmess.core.LineupBadge
 
 /** Who's on at a venue right now, as Velvet's lineup shows them; tapping one opens their page. Draws nothing when nobody is on. */
 @Composable
@@ -84,8 +86,30 @@ fun OnNowBadge() {
     }
 }
 
+/** The outlined "Up next" pill, as the lineup's UpNextBadge: `accent-ink` on a 1dp `accent` outline. */
+@Composable
+fun UpNextBadge() {
+    Text(
+        "Up next",
+        style = HotMessType.caption.copy(fontWeight = FontWeight.SemiBold),
+        color = tokens.accentInk,
+        maxLines = 1,
+        modifier = Modifier.border(1.dp, tokens.accent, Radius.pill).padding(horizontal = Space.s2, vertical = 2.dp),
+    )
+}
+
+/** A lineup entry's state, as the lineup strip shows it: On now, Up next, or a muted "Done". */
+@Composable
+fun LineupStatusBadge(badge: LineupBadge) {
+    when (badge) {
+        LineupBadge.ON_NOW -> OnNowBadge()
+        LineupBadge.UP_NEXT -> UpNextBadge()
+        LineupBadge.DONE -> Text(badge.label, style = HotMessType.caption, color = tokens.inkMuted, maxLines = 1)
+    }
+}
+
 /** The icon beside a role, matching Velvet's SF Symbols (headphones, theatre masks, mic, sparkles). */
-private val AppearanceRole.icon: ImageVector
+internal val AppearanceRole.icon: ImageVector
     get() = when (this) {
         AppearanceRole.DJ -> Icons.Rounded.Headphones
         AppearanceRole.PERFORMER -> Icons.Rounded.TheaterComedy

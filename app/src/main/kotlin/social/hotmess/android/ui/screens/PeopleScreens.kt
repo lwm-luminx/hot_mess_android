@@ -65,7 +65,9 @@ import social.hotmess.android.ui.openUrl
 import social.hotmess.android.ui.rememberLoader
 import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.Space
+import social.hotmess.core.PostChange
 import social.hotmess.core.PostsSubject
+import social.hotmess.core.applying
 import social.hotmess.core.AppRoute
 import social.hotmess.core.Event
 import social.hotmess.core.Person
@@ -74,6 +76,12 @@ import social.hotmess.core.PhotoTone
 import social.hotmess.core.ReportSubject
 import social.hotmess.core.ReportTarget
 import social.hotmess.core.SocialLink
+import com.audiencekit.CardKind
+import com.audiencekit.CardLayout
+import com.audiencekit.LayoutScreen
+
+/** Android's People is one list (no Local/Everyone picker yet), so it draws the server's everyone group. */
+private val PEOPLE_CARD_KINDS = listOf(CardKind.PEOPLE_EVERYONE, CardKind.WEB, CardKind.PROMO_SLOT)
 
 /** The DJs, hosts and performers. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -85,6 +93,8 @@ fun PeopleScreen(navigator: Navigator) {
     val refreshing by loader.isRefreshing.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) { loader.load(Unit) { graph.api.people() } }
+    // The list is everyone, in the server's order; it can put an announcement or a promoted card above it.
+    val cardLayout = rememberScreenCards(LayoutScreen.PEOPLE, PEOPLE_CARD_KINDS, listOf(CardKind.PEOPLE_EVERYONE))
 
     ScreenScaffold(title = "People") {
         LoadStateView(state, onRetry = { loader.load(Unit) { graph.api.people() } }) { people ->
@@ -93,8 +103,17 @@ fun PeopleScreen(navigator: Navigator) {
                     Message(Icons.Rounded.People, "No one here yet", "DJs, hosts and performers will show up here.")
                 } else {
                     Feed {
-                        cardSection("people", null, people, key = { it.id }) { person ->
-                            PersonCard(person, onClick = { navigator.open(AppRoute.PersonDetail(person.id)) })
+                        val cards = cardLayout.takeIf { it.card(CardKind.PEOPLE_EVERYONE) != null }
+                            ?: CardLayout.fallback(listOf(CardKind.PEOPLE_EVERYONE))
+                        cards.cards.forEach { card ->
+                            when (card.kind) {
+                                CardKind.PEOPLE_EVERYONE ->
+                                    cardSection("people", null, people.rankedBy(card) { it.id }, key = { it.id }) { person ->
+                                        PersonCard(person, onClick = { navigator.open(AppRoute.PersonDetail(person.id)) })
+                                    }
+                                CardKind.WEB -> card.web?.let { content -> item(key = card.id) { WebCardView(content) } }
+                                CardKind.PROMO_SLOT -> item(key = card.id) { PromoSlotView(card, cards.id, navigator) }
+                            }
                         }
                     }
                 }
@@ -115,7 +134,12 @@ fun PersonScreen(id: String, navigator: Navigator) {
     val postsSubject = remember(id) { PostsSubject.Person(id) }
     val postsLoader = rememberPosts(postsSubject)
     val posts by postsLoader.state.collectAsStateWithLifecycle()
-    val postActions = rememberPostActions(navigator) { poster -> postsLoader.update { list -> list.filterNot { it.poster == poster } } }
+    val postActions = rememberPostActions(
+        navigator,
+        onHidden = { poster -> postsLoader.update { list -> list.filterNot { it.poster == poster } } },
+        onChange = { change -> postsLoader.update { list -> list.applying(change) } },
+    )
+    val postWriter = rememberPostWriter(postsSubject) { post -> postsLoader.update { list -> list.applying(PostChange.Updated(post)) } }
 
     val current = state.valueOrNull
     val listState = rememberLazyListState()
@@ -179,7 +203,8 @@ fun PersonScreen(id: String, navigator: Navigator) {
                         )
                     }
                 }
-                postsSection("Posts", postsSubject, posts, postActions)
+                postsSection("Posts", postsSubject, posts, postActions, postWriter)
+                item(key = "photos") { PhotosSection(postsSubject, navigator, title = "On stage") }
                 if (detail.tracks.isNotEmpty()) {
                     item {
                         DetailSection(

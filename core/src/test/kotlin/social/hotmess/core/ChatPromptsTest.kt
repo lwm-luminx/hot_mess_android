@@ -40,7 +40,7 @@ class ChatPromptsTest {
         val line = posted(
             """"id":"m-1","message":"Who should have won last season?","userId":"u-0","name":"Hot Mess","kind":"PROMPT",
               "postedAsAudience":true,"sentAt":"2026-10-24T03:30:00Z",
-              "prompt":{"id":"p-2","kind":"CONVERSATION","text":"Who should have won last season? Find someone at the bar who disagrees.",
+              "prompt":{"id":"p-2","kind":"CONVERSATION","text":"Who should have won last season? Find someone near you who disagrees.",
                 "answer":null,"revealAt":null,"shownAs":"PINNED","number":2,"total":6,"nextAt":"2026-10-24T04:15:00Z"}""",
         )
         assertEquals(ChatKind.PROMPT, line.kind)

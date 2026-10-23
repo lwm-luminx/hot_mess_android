@@ -298,8 +298,9 @@ fun TrackRow(track: Track, onClick: (() -> Unit)?) {
     }
 }
 
+/** A link elsewhere with its network's glyph; [namesService] names the network ("Instagram") with the handle beside it. */
 @Composable
-fun SocialLinkRow(link: SocialLink, onClick: (() -> Unit)?) {
+fun SocialLinkRow(link: SocialLink, namesService: Boolean = false, onClick: (() -> Unit)?) {
     RowButton(onClick) {
         val glyph = when (link.network) {
             SocialLink.Network.FACEBOOK -> R.drawable.social_facebook
@@ -319,7 +320,10 @@ fun SocialLinkRow(link: SocialLink, onClick: (() -> Unit)?) {
                 modifier = Modifier.size(24.dp),
             )
         }
-        Text(link.label, style = HotMessType.body, color = tokens.ink, modifier = Modifier.weight(1f))
+        Text(if (namesService) link.serviceName else link.label, style = HotMessType.body, color = tokens.ink, modifier = Modifier.weight(1f))
+        if (namesService && link.handle.isNotBlank() && link.label != link.serviceName) {
+            Text(link.label, style = HotMessType.body, color = tokens.inkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
         if (onClick != null) Icon(Icons.AutoMirrored.Rounded.OpenInNew, contentDescription = null, tint = tokens.inkMuted, modifier = Modifier.size(16.dp))
     }
 }

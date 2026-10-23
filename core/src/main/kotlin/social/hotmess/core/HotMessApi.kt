@@ -6,6 +6,7 @@ import com.audiencekit.AudienceKitClient
 import com.audiencekit.AudienceKitException
 import com.audiencekit.Coordinates
 import com.audiencekit.CoverPurchase
+import com.audiencekit.GraphQLEndpoint
 import com.audiencekit.GraphQLError
 import com.audiencekit.RSVPState
 import com.audiencekit.graphQLVariables
@@ -128,6 +129,19 @@ class HotMessApi(val client: AudienceKitClient) {
         )
     }
 
+    /** A venue's night for its chat room: its face, tonight's running order and what's up next. */
+    suspend fun venueLineup(id: String): VenueNight {
+        val venue = query(Documents.VENUE_LINEUP, VenueLineupResponse.serializer(), graphQLVariables("id" to id)).venue
+            ?: throw ApiError.NotFound
+        return VenueNight(
+            venueId = venue.id,
+            name = venue.name,
+            photoUrl = venue.photoUrl,
+            entries = venue.people?.runningOrder?.nodes.orEmpty().filterNotNull(),
+            upNextId = venue.people?.upNext?.id,
+        )
+    }
+
     // endregion
 
     // region People
@@ -246,6 +260,135 @@ class HotMessApi(val client: AudienceKitClient) {
             ),
         ).mutePostAuthor.muted
 
+    /**
+     * The venues and talent the signed-in user manages, from the staff view: the consumer one has none. Anything that
+     * goes wrong (signed out, a guest the staff view turns away) means none.
+     */
+    suspend fun managedListings(): ManagedListings {
+        val listings = try {
+            client.graphQL(Documents.MANAGED_LISTINGS, ListingsResponse.serializer(), json = json, endpoint = GraphQLEndpoint.STAFF)
+                .me?.listings
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        } ?: return ManagedListings.NONE
+        val people = (listings.people + listings.troupes).distinctBy { it.id.lowercase() }
+        return ManagedListings(
+            venues = listings.venues.map { PostAuthor(PostAuthor.Kind.VENUE, it.id, it.name) },
+            people = people.map { PostAuthor(PostAuthor.Kind.PERSON, it.id, it.name) },
+        )
+    }
+
+    /** Posts as [author] on their page or an event, with up to [ManagedListings.MAX_PHOTOS] photos. */
+    suspend fun createPost(
+        author: PostAuthor,
+        target: PostTarget,
+        body: String,
+        photos: List<PostPhotoUpload> = emptyList(),
+        pinned: Boolean = false,
+        commentsOpen: Boolean = true,
+        visibility: PostVisibility = PostVisibility.COMMUNITY,
+    ): Post {
+        val input = buildMap<String, Any?> {
+            put("body", body.trim())
+            put("pinned", pinned)
+            put("commentsOpen", commentsOpen)
+            put("visibility", visibility)
+            if (author.kind == PostAuthor.Kind.PERSON) put("asPersonId", author.id)
+            when (target) {
+                PostTarget.Page -> put(if (author.isVenue) "venueId" else "personId", author.id)
+                is PostTarget.Event -> put("eventId", target.id)
+            }
+            if (photos.isNotEmpty()) {
+                put(
+                    "photos",
+                    photos.take(ManagedListings.MAX_PHOTOS).map { photo ->
+                        buildMap {
+                            put("photo", "data:image/jpeg;base64," + java.util.Base64.getEncoder().encodeToString(photo.jpeg))
+                            photo.altText.trim().takeIf { it.isNotEmpty() }?.let { put("altText", it) }
+                        }
+                    },
+                )
+            }
+        }
+        return staffMutate(Documents.CREATE_POST, CreatePostResponse.serializer(), input).createPost.post
+            ?: throw failed(ApiError.Decoding("createPost"), operationName(Documents.CREATE_POST))
+    }
+
+    /** Changes what's given and leaves the rest. */
+    suspend fun updatePost(
+        id: String,
+        body: String? = null,
+        pinned: Boolean? = null,
+        commentsOpen: Boolean? = null,
+        visibility: PostVisibility? = null,
+    ): Post {
+        val input = buildMap<String, Any?> {
+            put("id", id)
+            body?.let { put("body", it.trim()) }
+            pinned?.let { put("pinned", it) }
+            commentsOpen?.let { put("commentsOpen", it) }
+            visibility?.let { put("visibility", it) }
+        }
+        return staffMutate(Documents.UPDATE_POST, UpdatePostResponse.serializer(), input).updatePost.post
+            ?: throw failed(ApiError.Decoding("updatePost"), operationName(Documents.UPDATE_POST))
+    }
+
+    suspend fun deletePost(id: String) {
+        staffMutate(Documents.DELETE_POST, JsonObject.serializer(), mapOf("id" to id))
+    }
+
+    /** Hides a talent post from the event at the venue (it stays on their page), or shows it again. */
+    suspend fun hidePostFromEvent(id: String, hidden: Boolean = true): Post =
+        staffMutate(Documents.HIDE_POST_FROM_EVENT, HidePostFromEventResponse.serializer(), mapOf("id" to id, "hidden" to hidden))
+            .hidePostFromEvent.post
+
+    /** A post mutation on the staff endpoint, its refusals shown as written as [mutate] does. */
+    private suspend fun <T> staffMutate(document: String, serializer: KSerializer<T>, input: Map<String, Any?>): T =
+        try {
+            client.graphQL(document, serializer, graphQLVariables("input" to input), json = json, endpoint = GraphQLEndpoint.STAFF)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: AudienceKitException.GraphQL) {
+            throw rejection(e.errors) ?: failed(ApiError.from(e), operationName(document))
+        } catch (e: AudienceKitException) {
+            throw failed(ApiError.from(e), operationName(document))
+        }
+
+    // endregion
+
+    // region Photos
+
+    /** The newest photos of a venue, an event or a person (the ones they were on stage in); none for a locale. */
+    suspend fun photos(subject: PostsSubject, first: Int = 20): List<EventPhoto> {
+        val variables = graphQLVariables("id" to subject.id, "first" to first)
+        return when (subject) {
+            is PostsSubject.Venue -> query(Documents.VENUE_PHOTOS, VenuePhotosResponse.serializer(), variables).venues?.venue?.posts?.photos?.nodes
+            is PostsSubject.Event -> query(Documents.EVENT_PHOTOS, EventPhotosResponse.serializer(), variables).events?.event?.posts?.photos?.nodes
+            is PostsSubject.Person -> query(Documents.PERSON_PHOTOS, PersonPhotosResponse.serializer(), variables).people?.person?.posts?.photos?.nodes
+            is PostsSubject.Locale -> emptyList()
+        }.orEmpty().filterNotNull()
+    }
+
+    /**
+     * Adds a JPEG just taken with the camera at the venue the user is at. The API tags whoever is on stage and
+     * puts it on the event under way; its refusal ("Take photos at Purr while you're there") comes through as is.
+     */
+    suspend fun takePhoto(venueId: String, jpeg: ByteArray, altText: String? = null): EventPhoto {
+        val photo = "data:image/jpeg;base64," + java.util.Base64.getEncoder().encodeToString(jpeg)
+        return mutate(
+            Documents.ADD_EVENT_PHOTO,
+            AddEventPhotoResponse.serializer(),
+            graphQLVariables("venueId" to venueId, "photo" to photo, "altText" to altText?.trim()?.takeIf { it.isNotEmpty() }),
+        ).addEventPhoto.photo
+    }
+
+    /** Removes a photo the user took. */
+    suspend fun removePhoto(id: String) {
+        mutate(Documents.REMOVE_EVENT_PHOTO, RemoveEventPhotoResponse.serializer(), graphQLVariables("id" to id))
+    }
+
     // endregion
 
     // region Ping
@@ -280,10 +423,44 @@ class HotMessApi(val client: AudienceKitClient) {
             ),
         ).sendPing.ping
 
-    /** "I'm in" on one pick ([targetId]), or on the Ping as a whole when that's null. */
-    suspend fun joinPing(pingId: String, targetId: String?): Ping =
-        mutate(Documents.JOIN_PING, JoinPingResponse.serializer(), graphQLVariables("pingId" to pingId, "targetId" to targetId))
-            .joinPing.ping
+    /**
+     * "I'm in" on one pick ([targetId]), or on the Ping as a whole when that's null. [invitationToken], a texted
+     * link's `e`, lets someone who isn't the sender's friend join.
+     */
+    suspend fun joinPing(pingId: String, targetId: String?, invitationToken: String? = null): Ping =
+        mutate(
+            Documents.JOIN_PING,
+            JoinPingResponse.serializer(),
+            graphQLVariables("pingId" to pingId, "targetId" to targetId, "invitationToken" to invitationToken),
+        ).joinPing.ping
+
+    /** The signed link to the user's Ping [pingId] to text to contacts, or null when the API made none. */
+    suspend fun pingShareLink(pingId: String): String? =
+        query(Documents.SHARE_LINK, ShareLinkResponse.serializer(), graphQLVariables("path" to PingInvitation.path(pingId)))
+            .shareLink?.url?.takeIf { it.isNotBlank() }
+
+    /**
+     * What a texted Ping link ([token], its `e`) shows: `GET /v1/share/invitation`, open to anyone. [host] names the
+     * audience. An expired, ended or altered link fails ([ApiError.NotFound] or a 410's [ApiError.Server]); see
+     * [PingInvitation.isGone].
+     */
+    suspend fun pingInvitation(host: String, pingId: String, token: String): PingInvitation {
+        val request = APIRequest(
+            path = "/v1/share/invitation",
+            queryItems = listOf("host" to host, "path" to PingInvitation.path(pingId), "e" to token),
+            authenticated = false,
+        )
+        val bytes = try {
+            client.data(request)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: AudienceKitException) {
+            // A link that's run out is expected, not a failure to report.
+            val error = ApiError.from(e)
+            throw if (PingInvitation.isGone(error)) error else failed(error, "GET /v1/share/invitation")
+        }
+        return PingInvitation.parse(bytes.toString(Charsets.UTF_8), token) ?: throw ApiError.NotFound
+    }
 
     /** Takes back "I'm in" on a friend's Ping. */
     suspend fun leavePing(pingId: String): Ping =
@@ -299,6 +476,48 @@ class HotMessApi(val client: AudienceKitClient) {
         val tonight = async { localeId?.let { events(it).allEvents }.orEmpty() }
         val places = async { if (localeId == null) emptyList() else venues(localeId) }
         PingChoices.of(tonight.await(), places.await(), localeId, active.await())
+    }
+
+    // endregion
+
+    // region Share links
+
+    /**
+     * A link to share [path] (`/venues/<id>`, `/events/<id>`) by, signed to open it for a month. Throws when it
+     * can't be had, [ApiError.NotFound] when the API won't share that record: there's no unsigned link to fall back on.
+     */
+    suspend fun shareLink(path: String): String =
+        query(Documents.RECORD_SHARE_LINK, ShareLinkResponse.serializer(), graphQLVariables("path" to path))
+            .shareLink?.url?.takeIf { it.isNotBlank() } ?: throw ApiError.NotFound
+
+    /**
+     * Whether a share link to [path] on [host], with its signed [expiry] (`e`), has expired or been tampered with.
+     * An expiry already past [now] (Unix seconds) is expired without asking; otherwise `GET /v1/share` decides, and
+     * only its 410 means expired. Never throws: offline or any other answer opens the record as links always have.
+     */
+    suspend fun shareLinkExpired(
+        host: String,
+        path: String,
+        expiry: String,
+        now: Long = System.currentTimeMillis() / 1000,
+    ): Boolean {
+        if (ShareLinkExpiry.hasPassed(expiry, now)) return true
+        return try {
+            client.data(
+                APIRequest(
+                    path = "/v1/share",
+                    queryItems = listOf("host" to host, "path" to path, "e" to expiry),
+                    authenticated = false,
+                ),
+            )
+            false
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: AudienceKitException.Http) {
+            e.status == 410
+        } catch (_: Exception) {
+            false
+        }
     }
 
     // endregion
@@ -332,6 +551,10 @@ class HotMessApi(val client: AudienceKitClient) {
         pairUpMutation(Documents.LEAVE_PAIR_UP, graphQLVariables("venueId" to venueId))
 
     /** A fresh single-use code to show the partner. */
+    /** Agrees to share the meeting in the venue's chat; it's posted once both have. */
+    suspend fun sharePairUp(matchId: String): PairUpState? =
+        pairUpMutation(Documents.SHARE_PAIR_UP, graphQLVariables("matchId" to matchId))
+
     suspend fun showPairUpCode(matchId: String): String =
         mutate(Documents.SHOW_PAIR_UP_CODE, ShowPairUpCodeResponse.serializer(), graphQLVariables("matchId" to matchId))
             .showPairUpCode.code
@@ -440,6 +663,28 @@ class HotMessApi(val client: AudienceKitClient) {
 
     // endregion
 
+    // region Tribes
+
+    /**
+     * The audience's tribes for the picker, how many anyone may pick, and the user's picks. Throws on an API without
+     * the tribe catalog (the app then hides tribes).
+     */
+    suspend fun tribes(): TribeChoices {
+        val response = query(Documents.TRIBES, TribesResponse.serializer())
+        return TribeChoices(
+            categories = response.tribeCatalog,
+            cap = response.tribeCap.coerceAtLeast(1),
+            picked = response.me?.self?.tribes.orEmpty().map { it.tag.id }.toSet(),
+        )
+    }
+
+    /** Replaces the user's tribes with [ids]; the API refuses more than the cap. Returns the picks after the change. */
+    suspend fun setTribes(ids: Set<String>): Set<String> =
+        mutate(Documents.SET_TRIBES, SetTribesResponse.serializer(), graphQLVariables("ids" to ids.sorted()))
+            .setTribes.tribes.map { it.tag.id }.toSet()
+
+    // endregion
+
     // region Safety
 
     /** When the user agreed to the terms (null if they haven't) and who they block, or null signed out. */
@@ -462,6 +707,14 @@ class HotMessApi(val client: AudienceKitClient) {
         mutate(Documents.UNBLOCK_USER, UnblockUserResponse.serializer(), graphQLVariables("userId" to userId)).unblockUser.blockedUsers
 
     /**
+     * Asks [userId] to be friends (`sendFriendRequest`); returns the request's status as the API names it
+     * ("PENDING", "ACCEPTED"). A refusal the API words for people is shown as written.
+     */
+    suspend fun sendFriendRequest(userId: String): String =
+        mutate(Documents.SEND_FRIEND_REQUEST, SendFriendRequestResponse.serializer(), graphQLVariables("userId" to userId))
+            .sendFriendRequest.friendRequest.status
+
+    /**
      * Reports something to the audience's admins (`reportContent`), who see it at once. With [block], the person
      * behind it is blocked too when there is one; the result says whether they were.
      */
@@ -475,6 +728,64 @@ class HotMessApi(val client: AudienceKitClient) {
     /** Deletes the user's account and everything recorded about them, and ends every session. */
     suspend fun deleteAccount(): Boolean =
         mutate(Documents.DELETE_ACCOUNT, DeleteAccountResponse.serializer()).deleteAccount.deleted
+
+    // endregion
+
+    // region Safety alerts
+
+    /**
+     * Whether the user can send a safety alert at the venue and whether anyone on shift hears them. Its own
+     * request, so an API without these fields still shows the venue.
+     */
+    suspend fun venueSafety(venueId: String): VenueSafety? =
+        query(SafetyAlertDocuments.VENUE_SAFETY, VenueSafetyResponse.serializer(), graphQLVariables("id" to venueId))
+            .venues?.venue
+
+    /** "I feel unsafe" to the staff on shift. While the user's alert there is open, the API adds to it instead. */
+    suspend fun sendSafetyAlert(venueId: String, draft: SafetyAlertDraft): SafetyAlert =
+        safetyAlertMutation(SafetyAlertDocuments.SEND, draft.variables("venueId" to venueId))
+
+    /** "Add more": where they are and what's going on, after sending. */
+    suspend fun updateSafetyAlert(id: String, draft: SafetyAlertDraft): SafetyAlert =
+        safetyAlertMutation(SafetyAlertDocuments.UPDATE, draft.variables("id" to id))
+
+    /** "Tell staff again": rings the staff on shift and the venue's managers. */
+    suspend fun remindSafetyAlert(id: String): SafetyAlert =
+        safetyAlertMutation(SafetyAlertDocuments.REMIND, graphQLVariables("id" to id))
+
+    /** "I'm OK now, cancel the alert". */
+    suspend fun cancelSafetyAlert(id: String): SafetyAlert =
+        safetyAlertMutation(SafetyAlertDocuments.CANCEL, graphQLVariables("id" to id))
+
+    /** A message in the alert's private thread, never shown in venue chat. */
+    suspend fun sendSafetyAlertMessage(id: String, body: String): SafetyAlert =
+        safetyAlertMutation(SafetyAlertDocuments.MESSAGE, graphQLVariables("id" to id, "body" to body.trim()))
+
+    /** One of the user's alerts as it stands now. */
+    suspend fun safetyAlert(id: String): SafetyAlert? =
+        query(SafetyAlertDocuments.ONE, OneSafetyAlertResponse.serializer(), graphQLVariables("id" to id)).me?.safetyAlert
+
+    /** The user's alerts that are still open, and those closed in the last day. */
+    suspend fun safetyAlerts(): List<SafetyAlert> =
+        query(SafetyAlertDocuments.MINE, MySafetyAlertsResponse.serializer()).me?.safetyAlerts.orEmpty()
+
+    /** "Need support?" for a region (ISO 3166-2 like US-UT, or a country); the API falls back to its default. */
+    suspend fun supportResources(region: String?): SupportResources =
+        query(SafetyAlertDocuments.SUPPORT, SupportResourcesResponse.serializer(), graphQLVariables("region" to region))
+            .supportResources
+
+    /** Each safety alert mutation answers with `{ safetyAlert }` under its own name. */
+    private suspend fun safetyAlertMutation(document: String, variables: Map<String, JsonElement>): SafetyAlert =
+        mutate(document, SAFETY_ALERT_PAYLOADS, variables).values.firstOrNull()?.safetyAlert
+            ?: throw failed(ApiError.Decoding("safetyAlert"), operationName(document))
+
+    private fun SafetyAlertDraft.variables(vararg extra: Pair<String, Any?>): Map<String, JsonElement> =
+        graphQLVariables(
+            "place" to place,
+            "concerns" to SafetyConcern.entries.filter { it in concerns },
+            "description" to trimmedDescription,
+            *extra,
+        )
 
     // endregion
 
@@ -573,7 +884,13 @@ data class VenueOverview(
     val friendPings: List<Ping> = emptyList(),
     /** Who's on there right now. */
     val onNow: List<Appearance> = emptyList(),
-)
+) {
+    /** The next two events, near the top of the venue screen. */
+    val comingUp: List<Event> get() = events.take(2)
+
+    /** The events after those, at the bottom. */
+    val laterEvents: List<Event> get() = events.drop(2)
+}
 
 /** Visible venues, those in [localeId] first, then by the audience's order and name. */
 fun List<Venue>.sortedForList(localeId: String?): List<Venue> =
@@ -702,6 +1019,22 @@ private data class SetRecentChatPushResponse(val setRecentChatPush: Payload) {
 }
 
 @Serializable
+private data class TribesResponse(val tribeCap: Int = 1, val tribeCatalog: List<TribeCategory> = emptyList(), val me: Me? = null) {
+    @Serializable data class Me(val self: Self? = null)
+
+    @Serializable data class Self(val tribes: List<Pick> = emptyList())
+
+    @Serializable data class Pick(val tag: Tag)
+
+    @Serializable data class Tag(val id: String)
+}
+
+@Serializable
+private data class SetTribesResponse(val setTribes: Payload) {
+    @Serializable data class Payload(val tribes: List<TribesResponse.Pick> = emptyList())
+}
+
+@Serializable
 private data class ChatInitialsResponse(val me: Me? = null) {
     @Serializable data class Me(val chatInitials: Boolean = false)
 }
@@ -735,6 +1068,7 @@ private data class VenueNode(
     val distance: Double? = null,
     val photoUrl: String? = null,
     val bannerUrl: String? = null,
+    val bannerPhotos: List<BannerPhoto> = emptyList(),
     val point: String? = null,
     val profile: ListingProfile? = null,
     val chat: ChatMixin? = null,
@@ -753,6 +1087,7 @@ private data class VenueNode(
         distance = distance,
         photoUrl = photoUrl,
         bannerUrl = bannerUrl,
+        bannerPhotos = bannerPhotos,
         point = point,
         profile = profile,
         chat = chat,
@@ -768,6 +1103,23 @@ private data class VenueResponse(val venues: Venues? = null) {
 
     /** `venues { venue(id:) }`. */
     val venue: VenueNode? get() = venues?.venue
+}
+
+@Serializable
+private data class VenueLineupResponse(val venues: Venues? = null) {
+    @Serializable data class Venues(val venue: Night? = null)
+
+    @Serializable
+    data class Night(val id: String, val name: String = "", val photoUrl: String? = null, val people: People? = null)
+
+    /** The venue's people mixin; null where the module is off. */
+    @Serializable
+    data class People(val runningOrder: Connection<LineupEntry>? = null, val upNext: UpNext? = null)
+
+    @Serializable data class UpNext(val id: String)
+
+    /** `venues { venue(id:) }`. */
+    val venue: Night? get() = venues?.venue
 }
 
 @Serializable
@@ -834,6 +1186,11 @@ private data class JoinPingResponse(val joinPing: PingPayload)
 private data class LeavePingResponse(val leavePing: PingPayload)
 
 @Serializable
+private data class ShareLinkResponse(val shareLink: Link? = null) {
+    @Serializable data class Link(val url: String? = null)
+}
+
+@Serializable
 private data class SafetyResponse(val me: Me? = null) {
     @Serializable
     data class Me(val termsAcceptedAt: String? = null, val blockedUsers: List<BlockedUser> = emptyList())
@@ -846,6 +1203,12 @@ private data class BlockUserResponse(val blockUser: Payload) {
 
 @Serializable
 private data class UnblockUserResponse(val unblockUser: BlockUserResponse.Payload)
+
+@Serializable
+private data class SendFriendRequestResponse(val sendFriendRequest: Payload) {
+    @Serializable data class Payload(val friendRequest: Request)
+    @Serializable data class Request(val id: String, val status: String)
+}
 
 @Serializable
 private data class ReportContentResponse(val reportContent: ReportResult)
@@ -877,6 +1240,8 @@ private data class VenuePairUpResponse(val venues: Venues? = null) {
 private data class PairUpPayload(val pairUp: PairUpState? = null)
 
 private val PAIR_UP_PAYLOADS = MapSerializer(String.serializer(), PairUpPayload.serializer())
+
+private val SAFETY_ALERT_PAYLOADS = MapSerializer(String.serializer(), SafetyAlertPayload.serializer())
 
 @Serializable
 private data class ShowPairUpCodeResponse(val showPairUpCode: Payload) {
@@ -915,6 +1280,42 @@ private data class PersonPostsResponse(val people: People? = null) {
 
 @Serializable
 private data class LocalePostsResponse(val locale: PostsOwner? = null)
+
+@Serializable
+private data class PhotoNodes(val nodes: List<EventPhoto?> = emptyList())
+
+@Serializable
+private data class PhotoPosts(val photos: PhotoNodes? = null)
+
+@Serializable
+private data class PhotosOwner(val posts: PhotoPosts? = null)
+
+@Serializable
+private data class VenuePhotosResponse(val venues: Venues? = null) {
+    @Serializable
+    data class Venues(val venue: PhotosOwner? = null)
+}
+
+@Serializable
+private data class EventPhotosResponse(val events: Events? = null) {
+    @Serializable
+    data class Events(val event: PhotosOwner? = null)
+}
+
+@Serializable
+private data class PersonPhotosResponse(val people: People? = null) {
+    @Serializable
+    data class People(val person: PhotosOwner? = null)
+}
+
+@Serializable
+private data class AddEventPhotoResponse(val addEventPhoto: Payload) {
+    @Serializable
+    data class Payload(val photo: EventPhoto)
+}
+
+@Serializable
+private data class RemoveEventPhotoResponse(val removeEventPhoto: JsonObject? = null)
 
 @Serializable
 private data class PostResponse(val posts: Posts? = null) {
@@ -960,4 +1361,35 @@ private data class RemovePostCommentResponse(val removePostComment: JsonObject? 
 private data class MutePostAuthorResponse(val mutePostAuthor: Payload) {
     @Serializable
     data class Payload(val muted: Boolean = true)
+}
+
+@Serializable
+private data class ListingsResponse(val me: Me? = null) {
+    @Serializable
+    data class Me(val listings: Listings? = null)
+
+    @Serializable
+    data class Listings(
+        val venues: List<Listing> = emptyList(),
+        val people: List<Listing> = emptyList(),
+        val troupes: List<Listing> = emptyList(),
+    )
+
+    @Serializable
+    data class Listing(val id: String, val name: String = "")
+}
+
+@Serializable
+private data class PostPayload(val post: Post? = null)
+
+@Serializable
+private data class CreatePostResponse(val createPost: PostPayload)
+
+@Serializable
+private data class UpdatePostResponse(val updatePost: PostPayload)
+
+@Serializable
+private data class HidePostFromEventResponse(val hidePostFromEvent: Payload) {
+    @Serializable
+    data class Payload(val post: Post)
 }

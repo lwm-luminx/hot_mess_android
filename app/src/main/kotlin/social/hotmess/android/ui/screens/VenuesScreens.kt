@@ -10,7 +10,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
-import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.LocationOff
@@ -55,6 +54,7 @@ import social.hotmess.android.payments.rememberCoverCheckout
 import social.hotmess.android.ui.LocalAppGraph
 import social.hotmess.android.ui.Navigator
 import social.hotmess.android.ui.ScreenScaffold
+import social.hotmess.android.ui.ShareLinkFailure
 import social.hotmess.android.ui.components.CardRows
 import social.hotmess.android.ui.components.ChatPeek
 import social.hotmess.android.ui.components.CoverRow
@@ -71,6 +71,7 @@ import social.hotmess.android.ui.components.OnNowSection
 import social.hotmess.android.ui.components.RowDivider
 import social.hotmess.android.ui.components.SocialLinkRow
 import social.hotmess.android.ui.components.TextRow
+import social.hotmess.android.ui.components.ToneSettings
 import social.hotmess.android.ui.components.VenueCard
 import social.hotmess.android.ui.components.VenueMap
 import social.hotmess.android.ui.components.cardSection
@@ -79,23 +80,37 @@ import social.hotmess.android.ui.dial
 import social.hotmess.android.ui.openMap
 import social.hotmess.android.ui.openUrl
 import social.hotmess.android.ui.rememberLoader
-import social.hotmess.android.ui.share
+import social.hotmess.android.ui.rememberShareLinks
 import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.Radius
 import social.hotmess.android.ui.theme.Sizes
 import social.hotmess.android.ui.theme.tokens
+import kotlinx.coroutines.CancellationException
+import social.hotmess.core.HelpVenue
+import social.hotmess.core.PostChange
 import social.hotmess.core.PostsSubject
+import social.hotmess.core.applying
 import social.hotmess.core.AppRoute
 import social.hotmess.core.CoverOffer
 import social.hotmess.core.Event
 import social.hotmess.core.Formatting
+import social.hotmess.core.ImageTone
 import social.hotmess.core.PhotoTone
 import social.hotmess.core.PingPick
 import social.hotmess.core.ReportSubject
 import social.hotmess.core.ReportTarget
+import social.hotmess.core.SocialLink
 import social.hotmess.core.Venue
 import social.hotmess.core.VenueOverview
 import social.hotmess.core.isIn
+import com.audiencekit.CardKind
+import com.audiencekit.CardLayout
+import com.audiencekit.LayoutScreen
+
+/** Under the map: the city's venues. The server can add what's on tonight, what's nearby, announcements and promoted cards. */
+private val VENUES_FALLBACK_CARDS = listOf(CardKind.VENUES_ALL)
+private val VENUES_CARD_KINDS =
+    listOf(CardKind.VENUES_TONIGHT, CardKind.VENUES_NEARBY, CardKind.VENUES_ALL, CardKind.WEB, CardKind.PROMO_SLOT)
 
 /** Every venue on a map, then as a list: the ones in your city, then everywhere else. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -112,6 +127,7 @@ fun VenuesScreen(navigator: Navigator) {
     var mapExpanded by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(localeId) { loader.load(localeId) { graph.api.venues(localeId) } }
+    val cardLayout = rememberScreenCards(LayoutScreen.VENUES, VENUES_CARD_KINDS, VENUES_FALLBACK_CARDS)
 
     ScreenScaffold(title = branding?.audience?.name?.let { "$it venues" } ?: "Venues") {
         LoadStateView(state, onRetry = { loader.load(localeId) { graph.api.venues(localeId) } }) { venues ->
@@ -142,8 +158,20 @@ fun VenuesScreen(navigator: Navigator) {
                     if (venues.isEmpty()) {
                         item { DetailSection("All venues") { EmptyRow("There are no venues here yet.") } }
                     }
-                    if (name != null) {
-                        cardSection("here", name, here, key = { it.id }) { venue -> VenueCard(venue, onClick = { open(venue) }) }
+                    // The city's cards in the server's order when it sent the city's list, else the built-in one.
+                    val cards = cardLayout.takeIf { it.card(CardKind.VENUES_ALL) != null } ?: CardLayout.fallback(VENUES_FALLBACK_CARDS)
+                    cards.cards.forEach { card ->
+                        when (card.kind) {
+                            CardKind.VENUES_ALL -> if (name != null) {
+                                val title = card.title.takeUnless { card.isFallback } ?: name
+                                cardSection("here", title, here.rankedBy(card) { it.id }, key = { it.id }) { venue -> VenueCard(venue, onClick = { open(venue) }) }
+                            }
+                            // Only the server sends these, with their own headings.
+                            CardKind.VENUES_TONIGHT, CardKind.VENUES_NEARBY ->
+                                cardSection(card.id, card.title, venues.pickedBy(card) { it.id }, key = { it.id }) { venue -> VenueCard(venue, onClick = { open(venue) }) }
+                            CardKind.WEB -> card.web?.let { content -> item(key = card.id) { WebCardView(content) } }
+                            CardKind.PROMO_SLOT -> item(key = card.id) { PromoSlotView(card, cards.id, navigator) }
+                        }
                     }
                     val elsewhereTitle = if (here.isEmpty() || name == null) "All venues" else "Elsewhere"
                     cardSection("elsewhere", elsewhereTitle, if (name == null) here + elsewhere else elsewhere, key = { it.id }) { venue ->
@@ -207,7 +235,10 @@ private fun MapButton(
     }
 }
 
-/** One venue: its photo, how to get there, where else to find it, its chat room and what's on. */
+/** The venue hero keeps 7:1 contrast over at least a light scrim, since its photos change under the name. */
+private val VenueHeroContrast = ToneSettings(target = 7.0, scrimFloor = ImageTone.SCRIM_FLOOR)
+
+/** One venue: its photos, what's coming up, its chat room, what's on, how to get there and its links. */
 @Composable
 fun VenueScreen(id: String, navigator: Navigator) {
     val graph = LocalAppGraph.current
@@ -216,6 +247,7 @@ fun VenueScreen(id: String, navigator: Navigator) {
     val state by loader.state.collectAsStateWithLifecycle()
 
     LaunchedEffect(id) { loader.load(id) { graph.api.venueOverview(id) } }
+    val shareLinks = rememberShareLinks()
 
     val checkout = rememberCoverCheckout { pass ->
         loader.load(id, refresh = true) { graph.api.venueOverview(id) }
@@ -225,9 +257,21 @@ fun VenueScreen(id: String, navigator: Navigator) {
     val userId = rememberUserId()
     var pingHere by rememberSaveable { mutableStateOf(false) }
     val pairUpScope = rememberCoroutineScope()
-    val pairUp = remember(id) { PairUpController(graph.api, id, pairUpScope) }
+    val pairUp = remember(id) { PairUpController(graph.api, id, pairUpScope) { graph.location.reportAgain() } }
     var pairingUp by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(id) { pairUp.load() }
+    // Whether the app places the user here, so "Get help" shows. Its own request, so an API without safety
+    // alerts still shows the venue.
+    var canGetHelp by remember(id) { mutableStateOf(false) }
+    LaunchedEffect(id) {
+        canGetHelp = try {
+            graph.api.venueSafety(id)?.canSendSafetyAlert == true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
+        }
+    }
     val actions = rememberPingActions { ping ->
         loader.update { overview -> overview.copy(friendPings = overview.friendPings.map { if (it.id == ping.id) ping else it }) }
         graph.pingUpdated(ping.id)
@@ -237,7 +281,12 @@ fun VenueScreen(id: String, navigator: Navigator) {
     val postsSubject = remember(id) { PostsSubject.Venue(id) }
     val postsLoader = rememberPosts(postsSubject)
     val posts by postsLoader.state.collectAsStateWithLifecycle()
-    val postActions = rememberPostActions(navigator) { poster -> postsLoader.update { list -> list.filterNot { it.poster == poster } } }
+    val postActions = rememberPostActions(
+        navigator,
+        onHidden = { poster -> postsLoader.update { list -> list.filterNot { it.poster == poster } } },
+        onChange = { change -> postsLoader.update { list -> list.applying(change) } },
+    )
+    val postWriter = rememberPostWriter(postsSubject) { post -> postsLoader.update { list -> list.applying(PostChange.Updated(post)) } }
     val listState = rememberLazyListState()
     val scrolled by rememberHeroCollapsed(listState)
     var heroTone by remember { mutableStateOf(PhotoTone.PLACEHOLDER) }
@@ -250,7 +299,7 @@ fun VenueScreen(id: String, navigator: Navigator) {
         onBack = navigator::back,
         actions = {
             if (venue != null) {
-                IconButton(onClick = { context.share(venue.shareUrl, venue.name) }) {
+                IconButton(onClick = { shareLinks.share(venue.sharePath, venue.name) }) {
                     Icon(Icons.Rounded.Share, contentDescription = "Share")
                 }
                 IconButton(onClick = { reporting = ReportSubject(ReportTarget.VENUE, venue.id) }) {
@@ -264,7 +313,8 @@ fun VenueScreen(id: String, navigator: Navigator) {
             HeroFeed(
                 listState,
                 hero = {
-                    HeroHeader(loaded.bannerUrl ?: loaded.photoUrl, topInset, onTone = { heroTone = it }) {
+                    // Its photos in turn, over a firmer scrim than a still hero so the name reads the same on each.
+                    HeroHeader(loaded.heroPhotos, topInset, onTone = { heroTone = it }, minimum = VenueHeroContrast) {
                         Text(
                             loaded.name,
                             style = HotMessType.title,
@@ -295,10 +345,41 @@ fun VenueScreen(id: String, navigator: Navigator) {
                         }
                     }
                 }
+                // The next two events sit up top, above the fold; the rest wait at the bottom.
+                if (overview.comingUp.isNotEmpty()) {
+                    cardSection("coming-up", "Coming up", overview.comingUp, key = { it.id }) { event ->
+                        EventCard(
+                            event,
+                            onClick = { navigator.open(AppRoute.EventDetail(event.id)) },
+                            photoUrl = event.photoUrl(Event.PhotoPriority.PERSON_FIRST, venueFallback = venue),
+                        )
+                    }
+                }
+                if (overview.chatOpen) {
+                    item {
+                        ChatPeek(
+                            rememberPeekMessages(loaded.recentMessages),
+                            title = "Chat",
+                            room = loaded.name,
+                            onOpen = { navigator.openChat(loaded.id, loaded.name) },
+                            presence = remember(loaded.recentMessages) { peekPresence(loaded.recentMessages) },
+                        )
+                    }
+                }
+                // Only while the app places the user here: staff can only help people who are there.
+                if (canGetHelp) {
+                    item(key = "get-help") {
+                        GetHelpRow { navigator.openHelp(HelpVenue(loaded.id, loaded.name, loaded.address)) }
+                    }
+                }
                 if (overview.onNow.isNotEmpty()) {
                     item(key = "on-now") {
                         OnNowSection(overview.onNow) { navigator.open(AppRoute.PersonDetail(it.person.id)) }
                     }
+                }
+                // Photos of the venue, and the camera once you're here: what you take goes on the stage's pages too.
+                item(key = "photos") {
+                    PhotosSection(postsSubject, navigator, cameraVenueId = loaded.id.takeIf { overview.chatOpen })
                 }
                 item {
                     PingStripSection(
@@ -311,9 +392,17 @@ fun VenueScreen(id: String, navigator: Navigator) {
                 }
                 // Pair me up, where the venue has it: once you're here, or while you're in it tonight.
                 pairUp.pairUp?.takeIf { it.here || it.mine != null }?.let { offer ->
-                    item(key = "pair-up") { PairUpRow(offer) { pairingUp = true } }
+                    item(key = "pair-up") {
+                        PairUpRow(offer, onOpen = { pairingUp = true }, onGoAgain = {
+                            pairUp.join(null)
+                            pairingUp = true
+                        })
+                    }
                 }
-                postsSection("Posts", postsSubject, posts, postActions)
+                if (overview.friends.isNotEmpty()) {
+                    item { FriendsHere(overview.friends) }
+                }
+                postsSection("Posts", postsSubject, posts, postActions, postWriter)
                 item {
                     DetailSection("About") {
                         loaded.description?.takeIf { it.isNotBlank() }?.let {
@@ -338,34 +427,15 @@ fun VenueScreen(id: String, navigator: Navigator) {
                             InfoRow("Distance", Formatting.distance(it), icon = Icons.Rounded.NearMe)
                             RowDivider()
                         }
-                        val facebook = loaded.facebookUrl
-                        if (facebook != null) {
-                            InfoRow("Open in Facebook", icon = Icons.AutoMirrored.Rounded.OpenInNew, onClick = { context.openUrl(facebook) })
-                        } else {
-                            InfoRow("Share", icon = Icons.Rounded.Share, onClick = { context.share(loaded.shareUrl, loaded.name) })
+                        // Its links in one order, each naming where it goes; Share when it has none.
+                        val links = SocialLink.aboutLinks(loaded.socialLinks, loaded.facebookUrl)
+                        if (links.isEmpty()) {
+                            InfoRow("Share", icon = Icons.Rounded.Share, onClick = { shareLinks.share(loaded.sharePath, loaded.name) })
                         }
-                    }
-                }
-                if (overview.friends.isNotEmpty()) {
-                    item { FriendsHere(overview.friends) }
-                }
-                val links = loaded.socialLinks.filter { it.url != null }
-                if (links.isNotEmpty()) {
-                    item {
-                        DetailSection("Elsewhere") {
-                            CardRows(links) { link -> SocialLinkRow(link) { link.url?.let(context::openUrl) } }
+                        links.forEachIndexed { index, link ->
+                            if (index > 0) RowDivider()
+                            SocialLinkRow(link, onClick = { link.url?.let(context::openUrl) }, namesService = true)
                         }
-                    }
-                }
-                if (overview.chatOpen) {
-                    item {
-                        ChatPeek(
-                            rememberPeekMessages(loaded.recentMessages),
-                            title = "Chat",
-                            room = loaded.name,
-                            onOpen = { navigator.openChat(loaded.id, loaded.name) },
-                            presence = remember(loaded.recentMessages) { peekPresence(loaded.recentMessages) },
-                        )
                     }
                 }
                 loaded.coordinate?.takeIf { graph.configuration.isTestBuild }?.let { coordinate ->
@@ -378,8 +448,8 @@ fun VenueScreen(id: String, navigator: Navigator) {
                 }
                 if (overview.events.isEmpty()) {
                     item { DetailSection("Events") { EmptyRow("There's nothing coming up here yet.") } }
-                } else {
-                    cardSection("events", "Events", overview.events, key = { it.id }) { event ->
+                } else if (overview.laterEvents.isNotEmpty()) {
+                    cardSection("events", "More events", overview.laterEvents, key = { it.id }) { event ->
                         EventCard(
                             event,
                             onClick = { navigator.open(AppRoute.EventDetail(event.id)) },
@@ -392,6 +462,7 @@ fun VenueScreen(id: String, navigator: Navigator) {
     }
 
     CoverCheckoutFailure(checkout)
+    ShareLinkFailure(shareLinks)
     val here = venue
     if (pingHere && here != null) {
         PingSheet(

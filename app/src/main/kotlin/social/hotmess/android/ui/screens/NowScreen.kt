@@ -93,11 +93,26 @@ import social.hotmess.core.FriendVenue
 import social.hotmess.core.Now
 import social.hotmess.core.NowLocale
 import social.hotmess.core.PhotoTone
+import social.hotmess.core.RoomLineup
 import social.hotmess.core.Venue
 import java.time.Instant
+import com.audiencekit.CardKind
+import com.audiencekit.LayoutCard
+import com.audiencekit.LayoutScreen
 
 /** How often Now reloads while it's showing. */
 private const val NOW_REFRESH_MS = 60_000L
+
+/**
+ * Every card Now can draw, in its built-in order: who's on, the room's chat, tonight's posts, small talk, the next
+ * events, the locale's updates, venues nearby, where your friends are, then pings. Announcements and promoted cards
+ * come only from the server.
+ */
+private val NOW_FALLBACK_CARDS = listOf(
+    CardKind.NOW_STAGE, CardKind.NOW_CHAT, CardKind.POSTS_TONIGHT, CardKind.NOW_SMALL_TALK, CardKind.EVENTS_UPCOMING,
+    CardKind.POSTS_LOCALE, CardKind.VENUES_NEARBY, CardKind.VENUES_FRIENDS, CardKind.PINGS,
+)
+private val NOW_CARD_KINDS = NOW_FALLBACK_CARDS + listOf(CardKind.WEB, CardKind.PROMO_SLOT)
 
 /**
  * What's happening where you are: the venue you're in, with the last few lines of its chat and the
@@ -138,12 +153,27 @@ fun NowScreen(navigator: Navigator) {
         }
     }
 
+    val cardLayout = rememberScreenCards(LayoutScreen.NOW, NOW_CARD_KINDS, NOW_FALLBACK_CARDS)
     val userId = rememberUserId()
     val scope = rememberCoroutineScope()
     var sheetOpen by rememberSaveable { mutableStateOf(false) }
     var ending by rememberSaveable { mutableStateOf(false) }
     var endError by rememberSaveable { mutableStateOf<String?>(null) }
     val actions = rememberPingActions { ping -> loader.update { it.replacingPing(ping) } }
+
+    // Pair me up at the venue you're at, or your event's: reloaded with Now, while the screen shows.
+    val pairUpVenue = state.valueOrNull?.venue
+    val pairUp = remember(pairUpVenue?.id) { pairUpVenue?.let { PairUpController(graph.api, it.id, scope) { graph.location.reportAgain() } } }
+    var pairingUp by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(pairUp, lifecycle) {
+        val controller = pairUp ?: return@LaunchedEffect
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                controller.load()
+                delay(NOW_REFRESH_MS)
+            }
+        }
+    }
 
     fun endPing() {
         ending = true
@@ -225,104 +255,113 @@ fun NowScreen(navigator: Navigator) {
                             }
                         }
                     }
-                    // Who's on, small talk, the next three events, then venues.
-                    if (now.onNow.isNotEmpty()) {
-                        item(key = "on-now") {
-                            OnNowSection(now.onNow) { navigator.open(AppRoute.PersonDetail(it.person.id)) }
-                        }
-                    }
-                    now.venue?.let { venue ->
-                        item { SmallTalk(venue, now.event, now.friends, navigator) }
-                    }
-                    // At an event or venue, its posts from the last 24 hours.
-                    now.venue?.let { venue ->
-                        val subject = now.event?.let { PostsSubject.Event(it.id) } ?: PostsSubject.Venue(venue.id)
-                        item(key = "tonight-posts") {
-                            NowPostsSection(
-                                "Latest from tonight",
-                                subject,
-                                seeAll = AppRoute.Posts(subject, now.event?.name ?: venue.name),
-                                navigator = navigator,
-                                withinHours = 24,
-                            )
-                        }
-                    }
-                    now.locale?.takeIf { now.venue == null && it.chatOpen }?.let { locale ->
-                        item { LocaleSmallTalk(locale, navigator) }
-                    }
-                    if (now.events.isEmpty()) {
-                        item { DetailSection("Events") { EmptyRow("There's nothing coming up yet.") } }
-                    } else {
-                        cardSection("events", "Events", now.events.take(3), key = { it.id }) { event ->
-                            EventCard(event, onClick = { navigator.open(AppRoute.EventDetail(event.id)) })
-                        }
-                    }
-                    // Away from venues, the locale's updates.
-                    now.locale?.takeIf { now.venue == null }?.let { locale ->
-                        val name = locale.name.orEmpty()
-                        item(key = "locale-posts") {
-                            NowPostsSection(
-                                if (name.isBlank()) "Updates nearby" else "Updates in $name",
-                                PostsSubject.Locale(locale.id),
-                                seeAll = AppRoute.Updates(locale.id, name),
-                                navigator = navigator,
-                            )
-                        }
-                    }
-                    // At a venue with a cover tonight: your pass, or the way to skip the line.
-                    now.venue?.let { venue ->
-                        val offer = CoverOffer.of(venue)
-                        val pass = offer?.pass
-                        when {
-                            pass != null -> item(key = "pass") {
-                                PassCard(pass, venue.name) {
-                                    graph.passes.put(pass)
-                                    navigator.openPass(pass.id)
+                    // The cards in the server's order (the built-in one when it can't be had); a kind this build
+                    // doesn't draw was never asked for.
+                    cardLayout.cards.forEach { card ->
+                        when (card.kind) {
+                            CardKind.NOW_STAGE -> {
+                                // Who's on.
+                                if (now.onNow.isNotEmpty()) {
+                                    item(key = "on-now") {
+                                        OnNowSection(now.onNow) { navigator.open(AppRoute.PersonDetail(it.person.id)) }
+                                    }
+                                }
+                                // At a venue: its photos, led by the camera; what you take goes on the stage's pages too.
+                                now.venue?.let { venue ->
+                                    item(key = "photos") { PhotosSection(PostsSubject.Venue(venue.id), navigator, cameraVenueId = venue.id) }
                                 }
                             }
-                            offer != null && offer.action == CoverAction.PAY -> item(key = "cover") {
-                                SkipTheLineCard(
-                                    offer,
-                                    paying = checkoutState == CoverCheckout.State.Working,
-                                    onPay = { checkout.pay(venue.id, venue.name) },
-                                )
-                            }
-                        }
-                    }
-                    nearby(now, coordinates != null, navigator)
-                    if (now.venue == null) whereFriendsAre(now.friendVenues, navigator)
-                    now.myPing?.let { ping ->
-                        item(key = "my-ping") { MyPingCard(ping, onEdit = { sheetOpen = true }, onEnd = ::endPing, ending = ending) }
-                    }
-                    if (now.friendPings.isNotEmpty()) {
-                        item(key = "friend-pings-title") {
-                            Text(
-                                "Friends going out tonight",
-                                style = HotMessType.heading,
-                                color = tokens.ink,
-                                modifier = Modifier.padding(horizontal = Space.s1),
-                            )
-                        }
-                        now.friendPings.forEach { ping ->
-                            item(key = "ping-${ping.id}") {
-                                FriendPingCard(ping, userId, actions) { target ->
-                                    target.event?.let { navigator.open(AppRoute.EventDetail(it.id)) }
-                                        ?: target.venue?.let { navigator.open(AppRoute.VenueDetail(it.id)) }
+                            CardKind.NOW_CHAT -> {
+                                now.venue?.let { venue ->
+                                    item(key = "small-talk") { SmallTalk(venue, now.event, now.friends, navigator) }
+                                }
+                                // Pair me up, just under the chat: once you're at a venue that has it, or while you're in it.
+                                pairUp?.pairUp?.takeIf { it.here || it.mine != null }?.let { offer ->
+                                    item(key = "pair-up") {
+                                        PairUpRow(offer, onOpen = { pairingUp = true }, onGoAgain = {
+                                            pairUp?.join(null)
+                                            pairingUp = true
+                                        })
+                                    }
                                 }
                             }
+                            // At an event or venue, its posts from the last 24 hours.
+                            CardKind.POSTS_TONIGHT -> now.venue?.let { venue ->
+                                val subject = now.event?.let { PostsSubject.Event(it.id) } ?: PostsSubject.Venue(venue.id)
+                                item(key = "tonight-posts") {
+                                    NowPostsSection(
+                                        "Latest from tonight",
+                                        subject,
+                                        seeAll = AppRoute.Posts(subject, now.event?.name ?: venue.name),
+                                        navigator = navigator,
+                                        withinHours = 24,
+                                    )
+                                }
+                            }
+                            CardKind.NOW_SMALL_TALK -> now.locale?.takeIf { now.venue == null && it.chatOpen }?.let { locale ->
+                                item(key = "locale-small-talk") { LocaleSmallTalk(locale, navigator) }
+                            }
+                            CardKind.EVENTS_UPCOMING -> if (now.events.isEmpty()) {
+                                item(key = "events-empty") { DetailSection("Events") { EmptyRow("There's nothing coming up yet.") } }
+                            } else {
+                                cardSection("events", "Events", now.events.take(3), key = { it.id }) { event ->
+                                    EventCard(event, onClick = { navigator.open(AppRoute.EventDetail(event.id)) })
+                                }
+                            }
+                            // Away from venues, the locale's updates.
+                            CardKind.POSTS_LOCALE -> now.locale?.takeIf { now.venue == null }?.let { locale ->
+                                val name = locale.name.orEmpty()
+                                item(key = "locale-posts") {
+                                    NowPostsSection(
+                                        if (name.isBlank()) "Updates nearby" else "Updates in $name",
+                                        PostsSubject.Locale(locale.id),
+                                        seeAll = AppRoute.Updates(locale.id, name),
+                                        navigator = navigator,
+                                    )
+                                }
+                            }
+                            CardKind.VENUES_NEARBY -> nearby(now, card, coordinates != null, navigator)
+                            CardKind.VENUES_FRIENDS -> if (now.venue == null) whereFriendsAre(now.friendVenues, navigator)
+                            CardKind.PINGS -> {
+                                coverCards(now, checkout, checkoutState, navigator)
+                                pings(now, userId, actions, ending, onEdit = { sheetOpen = true }, onEnd = ::endPing, navigator)
+                            }
+                            CardKind.WEB -> card.web?.let { content -> item(key = card.id) { WebCardView(content) } }
+                            CardKind.PROMO_SLOT -> item(key = card.id) { PromoSlotView(card, cardLayout.id, navigator) }
                         }
                     }
+                    // Passes and the cover depend on this device, so they aren't cards: they go just above pings.
+                    if (cardLayout.card(CardKind.PINGS) == null) coverCards(now, checkout, checkoutState, navigator)
                 }
             }
         }
     }
 
     CoverCheckoutFailure(checkout)
+    if (pairingUp && pairUp != null && pairUpVenue != null) {
+        PairUpSheet(pairUp, pairUpVenue.name) {
+            pairingUp = false
+            scope.launch { pairUp.load() }
+        }
+    }
     if (sheetOpen) {
         PingSheet(
             preselect = null,
             onDismiss = { sheetOpen = false },
             onSent = { ping -> loader.update { it.replacingPing(ping) } },
+        )
+    }
+    // A texted Ping link that was opened: its invitation, or the Ping itself when it's already a friend's.
+    val invitation by graph.pingInvitation.collectAsStateWithLifecycle()
+    invitation?.takeIf { it.pingId != null && it.invitation != null }?.let { link ->
+        PingInvitationSheet(
+            link,
+            onDismiss = { graph.openPingInvitation(null) },
+            onOpenTarget = { target ->
+                graph.openPingInvitation(null)
+                target.event?.let { navigator.open(AppRoute.EventDetail(it.id)) }
+                    ?: target.venue?.let { navigator.open(AppRoute.VenueDetail(it.id)) }
+            },
         )
     }
     endError?.let { message ->
@@ -335,15 +374,76 @@ fun NowScreen(navigator: Navigator) {
     }
 }
 
-/** Away from a venue: nearby venues, or a nudge to turn on location. */
-private fun LazyListScope.nearby(now: Now, located: Boolean, navigator: Navigator) {
+/** Away from a venue: nearby venues in the server's order, or a nudge to turn on location. */
+private fun LazyListScope.nearby(now: Now, card: LayoutCard, located: Boolean, navigator: Navigator) {
     val open = { venue: Venue -> navigator.open(AppRoute.VenueDetail(venue.id)) }
     if (now.venue != null) return
-    val venues = now.venues
+    val venues = now.venues?.rankedBy(card) { it.id }
     when {
         venues != null && venues.isEmpty() -> item { DetailSection("Venues near you") { EmptyRow("You aren't near any venues right now.") } }
         venues != null -> cardSection("nearby", "Venues near you", venues.take(3), key = { it.id }) { VenueCard(it, onClick = { open(it) }) }
         !located -> item { DetailSection("Venues near you") { EmptyRow("Turn on location to see what's happening near you.") } }
+    }
+}
+
+/** At a venue with a cover tonight: your pass, or the way to skip the line. */
+private fun LazyListScope.coverCards(
+    now: Now,
+    checkout: CoverCheckout,
+    checkoutState: CoverCheckout.State,
+    navigator: Navigator,
+) {
+    val venue = now.venue ?: return
+    val offer = CoverOffer.of(venue)
+    val pass = offer?.pass
+    when {
+        pass != null -> item(key = "pass") {
+            val graph = LocalAppGraph.current
+            PassCard(pass, venue.name) {
+                graph.passes.put(pass)
+                navigator.openPass(pass.id)
+            }
+        }
+        offer != null && offer.action == CoverAction.PAY -> item(key = "cover") {
+            SkipTheLineCard(
+                offer,
+                paying = checkoutState == CoverCheckout.State.Working,
+                onPay = { checkout.pay(venue.id, venue.name) },
+            )
+        }
+    }
+}
+
+/** Your own Ping, then friends' Pings. */
+private fun LazyListScope.pings(
+    now: Now,
+    userId: String?,
+    actions: PingActions,
+    ending: Boolean,
+    onEdit: () -> Unit,
+    onEnd: () -> Unit,
+    navigator: Navigator,
+) {
+    now.myPing?.let { ping ->
+        item(key = "my-ping") { MyPingCard(ping, onEdit = onEdit, onEnd = onEnd, ending = ending) }
+    }
+    if (now.friendPings.isNotEmpty()) {
+        item(key = "friend-pings-title") {
+            Text(
+                "Friends going out tonight",
+                style = HotMessType.heading,
+                color = tokens.ink,
+                modifier = Modifier.padding(horizontal = Space.s1),
+            )
+        }
+        now.friendPings.forEach { ping ->
+            item(key = "ping-${ping.id}") {
+                FriendPingCard(ping, userId, actions) { target ->
+                    target.event?.let { navigator.open(AppRoute.EventDetail(it.id)) }
+                        ?: target.venue?.let { navigator.open(AppRoute.VenueDetail(it.id)) }
+                }
+            }
+        }
     }
 }
 
@@ -379,24 +479,27 @@ private fun EventHeadline(event: Event, onOpen: () -> Unit) {
 
 /**
  * The last few lines of the venue's chat, and the way into the room. At an [event] the room is the event's:
- * named and pictured for it, since its host may not be a listed venue.
+ * named for it, since its host may not be a listed venue. Its faces (NowHosts.md) are the venue, the lineup
+ * people in chat now, then, a gap apart, friends; the line under the title says the same in words.
  */
 @Composable
 private fun SmallTalk(venue: Venue, event: Event?, friends: List<Friend>, navigator: Navigator) {
     val graph = LocalAppGraph.current
     val user by graph.session.user.collectAsStateWithLifecycle()
     val roomName = event?.name ?: venue.name
-    val roomPhoto = event?.bannerUrl ?: venue.photoUrl
+    val others = friends.filterNot { it.id.equals(user?.id, ignoreCase = true) }.distinctBy { it.id.lowercase() }
+    // Now doesn't hear the room's lineup presence (only the room does), so nobody on the lineup is known to be in
+    // chat here yet; the line falls back to the venue and the count.
+    val lineupInChat = emptyList<ChatPeekParticipant>()
     val participants = buildList {
-        add(ChatPeekParticipant("venue-${venue.id}", roomName, roomPhoto, isPlace = true))
-        add(ChatPeekParticipant("viewer", "You", user?.avatarUrl))
-        friends.filterNot { it.id.equals(user?.id, ignoreCase = true) }
-            .distinctBy { it.id.lowercase() }.forEach { friend ->
-                add(ChatPeekParticipant(
-                    friend.id, friend.name, friend.avatarUrl, presenceOf(friend.presence),
-                ))
-            }
+        add(ChatPeekParticipant("venue-${venue.id}", venue.name, venue.photoUrl, isPlace = true))
+        addAll(lineupInChat)
+        others.forEachIndexed { index, friend ->
+            add(ChatPeekParticipant(friend.id, friend.name, friend.avatarUrl, presenceOf(friend.presence), gapBefore = index == 0))
+        }
     }
+    // The friend the line names: one in chat now, else any here.
+    val friend = (others.firstOrNull { presenceOf(it.presence) == Presence.ONLINE } ?: others.firstOrNull())?.name
     ChatPeek(
         rememberPeekMessages(venue.recentMessages),
         title = "Small talk",
@@ -404,6 +507,8 @@ private fun SmallTalk(venue: Venue, event: Event?, friends: List<Friend>, naviga
         onOpen = { navigator.openChat(venue.id, roomName) },
         presence = remember(venue.recentMessages) { peekPresence(venue.recentMessages) },
         participants = participants,
+        // Now isn't told how many are in the room, so the line leaves the count off.
+        subtitle = RoomLineup.peekLine(venue.name, lineupInChat.size, friend, count = null),
     )
 }
 

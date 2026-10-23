@@ -38,6 +38,8 @@ data class Venue(
     val photoUrl: String? = null,
     /** Its wide image: its first banner, else [photoUrl], else its Facebook Page's cover; null when it has none. */
     val bannerUrl: String? = null,
+    /** Its banner images, in the order the venue screen's hero rotates through them; only the venue screen asks. */
+    val bannerPhotos: List<BannerPhoto> = emptyList(),
     /** Where it is, as WKT: `POINT (<longitude> <latitude>)`. */
     val point: String? = null,
     val locale: LocaleSummary? = null,
@@ -82,8 +84,17 @@ data class Venue(
 
     val facebookUrl: String? get() = profile?.facebook?.link ?: facebookId?.let { "https://facebook.com/$it" }
 
-    val shareUrl: String get() = "https://hotmess.social/venues/${id.lowercase()}"
+    /** Its record's path, which the API signs a share link to ([HotMessApi.shareLink]). */
+    val sharePath: String get() = "/venues/${id.lowercase()}"
+
+    /** What the venue screen's hero rotates through: its banner, then its banner images, once each; else its photo. */
+    val heroPhotos: List<String>
+        get() = (listOfNotNull(bannerUrl) + bannerPhotos.mapNotNull { it.url }).distinct().ifEmpty { listOfNotNull(photoUrl) }
 }
+
+/** One of a venue's banner images (`Venue.bannerPhotos`). */
+@Serializable
+data class BannerPhoto(val url: String? = null)
 
 /** A venue's tickets mixin (`Venue.tickets`), read for the cover mixin the cover module nests in it. */
 @Serializable
@@ -327,6 +338,47 @@ data class SocialLink(
             "venmo" -> "Venmo"
             else -> null
         }
+
+    /** The network by name ("Instagram"), so a row says where it goes; the label for anything else. */
+    val serviceName: String
+        get() = when (provider.lowercase(Locale.ROOT)) {
+            "facebook" -> "Facebook"
+            "instagram" -> "Instagram"
+            "twitter", "x" -> "X"
+            "soundcloud" -> "SoundCloud"
+            "tiktok" -> "TikTok"
+            "youtube" -> "YouTube"
+            else -> label
+        }
+
+    private val aboutRank: Int
+        get() = when (provider.lowercase(Locale.ROOT)) {
+            "facebook" -> 0
+            "instagram" -> 1
+            "tiktok" -> 2
+            "twitter", "x" -> 3
+            "youtube" -> 4
+            "soundcloud" -> 5
+            else -> 6
+        }
+
+    companion object {
+        /** The ID of the Facebook link made from a venue's own Facebook Page. */
+        const val PAGE_FACEBOOK_ID = "page-facebook"
+
+        /**
+         * A venue's links for its About section, in one order on every venue and platform: Facebook, Instagram,
+         * TikTok, X, YouTube, SoundCloud, then the rest as listed. Its Facebook Page stands in for a Facebook
+         * profile it doesn't list, links without a URL and tip links are left out, and a link listed twice shows once.
+         */
+        fun aboutLinks(links: List<SocialLink>, facebookUrl: String?): List<SocialLink> {
+            val about = links.filter { it.url != null && it.tipApp == null }.distinctBy { it.url }.toMutableList()
+            if (facebookUrl != null && about.none { it.network == Network.FACEBOOK || it.url == facebookUrl }) {
+                about += SocialLink(PAGE_FACEBOOK_ID, provider = "facebook", url = facebookUrl)
+            }
+            return about.sortedBy { it.aboutRank }
+        }
+    }
 }
 
 @Serializable
@@ -394,7 +446,8 @@ data class Event(
 
     val facebookUrl: String? get() = facebookId?.let { "https://facebook.com/events/$it" }
 
-    val shareUrl: String get() = "https://hotmess.social/events/${id.lowercase()}"
+    /** Its record's path, which the API signs a share link to ([HotMessApi.shareLink]). */
+    val sharePath: String get() = "/events/${id.lowercase()}"
 
     enum class PhotoPriority { STANDARD, VENUE_FIRST, PERSON_FIRST }
 
@@ -610,6 +663,55 @@ data class PingTarget(
 /** Someone in on a Ping: for one pick ([targetId]), or for the Ping as a whole when that's null. */
 @Serializable
 data class PingJoin(val id: String, val user: Friend, val targetId: String? = null)
+
+/**
+ * What a texted Ping link shows someone who may not be the sender's friend: `GET /v1/share/invitation`, which needs
+ * no sign-in and never names the circle. [title] is the API's ("Jordan wants to go out"); [token] is the link's `e`,
+ * which "I'm in" sends back as `invitationToken`.
+ */
+@Serializable
+data class PingInvitation(
+    val kind: String = "",
+    val id: String,
+    val title: String = "",
+    val note: String? = null,
+    @SerialName("sender_name") val senderName: String? = null,
+    /** The Ping's end, 5am. */
+    @SerialName("expires_at") @Serializable(with = InstantSerializer::class) val expiresAt: Instant? = null,
+    val targets: List<Target> = emptyList(),
+    /** Not in the response: the link's token, set by [parse]. */
+    val token: String = "",
+) {
+    /** A pick, by name. [path] is its page (`/venues/<id>` or `/events/<id>`). */
+    @Serializable
+    data class Target(val id: String, val name: String = "", val path: String? = null)
+
+    /** The note without surrounding space, or null when there's nothing to show. */
+    val noteText: String? get() = note?.trim()?.takeIf { it.isNotEmpty() }
+
+    /** "Drag Bingo or The Wildrose", or "Anywhere tonight?" with no picks. */
+    val placesSummary: String
+        get() = targets.map { it.name }.filter { it.isNotBlank() }.let { if (it.isEmpty()) Ping.ANYWHERE else Formatting.list(it, "or") }
+
+    /** "Jordan wants to go out", falling back to the sender's name when the API sent no title. */
+    val headline: String
+        get() = title.trim().ifEmpty { senderName?.trim()?.takeIf { it.isNotEmpty() }?.let { "$it wants to go out" } ?: "You're invited out" }
+
+    companion object {
+        /** The path a Ping's share link and invitation are for. */
+        fun path(pingId: String): String = "/pings/$pingId"
+
+        /** Whether [error] means the link has expired, ended or been altered (410 or 404), not that it couldn't load. */
+        fun isGone(error: Throwable): Boolean =
+            ApiError.of(error).let { it == ApiError.NotFound || (it is ApiError.Server && it.status == 410) }
+
+        /** The invitation in [text] with [token] kept on it, or null when it isn't a Ping's or doesn't decode. */
+        fun parse(text: String, token: String, json: kotlinx.serialization.json.Json = HotMessApi.json): PingInvitation? =
+            runCatching { json.decodeFromString(serializer(), text) }.getOrNull()
+                ?.takeIf { it.kind.isEmpty() || it.kind == "ping" }
+                ?.copy(token = token)
+    }
+}
 
 /** What's happening where the device is, from `reportLocation`. */
 @Serializable

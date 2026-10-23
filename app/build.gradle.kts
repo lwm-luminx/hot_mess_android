@@ -66,8 +66,8 @@ data class Environment(
     /**
      * The Services ID for Sign in with Apple, which Android runs as Apple's web sign-in in a Custom Tab (the SDK's
      * AppleWebSignIn; the API's doc/TOKENS.md, "Sign in with Apple on Android"). Apple returns to the API over HTTPS,
-     * so builds against a local API go without. Empty hides "Continue with Apple"; Release gets it from
-     * `hotmess.apple.servicesId` once the Services ID is set up.
+     * so builds against a local API go without. Empty hides "Continue with Apple". Not a secret: it's in the URL of
+     * Apple's sign-in page. `hotmess.apple.servicesId` overrides it for Release.
      */
     val appleServicesId: String = "",
     /**
@@ -88,7 +88,8 @@ val environments = mapOf(
     // Chrome's session rather than using a private tab.
     "signInTest" to Environment("signInTest", "http://10.0.2.2:3000", "", "2967605370250663"),
     "release" to Environment("release", "https://api.audiencekit.com", "b0f8b66a-e636-495d-9475-0f5317ea08e0", "1168782378316790",
-        facebookClientToken = "ee4e193e42709c8aaf8f3aa6b383feab", newRelicToken = "AA5ae44dcde02fb1820cebf78f3cde4514ea836c87-NRMA"),
+        facebookClientToken = "ee4e193e42709c8aaf8f3aa6b383feab", appleServicesId = "social.hotmess.signin",
+        newRelicToken = "AA5ae44dcde02fb1820cebf78f3cde4514ea836c87-NRMA"),
 )
 
 android {
@@ -100,7 +101,7 @@ android {
         minSdk = 28
         targetSdk = 36
         versionCode = buildNumber
-        versionName = "2.2"
+        versionName = "2.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // The Facebook sign-in test's test user, from the environment (scripts/facebook-signin-test.sh
@@ -191,7 +192,7 @@ android {
         buildConfigField("String", "FACEBOOK_CLIENT_TOKEN", "\"${environment.facebookClientToken}\"")
         buildConfigField("String", "FACEBOOK_LOGIN_CONFIG_ID", "\"${environment.facebookLoginConfigId}\"")
         buildConfigField("String", "GOOGLE_SERVER_CLIENT_ID", "\"${environment.googleServerClientId.ifEmpty { secret("google.serverClientId") }}\"")
-        buildConfigField("String", "APPLE_SERVICES_ID", "\"${environment.appleServicesId.ifEmpty { secret("apple.servicesId").takeIf { name == "release" }.orEmpty() }}\"")
+        buildConfigField("String", "APPLE_SERVICES_ID", "\"${secret("apple.servicesId").takeIf { name == "release" && it.isNotEmpty() } ?: environment.appleServicesId}\"")
         buildConfigField("boolean", "PRIVATE_SIGN_IN", environment.privateSignIn.toString())
         buildConfigField("String", "AUDIENCEKIT_ENVIRONMENT", "\"${environment.audienceKitEnvironment}\"")
         buildConfigField("String", "NEW_RELIC_TOKEN", "\"${environment.newRelicToken}\"")

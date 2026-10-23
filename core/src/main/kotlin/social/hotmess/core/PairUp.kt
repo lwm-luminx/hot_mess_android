@@ -18,7 +18,7 @@ data class PairUpState(
     val status: String = PairUpStatus.SEARCHING,
     /** The hint their partner sees once both accept. */
     val lookFor: String? = null,
-    /** How many people they met tonight: the night's badge. */
+    /** How many conversations they had tonight (the same person twice counts twice): the night's badge. */
     val metCount: Int = 0,
     /** Their pairing. While searching, the last one when it ended. */
     val match: PairUpMatch? = null,
@@ -44,6 +44,9 @@ data class PairUpMatch(
     val id: String,
     val accepted: Boolean = false,
     val partnerAccepted: Boolean = false,
+    /** Whether they agreed to share the meeting in the venue's chat. */
+    val shared: Boolean = false,
+    val partnerShared: Boolean = false,
     /** A fresh topic from scanning the wrong code: accepted, no code needed. */
     val bonus: Boolean = false,
     val metAt: String? = null,
@@ -52,7 +55,10 @@ data class PairUpMatch(
     val topic: PairUpTopic,
     /** Who to look for, once both accepted; null before and once either cancels. */
     val partner: PairUpPartner? = null,
-)
+) {
+    /** Both agreed, so the venue's chat says who met and what they talked about. */
+    val isShared: Boolean get() = shared && partnerShared
+}
 
 @Serializable
 data class PairUpTopic(val key: String, val text: String)
@@ -82,6 +88,6 @@ data class PairUpScan(
             "USED" -> "That code was refreshed. Ask them to show it again."
             "ENDED" -> "That pairing has ended."
             "OWN" -> "That's your own code. Scan theirs instead."
-            else -> "That isn't a Pair me up code. Try scanning again."
+            else -> "That isn't a Quickie code. Try scanning again."
         }
 }

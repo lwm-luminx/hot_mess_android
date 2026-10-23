@@ -11,8 +11,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.maplibre.android.MapLibre
 import social.hotmess.android.location.LocationProvider
@@ -22,14 +25,19 @@ import social.hotmess.android.push.PushRegistrar
 import social.hotmess.android.session.AuthState
 import social.hotmess.android.session.BrandStore
 import social.hotmess.android.session.FacebookAppSignIn
+import social.hotmess.android.session.ListingsStore
 import social.hotmess.android.session.SafetyStore
 import social.hotmess.android.session.SessionStore
+import social.hotmess.android.session.TribeStore
 import social.hotmess.android.support.ErrorReporter
+import social.hotmess.android.ui.screens.CardSettings
 import social.hotmess.core.AppRoute
 import social.hotmess.core.CableConnection
+import social.hotmess.core.ChatMutes
 import social.hotmess.core.GraphQLCable
 import social.hotmess.core.HotMessApi
 import social.hotmess.core.PassBook
+import social.hotmess.core.StringSetStorage
 
 /** The app's services, built once. Screens reach them through [LocalAppGraph][social.hotmess.android.ui.LocalAppGraph]. */
 class AppGraph(context: Context, val configuration: AppConfiguration = AppConfiguration()) {
@@ -43,6 +51,18 @@ class AppGraph(context: Context, val configuration: AppConfiguration = AppConfig
 
     /** Terms of use, blocking and reporting, as the API keeps them for the signed-in user. */
     val safety = SafetyStore(api)
+
+    /** The venues and talent the signed-in user manages, for writing and managing their posts. */
+    val listings = ListingsStore(api)
+
+    /** Which promoted cards the user turned off (on this device only), and the reports of the ones they saw. */
+    val cards = CardSettings(context.applicationContext, audienceKit, scope)
+
+    /** The user's tribes and whether the API has them; chat shows who shares one only when it does. */
+    val tribes = TribeStore(api)
+
+    /** Who the user muted in each chat room, kept on this device only (the app's preferences). */
+    val chatMutes = ChatMutes(PreferenceStringSets(context.applicationContext))
 
     /** Crash and error reports, and what "Report a problem" attaches. */
     val errors = ErrorReporter(context, api, configuration, scope)
@@ -91,11 +111,14 @@ class AppGraph(context: Context, val configuration: AppConfiguration = AppConfig
                         api.friends.clear()
                         notifications.clear()
                         safety.clear()
+                        listings.clear()
+                        tribes.clear()
                         cable.disconnect()
                     }
                     AuthState.SignedIn -> {
                         if (isForeground) notifications.start()
                         scope.launch { safety.refresh() }
+                        scope.launch { listings.refresh() }
                     }
                     else -> Unit
                 }
@@ -110,6 +133,18 @@ class AppGraph(context: Context, val configuration: AppConfiguration = AppConfig
 
     fun pingUpdated(pingId: String?) {
         _pingUpdates.tryEmit(pingId)
+    }
+
+    private val _pingInvitation = MutableStateFlow<AppRoute.NowPing?>(null)
+
+    /**
+     * A texted Ping link that was opened, with its invitation, until Now shows it. Kept while signed out, so it's
+     * shown after signing in.
+     */
+    val pingInvitation: StateFlow<AppRoute.NowPing?> = _pingInvitation.asStateFlow()
+
+    fun openPingInvitation(link: AppRoute.NowPing?) {
+        _pingInvitation.value = link
     }
 }
 
@@ -145,3 +180,14 @@ class HotMessApplication : Application() {
 }
 
 val Context.appGraph: AppGraph get() = (applicationContext as HotMessApplication).graph
+
+/** String sets in the app's preferences ([SessionStore.PREFERENCES]), so "Reset local data" clears them too. */
+private class PreferenceStringSets(private val context: Context) : StringSetStorage {
+    private val preferences get() = context.getSharedPreferences(SessionStore.PREFERENCES, Context.MODE_PRIVATE)
+
+    override fun get(key: String): Set<String> = preferences.getStringSet(key, null)?.toSet().orEmpty()
+
+    override fun put(key: String, values: Set<String>) {
+        preferences.edit().apply { if (values.isEmpty()) remove(key) else putStringSet(key, values.toSet()) }.apply()
+    }
+}

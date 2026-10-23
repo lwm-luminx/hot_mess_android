@@ -3,6 +3,7 @@ package social.hotmess.core
 import com.audiencekit.AudienceKitClient
 import com.audiencekit.AudienceKitConfiguration
 import com.audiencekit.Coordinates
+import com.audiencekit.HttpRequest
 import com.audiencekit.HttpResponse
 import com.audiencekit.HttpTransport
 import com.audiencekit.InMemoryTokenStore
@@ -219,6 +220,52 @@ class PingLogicTest {
     }
 
     @Test
+    fun contactsArePickedOncePerNumberAndRemovable() {
+        val jordan = PingContact("Jordan", "+1 (206) 555-0101")
+        val sam = PingContact("", "206.555.0102")
+        var contacts = PingContacts().adding(jordan).adding(sam)
+        assertEquals("+12065550101", jordan.dialable)
+        assertEquals("206.555.0102", sam.label, "no name shows the number")
+        assertEquals(listOf("+12065550101", "2065550102"), contacts.numbers)
+
+        contacts = contacts.adding(PingContact("Jordan again", "+12065550101")).adding(PingContact("Nobody", "ext."))
+        assertEquals(2, contacts.contacts.size, "the same number twice, and one with no digits, are left out")
+
+        contacts = contacts.removing(jordan)
+        assertEquals(listOf("2065550102"), contacts.numbers)
+        assertTrue(contacts.removing(sam).isEmpty)
+    }
+
+    @Test
+    fun textsThePingInALineWithItsLink() {
+        val url = "https://hotmess.social/pings/p-1?e=v3.abc"
+        val ping = HotMessApi.json.decodeFromString(Ping.serializer(), PingFixtures.FRIEND_PING)
+        assertEquals("I'm going out tonight: Drag Bingo or The Wildrose. Come with? $url", PingText.body(ping, url))
+        assertEquals("I'm going out tonight. Come with? $url", PingText.body(Ping(id = "p", user = Friend("u", "Riley")), url))
+        assertEquals("smsto:+12065550101;2065550102", PingText.smsUri(listOf("+12065550101", "", "2065550102")))
+    }
+
+    @Test
+    fun readsAnInvitation() {
+        val invitation = PingInvitation.parse(PingFixtures.INVITATION, "v3.abc")!!
+        assertEquals("p-1", invitation.id)
+        assertEquals("Jordan wants to go out", invitation.headline)
+        assertEquals("who's coming 🙃", invitation.noteText)
+        assertEquals("Jordan", invitation.senderName)
+        assertEquals(Instant.parse("2026-10-10T12:00:00Z"), invitation.expiresAt)
+        assertEquals("Drag Bingo or The Wildrose", invitation.placesSummary)
+        assertEquals(listOf("t-1", "t-2"), invitation.targets.map { it.id })
+        assertEquals("v3.abc", invitation.token)
+
+        val bare = PingInvitation.parse("""{"kind":"ping","id":"p-2","sender_name":"Sam","targets":[]}""", "v3.abc")!!
+        assertEquals("Sam wants to go out", bare.headline)
+        assertEquals(Ping.ANYWHERE, bare.placesSummary)
+        assertNull(PingInvitation.parse("""{"kind":"event","id":"e-1"}""", "v3.abc"), "only a Ping's")
+        assertNull(PingInvitation.parse("nope", "v3.abc"))
+        assertEquals("/pings/p-1", PingInvitation.path("p-1"))
+    }
+
+    @Test
     fun formatsClockTimesAndLists() {
         assertEquals("5am", Formatting.clock(Instant.parse("2026-10-10T12:00:00Z"), zone))
         assertEquals("9:46pm", Formatting.clock(Instant.parse("2026-10-10T04:46:00Z"), zone))
@@ -329,6 +376,62 @@ class PingApiTest {
     }
 
     @Test
+    fun joinsWithAnInvitation() = runTest {
+        val (api, bodies) = api("JoinPing" to """{"data":{"joinPing":{"ping":${PingFixtures.FRIEND_PING}}}}""")
+        api.joinPing("p-1", "t-1", invitationToken = "v3.abc")
+        api.joinPing("p-1", null)
+
+        assertEquals("v3.abc", variables(bodies[0])["invitationToken"]!!.jsonPrimitive.content)
+        assertTrue(bodies[0].contains("invitationToken: \$invitationToken"))
+        assertNullValue(variables(bodies[1])["invitationToken"])
+    }
+
+    @Test
+    fun asksForAPingsShareLink() = runTest {
+        val (api, bodies) = api(
+            "query ShareLink" to """{"data":{"shareLink":{"url":"https://hotmess.social/pings/p-1?e=v3.abc","expiresAt":"2026-10-10T12:00:00Z"}}}""",
+        )
+        assertEquals("https://hotmess.social/pings/p-1?e=v3.abc", api.pingShareLink("p-1"))
+        assertEquals("/pings/p-1", variables(bodies.single())["path"]!!.jsonPrimitive.content)
+        assertTrue(bodies.single().contains("lifetime: DAY"))
+    }
+
+    @Test
+    fun fetchesAnInvitationWithoutSigningIn() = runTest {
+        val requests = mutableListOf<HttpRequest>()
+        var status = 200
+        val transport = HttpTransport { request ->
+            requests += request
+            HttpResponse(status, if (status == 200) PingFixtures.INVITATION.toByteArray() else ByteArray(0))
+        }
+        val client = AudienceKitClient(
+            AudienceKitConfiguration(baseUrl = "https://api.example", audienceId = "aud-1"),
+            InMemoryTokenStore("token"),
+            transport,
+        )
+        val api = HotMessApi(client)
+        val failures = mutableListOf<String>()
+        api.onFailure = { _, operation -> failures += operation }
+
+        val invitation = api.pingInvitation("hotmess.social", "p-1", "v3.abc")
+        assertEquals("v3.abc", invitation.token)
+        val request = requests.single()
+        assertEquals("GET", request.method)
+        assertEquals("https://api.example/v1/share/invitation?host=hotmess.social&path=%2Fpings%2Fp-1&e=v3.abc", request.url)
+        assertNull(request.headers["Authorization"])
+
+        status = 410
+        val gone = assertFailsWith<ApiError> { api.pingInvitation("hotmess.social", "p-1", "v3.abc") }
+        assertTrue(PingInvitation.isGone(gone))
+        status = 404
+        assertTrue(PingInvitation.isGone(assertFailsWith<ApiError> { api.pingInvitation("hotmess.social", "p-1", "v3.abc") }))
+        assertTrue(failures.isEmpty(), "an expired link isn't a failure to report")
+        status = 500
+        assertFalse(PingInvitation.isGone(assertFailsWith<ApiError> { api.pingInvitation("hotmess.social", "p-1", "v3.abc") }))
+        assertEquals(listOf("GET /v1/share/invitation"), failures)
+    }
+
+    @Test
     fun leavesAndEnds() = runTest {
         val (api, bodies) = api(
             "LeavePing" to """{"data":{"leavePing":{"ping":${PingFixtures.FRIEND_PING}}}}""",
@@ -399,6 +502,10 @@ private object PingFixtures {
         ],
         "joins":[{"id":"j-1","targetId":"t-1","user":{"id":"u-sam","name":"Sam Chatter"}},
                  {"id":"j-2","targetId":null,"user":{"id":"u-alex","name":"Alex Friend"}}]}"""
+
+    const val INVITATION = """{"kind":"ping","id":"p-1","title":"Jordan wants to go out","note":" who's coming 🙃 ",
+        "sender_name":"Jordan","expires_at":"2026-10-10T12:00:00Z",
+        "targets":[{"id":"t-1","name":"Drag Bingo","path":"/events/e-bingo"},{"id":"t-2","name":"The Wildrose","path":"/venues/v-wildrose"}]}"""
 
     const val MY_PING = """{"id":"p-mine","note":null,"createdAt":"2026-10-10T04:00:00Z","expiresAt":"2026-10-10T12:00:00Z",
         "isMine":true,"joined":false,"reach":"FRIENDS","via":null,"user":{"id":"u-me","name":"Rick Mark"},"targets":[],"joins":[]}"""

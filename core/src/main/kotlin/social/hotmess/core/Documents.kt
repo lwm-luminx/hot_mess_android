@@ -54,6 +54,10 @@ object Documents {
     /** Who's on at a venue right now, in its people mixin. */
     const val ON_NOW_FIELDS: String = "people { onNow { nodes { id role startsAt endsAt person { id name avatarUrl } } } }"
 
+    /** A lineup entry as a chat room shows it: who, as what, where it is in the night, and its set when it has a hard start. */
+    const val LINEUP_ENTRY_FIELDS: String =
+        "id kind role state startTiming startsAt endsAt title person { id name avatarUrl } people { nodes { id name avatarUrl } }"
+
     const val FRIEND_FIELDS: String = "id name facebookId avatarUrl"
 
     /** Friends out now, with whether they can be reached (in chat, or by push). */
@@ -97,6 +101,16 @@ object Documents {
         }
     """.trimIndent()
 
+    /**
+     * A link to one of the audience's venues, events or people that opens it for a month, then says it has expired;
+     * null when the path names nothing it shares.
+     */
+    val RECORD_SHARE_LINK: String = """
+        query RecordShareLink(${'$'}path: String!) {
+          shareLink(path: ${'$'}path, lifetime: MONTH) { url expiresAt }
+        }
+    """.trimIndent()
+
     /** Whether the signed-in user gets pushes about rooms they left in the last 30 minutes. Off until they turn it on. */
     val RECENT_CHAT_PUSH: String = """
         query RecentChatPush {
@@ -107,6 +121,22 @@ object Documents {
     val SET_RECENT_CHAT_PUSH: String = """
         mutation SetRecentChatPush(${'$'}enabled: Boolean!) {
           setRecentChatPush(input: { enabled: ${'$'}enabled }) { recentChatPush }
+        }
+    """.trimIndent()
+
+    /** The tribe picker's list by category, the cap, and the signed-in user's picks. */
+    val TRIBES: String = """
+        query Tribes {
+          tribeCap
+          tribeCatalog { key name tribes { id name } }
+          me { self { tribes { tag { id } } } }
+        }
+    """.trimIndent()
+
+    /** Replaces the signed-in user's tribes; refused past the cap, changing nothing. */
+    val SET_TRIBES: String = """
+        mutation SetTribes(${'$'}ids: [ID!]!) {
+          setTribes(input: { tagIds: ${'$'}ids }) { tribes { tag { id } } }
         }
     """.trimIndent()
 
@@ -140,6 +170,7 @@ object Documents {
           venues {
             venue(id: ${'$'}id) {
               $VENUE_FIELDS
+              bannerPhotos { url }
               chat { open $RECENT_MESSAGES }
               tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } viewerAdmission { ${Queries.ADMISSION_FIELDS} } } }
               $ON_NOW_FIELDS
@@ -147,6 +178,21 @@ object Documents {
               $PROFILE_SOCIAL_LINKS
               friends { list { nodes { $FRIEND_OUT_FIELDS } } }
               ping { friendPings { $PING_FIELDS } }
+            }
+          }
+        }
+    """.trimIndent()
+
+    /**
+     * A venue's night for its chat room: its name and photo (the room's venue face), tonight's running order (acts,
+     * intermissions and entries with no set time) and what's up next.
+     */
+    val VENUE_LINEUP: String = """
+        query VenueLineup(${'$'}id: ID!) {
+          venues {
+            venue(id: ${'$'}id) {
+              id name photoUrl
+              people { runningOrder { nodes { $LINEUP_ENTRY_FIELDS } } upNext { id } }
             }
           }
         }
@@ -213,9 +259,20 @@ object Documents {
         }
     """.trimIndent()
 
+    /** [invitationToken] is a texted link's `e`, which lets someone who isn't the sender's friend join. */
     val JOIN_PING: String = """
-        mutation JoinPing(${'$'}pingId: ID!, ${'$'}targetId: ID) {
-          joinPing(input: { pingId: ${'$'}pingId, targetId: ${'$'}targetId }) { ping { $PING_FIELDS } }
+        mutation JoinPing(${'$'}pingId: ID!, ${'$'}targetId: ID, ${'$'}invitationToken: String) {
+          joinPing(input: { pingId: ${'$'}pingId, targetId: ${'$'}targetId, invitationToken: ${'$'}invitationToken }) { ping { $PING_FIELDS } }
+        }
+    """.trimIndent()
+
+    /**
+     * A signed link to [path] that names the signed-in user as its sender, for texting a Ping to contacts. The API
+     * ends it with the Ping (5am) at the latest.
+     */
+    val SHARE_LINK: String = """
+        query ShareLink(${'$'}path: String!) {
+          shareLink(path: ${'$'}path, lifetime: DAY) { url expiresAt }
         }
     """.trimIndent()
 
@@ -232,7 +289,7 @@ object Documents {
     """.trimIndent()
 
     private const val PAIR_UP_MATCH_FIELDS =
-        "id accepted partnerAccepted bonus metAt endReason topic { key text } partner { id name avatarUrl lookFor }"
+        "id accepted partnerAccepted shared partnerShared bonus metAt endReason topic { key text } partner { id name avatarUrl lookFor }"
 
     private const val PAIR_UP_STATE_FIELDS =
         "status lookFor metCount match { $PAIR_UP_MATCH_FIELDS } bonus { $PAIR_UP_MATCH_FIELDS }"
@@ -270,6 +327,12 @@ object Documents {
     val LEAVE_PAIR_UP: String = """
         mutation LeavePairUp(${'$'}venueId: ID!) {
           leavePairUp(input: { venueId: ${'$'}venueId }) { pairUp { $PAIR_UP_STATE_FIELDS } }
+        }
+    """.trimIndent()
+
+    val SHARE_PAIR_UP: String = """
+        mutation SharePairUp(${'$'}matchId: ID!) {
+          sharePairUp(input: { matchId: ${'$'}matchId }) { pairUp { $PAIR_UP_STATE_FIELDS } }
         }
     """.trimIndent()
 
@@ -312,6 +375,16 @@ object Documents {
         }
     """.trimIndent()
 
+    /**
+     * Asks someone to be friends (`sendFriendRequest`), from a chat room's profile sheet; returns where the request
+     * stands (PENDING until they answer, ACCEPTED when they'd already asked the viewer).
+     */
+    val SEND_FRIEND_REQUEST: String = """
+        mutation SendFriendRequest(${'$'}userId: ID!) {
+          sendFriendRequest(input: { userId: ${'$'}userId }) { friendRequest { id status } }
+        }
+    """.trimIndent()
+
     /** Files a report with the audience's admins, and blocks the person behind it when [block] is true and there is one. */
     val REPORT_CONTENT: String = """
         mutation ReportContent(${'$'}targetType: ReportTarget!, ${'$'}targetId: ID!, ${'$'}reason: String, ${'$'}block: Boolean) {
@@ -338,7 +411,7 @@ object Documents {
     /** A post card's fields: its poster, photos, the event it's on and its comment count. */
     const val POST_FIELDS: String =
         "id body posterName posterAvatarUrl roleLabel actingPersonName createdAt edited pinned commentsOpen commentCount " +
-            "photos { url altText } event { id name startAt } person { id } venue { id }"
+            "photos { url altText } event { id name startAt } person { id } venue { id } hiddenFromEvent visibility"
 
     const val POST_COMMENT_FIELDS: String = "id authorId authorName authorAvatarUrl body createdAt viewerCanRemove"
 
@@ -389,10 +462,88 @@ object Documents {
         }
     """.trimIndent()
 
+    /** A photo's fields: who took it, a photographer's or a member's, who's on stage in it, and its event. */
+    const val PHOTO_FIELDS: String =
+        "id url altText caption source takenBy takenAt viewUrl viewerCanRemove people { id name } event { id name }"
+
+    /** A venue's photos, newest first: photographers' and members'. */
+    val VENUE_PHOTOS: String = """
+        query VenuePhotos(${'$'}id: ID!, ${'$'}first: Int!) {
+          venues { venue(id: ${'$'}id) { posts { photos(first: ${'$'}first) { nodes { $PHOTO_FIELDS } } } } }
+        }
+    """.trimIndent()
+
+    /** An event's photos, newest first. */
+    val EVENT_PHOTOS: String = """
+        query EventPhotos(${'$'}id: ID!, ${'$'}first: Int!) {
+          events { event(id: ${'$'}id) { posts { photos(first: ${'$'}first) { nodes { $PHOTO_FIELDS } } } } }
+        }
+    """.trimIndent()
+
+    /** The photos a person was on stage in, newest first. */
+    val PERSON_PHOTOS: String = """
+        query PersonPhotos(${'$'}id: ID!, ${'$'}first: Int!) {
+          people { person(id: ${'$'}id) { posts { photos(first: ${'$'}first) { nodes { $PHOTO_FIELDS } } } } }
+        }
+    """.trimIndent()
+
+    /** A photo just taken with the camera at the venue you're at; the API tags whoever is on stage. */
+    val ADD_EVENT_PHOTO: String = """
+        mutation AddEventPhoto(${'$'}venueId: ID!, ${'$'}photo: String!, ${'$'}altText: String) {
+          addEventPhoto(input: { venueId: ${'$'}venueId, photo: ${'$'}photo, altText: ${'$'}altText }) { photo { $PHOTO_FIELDS } }
+        }
+    """.trimIndent()
+
+    val REMOVE_EVENT_PHOTO: String = """
+        mutation RemoveEventPhoto(${'$'}id: ID!) {
+          removeEventPhoto(input: { id: ${'$'}id }) { id }
+        }
+    """.trimIndent()
+
     /** "Hide posts from {name}": a venue's or a person's, or shows them again. */
     val MUTE_POST_AUTHOR: String = """
         mutation MutePostAuthor(${'$'}venueId: ID, ${'$'}personId: ID, ${'$'}muted: Boolean) {
           mutePostAuthor(input: { venueId: ${'$'}venueId, personId: ${'$'}personId, muted: ${'$'}muted }) { muted }
+        }
+    """.trimIndent()
+
+    // endregion
+
+    // region Managing posts (the staff endpoint: the consumer one has no listings and no post writes)
+
+    /** The venues and talent listings the signed-in user manages, troupes included. */
+    val MANAGED_LISTINGS: String = """
+        # endpoint: staff
+        query ManagedListings {
+          me { listings { venues { id name } people { id name } troupes { id name } } }
+        }
+    """.trimIndent()
+
+    val CREATE_POST: String = """
+        # endpoint: staff
+        mutation CreatePost(${'$'}input: PostCreateInput!) {
+          createPost(input: ${'$'}input) { post { $POST_FIELDS } }
+        }
+    """.trimIndent()
+
+    val UPDATE_POST: String = """
+        # endpoint: staff
+        mutation UpdatePost(${'$'}input: PostUpdateInput!) {
+          updatePost(input: ${'$'}input) { post { $POST_FIELDS } }
+        }
+    """.trimIndent()
+
+    val DELETE_POST: String = """
+        # endpoint: staff
+        mutation DeletePost(${'$'}input: PostDeleteInput!) {
+          deletePost(input: ${'$'}input) { deletedId }
+        }
+    """.trimIndent()
+
+    val HIDE_POST_FROM_EVENT: String = """
+        # endpoint: staff
+        mutation HidePostFromEvent(${'$'}input: PostHideFromEventInput!) {
+          hidePostFromEvent(input: ${'$'}input) { post { $POST_FIELDS } }
         }
     """.trimIndent()
 

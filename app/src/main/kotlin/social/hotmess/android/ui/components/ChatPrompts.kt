@@ -1,10 +1,13 @@
 package social.hotmess.android.ui.components
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -36,8 +39,11 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -111,15 +117,20 @@ private fun QuietButton(text: String, onClick: () -> Unit) {
     }
 }
 
-/** A `surface-raised` card, 8 radius and a small shadow, with the 3dp spectrum stripe along its top. */
+/**
+ * A `surface-raised` card, 8 radius and a small shadow, with the 3dp spectrum stripe along its top. [highlighted]
+ * (an answer's Prompt label just led here) fades a 2dp `accent` edge in, and out again.
+ */
 @Composable
-private fun PromptSurface(modifier: Modifier = Modifier, stripe: Boolean = true, content: @Composable () -> Unit) {
+private fun PromptSurface(modifier: Modifier = Modifier, stripe: Boolean = true, highlighted: Boolean = false, content: @Composable () -> Unit) {
+    val edge by animateColorAsState(if (highlighted) tokens.accent else Color.Transparent, label = "prompt highlight")
     Column(
         modifier
             .fillMaxWidth()
             .shadow(1.dp, Radius.sm)
             .clip(Radius.sm)
-            .background(tokens.surfaceRaised),
+            .background(tokens.surfaceRaised)
+            .border(2.dp, edge, Radius.sm),
     ) {
         if (stripe) SpectrumBar(height = 3.dp)
         content()
@@ -127,10 +138,44 @@ private fun PromptSurface(modifier: Modifier = Modifier, stripe: Boolean = true,
 }
 
 /**
+ * A prompt's words clamped to three lines, with a quiet "Show more" (then "Show less") when they run over.
+ * [key] keeps the choice per prompt.
+ */
+@Composable
+private fun ClampedPromptText(text: String, style: TextStyle, key: String, modifier: Modifier = Modifier) {
+    var expanded by rememberSaveable(key) { mutableStateOf(false) }
+    var overflows by remember(text) { mutableStateOf(false) }
+    Column(modifier) {
+        Text(
+            text,
+            style = style,
+            color = tokens.ink,
+            maxLines = if (expanded) Int.MAX_VALUE else PromptLines,
+            overflow = TextOverflow.Ellipsis,
+            // Measured while clamped; once expanded it stays known, so "Show less" stays.
+            onTextLayout = { if (!expanded) overflows = it.hasVisualOverflow },
+        )
+        if (overflows) {
+            TextButton(
+                onClick = { expanded = !expanded },
+                contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp),
+                modifier = Modifier.semantics { contentDescription = if (expanded) "Show less of the prompt" else "Show all of the prompt" },
+            ) {
+                Text(if (expanded) "Show less" else "Show more", style = HotMessType.bodySmall.copy(fontWeight = FontWeight.SemiBold), color = tokens.inkMuted)
+            }
+        }
+    }
+}
+
+/** How many lines of a prompt the PromptBar and TriviaCard show before "Show more". */
+private const val PromptLines = 3
+
+/**
  * The night's pinned prompt under the room's title (design system PromptBar): the question-bubble disc,
- * "Tonight's prompt · 2 of 6", the prompt, and a footer ("14 answers · Next one at 9:15pm") with a quiet
- * "Answer". [collapsed] (once the reader scrolls, or under a pinned announcement) it's one line: "PROMPT",
- * the prompt truncated, and "Answer". A trivia prompt draws as a [TriviaCard] instead.
+ * "Tonight's prompt · 2 of 6", the prompt (three lines, then "Show more"), and a footer ("14 answers · Next one
+ * at 9:15pm") with a quiet "Answer". [collapsed] (once the reader scrolls, or under a pinned announcement) it's
+ * one line: "PROMPT", the prompt truncated, and "Answer"; tapping it runs [onExpand]. A trivia prompt draws as a
+ * [TriviaCard] instead. [highlighted] edges it in `accent` for a moment.
  */
 @Composable
 fun PromptBar(
@@ -140,15 +185,26 @@ fun PromptBar(
     modifier: Modifier = Modifier,
     collapsed: Boolean = false,
     answerCount: Int = 0,
+    highlighted: Boolean = false,
+    onExpand: (() -> Unit)? = null,
 ) {
     if (prompt.isTrivia && !collapsed) {
-        TriviaCard(prompt, answerCount, onAnswer, modifier)
+        TriviaCard(prompt, answerCount, onAnswer, modifier, highlighted = highlighted)
         return
     }
-    PromptSurface(modifier.padding(horizontal = Space.s3, vertical = Space.s1)) {
+    PromptSurface(modifier.padding(horizontal = Space.s3, vertical = Space.s1), highlighted = highlighted) {
         if (collapsed) {
             Row(
-                Modifier.fillMaxWidth().padding(start = Space.s3, end = Space.s1),
+                Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (onExpand != null) {
+                            Modifier.clickable(role = Role.Button, onClickLabel = "Show the whole prompt", onClick = onExpand)
+                        } else {
+                            Modifier
+                        },
+                    )
+                    .padding(start = Space.s3, end = Space.s1),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(Space.s2),
             ) {
@@ -171,7 +227,7 @@ fun PromptBar(
                 PromptGlyph()
                 Column(Modifier.weight(1f)) {
                     Text(prompt.overline.uppercase(), style = PromptOverline, color = tokens.accentInk, modifier = Modifier.semantics { heading() })
-                    Text(prompt.text, style = HotMessType.body.copy(fontWeight = FontWeight.SemiBold), color = tokens.ink)
+                    ClampedPromptText(prompt.text, HotMessType.body.copy(fontWeight = FontWeight.SemiBold), key = prompt.id)
                 }
             }
             Row(
@@ -192,7 +248,7 @@ fun PromptBar(
  * its reveal time; "Hide the answer" puts it back.
  */
 @Composable
-fun TriviaCard(prompt: ChatPrompt, answerCount: Int, onAnswer: () -> Unit, modifier: Modifier = Modifier) {
+fun TriviaCard(prompt: ChatPrompt, answerCount: Int, onAnswer: () -> Unit, modifier: Modifier = Modifier, highlighted: Boolean = false) {
     // What the reader chose ("Show the answer" or "Hide the answer"); null follows the reveal time.
     var choice by rememberSaveable(prompt.id) { mutableStateOf<Boolean?>(null) }
     // Revealed for everyone once revealAt passes, while the card shows; that overrides an earlier "Hide".
@@ -206,7 +262,7 @@ fun TriviaCard(prompt: ChatPrompt, answerCount: Int, onAnswer: () -> Unit, modif
     }
     val answer = prompt.answer?.takeIf { it.isNotBlank() }
     val revealed = answer != null && (choice ?: revealedForAll)
-    PromptSurface(modifier.padding(horizontal = Space.s3, vertical = Space.s1)) {
+    PromptSurface(modifier.padding(horizontal = Space.s3, vertical = Space.s1), highlighted = highlighted) {
         Column(Modifier.padding(start = Space.s3, end = Space.s3, top = 10.dp, bottom = Space.s1)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -219,7 +275,7 @@ fun TriviaCard(prompt: ChatPrompt, answerCount: Int, onAnswer: () -> Unit, modif
                     Text(it, style = HotMessType.bodySmall, color = tokens.inkMuted)
                 }
             }
-            Text(prompt.text, style = HotMessType.heading, color = tokens.ink, modifier = Modifier.padding(top = 2.dp))
+            ClampedPromptText(prompt.text, HotMessType.heading, key = prompt.id, modifier = Modifier.padding(top = 2.dp))
             Text(
                 "Shout it to your table before you look it up.",
                 style = HotMessType.bodySmall,
@@ -271,9 +327,10 @@ fun PromptCard(
     onAnswer: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    highlighted: Boolean = false,
 ) {
     Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-        PromptSurface(Modifier.widthIn(max = 330.dp)) {
+        PromptSurface(Modifier.widthIn(max = 330.dp), highlighted = highlighted) {
             Column(Modifier.padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = Space.s3), verticalArrangement = Arrangement.spacedBy(Space.s2)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s2)) {
                     AudienceMark(audienceName)
@@ -303,12 +360,28 @@ fun PromptCard(
 
 /**
  * The first line of an answer's bubble: a reply arrow and "Prompt" (or "Trivia") in caption size, weight
- * 600, in [color] (`ink-muted` on others' bubbles, `on-accent` on your own).
+ * 600, in [color] (`ink-muted` on others' bubbles, `on-accent` on your own). With [onClick] it's a button
+ * ("Go to the prompt") that runs [onOpen], taking the reader to the prompt; Compose stretches its touch target to 48dp.
  */
 @Composable
-fun PromptLabel(label: String, color: Color, modifier: Modifier = Modifier) {
+fun PromptLabel(label: String, color: Color, modifier: Modifier = Modifier, onOpen: (() -> Unit)? = null) {
     Row(
-        modifier.padding(bottom = 2.dp),
+        modifier
+            .then(
+                if (onOpen != null) {
+                    Modifier
+                        .clearAndSetSemantics {
+                            contentDescription = "$label. Go to the prompt"
+                            role = Role.Button
+                            onClick(label = "Go to the prompt") { onOpen(); true }
+                        }
+                        .clip(Radius.sm)
+                        .clickable(onClick = onOpen)
+                } else {
+                    Modifier
+                },
+            )
+            .padding(bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -353,7 +426,7 @@ fun AnswerChip(prompt: String, onClose: () -> Unit, modifier: Modifier = Modifie
 
 private val previewPrompt = ChatPrompt(
     id = "p-2",
-    text = "Who should have won last season? Find someone at the bar who disagrees.",
+    text = "Who should have won last season? Find someone near you who disagrees.",
     shownAs = ChatPromptShownAs.PINNED,
     number = 2,
     total = 6,
@@ -377,9 +450,18 @@ private fun PromptsPreview() {
         Column(Modifier.background(tokens.surface).padding(vertical = Space.s2), verticalArrangement = Arrangement.spacedBy(Space.s3)) {
             PromptBar(previewPrompt, "14 answers · Next one at 9:15pm", onAnswer = {})
             PromptBar(previewPrompt, null, onAnswer = {}, collapsed = true)
+            PromptBar(
+                previewPrompt.copy(
+                    text = "Tell the person next to you about the best night out you've ever had, who you were with, what made it, " +
+                        "and whether tonight has a shot at beating it. Then ask them the same.",
+                ),
+                "3 answers",
+                onAnswer = {},
+                highlighted = true,
+            )
             TriviaCard(previewTrivia, 9, onAnswer = {})
             PromptCard(
-                previewPrompt.copy(shownAs = ChatPromptShownAs.CARD, text = "Ask whoever is next to you what they're drinking."),
+                previewPrompt.copy(shownAs = ChatPromptShownAs.CARD, text = "Ask whoever is next to you what brought them out tonight."),
                 "Hot Mess",
                 Instant.parse("2026-10-24T04:14:00Z"),
                 onAnswer = {},

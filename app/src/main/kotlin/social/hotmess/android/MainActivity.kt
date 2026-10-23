@@ -280,7 +280,21 @@ class MainActivity : ComponentActivity(), GoogleAccounts {
         }
         val url = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.dataString ?: return
         if (graph.session.handleRedirect(url)) return
-        DeepLink.route(url)?.let { links.trySend(it) }
+        val link = DeepLink.link(url) ?: return
+        val route = link.route
+        // A texted Ping link: Now shows its invitation.
+        if (route is AppRoute.NowPing && route.invitation != null) graph.openPingInvitation(route)
+        val expiry = link.expiry
+        if (expiry == null) {
+            links.trySend(route)
+            return
+        }
+        // A share link signs when it expires: one that has opens Venues and says so, never the record.
+        lifecycleScope.launch {
+            val host = link.host ?: graph.configuration.audienceHost
+            val expired = graph.api.shareLinkExpired(host, link.path, expiry)
+            links.trySend(if (expired) AppRoute.LinkExpired else route)
+        }
     }
 
     /**
