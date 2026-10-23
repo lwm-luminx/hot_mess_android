@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ViewAgenda
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Shield
@@ -301,6 +302,17 @@ fun MeScreen(navigator: Navigator) {
                     InfoRow("Getting help at a venue", icon = Icons.Rounded.Shield, onClick = navigator::openGettingHelp, trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight)
                     RowDivider()
                     InfoRow("Your safety alerts", icon = Icons.Rounded.NotificationsActive, onClick = navigator::openSafetyAlerts, trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight)
+                }
+            }
+            item {
+                // Promoted cards the user turned off: kept on this phone, never sent.
+                DetailSection("Cards") {
+                    InfoRow(
+                        "Cards you see",
+                        icon = Icons.Rounded.ViewAgenda,
+                        onClick = navigator::openCardsYouSee,
+                        trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                    )
                 }
             }
             safety?.blockedUsers?.takeIf { it.isNotEmpty() }?.let { blocked ->

@@ -28,6 +28,7 @@ import social.hotmess.android.session.FacebookAppSignIn
 import social.hotmess.android.session.SafetyStore
 import social.hotmess.android.session.SessionStore
 import social.hotmess.android.support.ErrorReporter
+import social.hotmess.android.ui.screens.CardSettings
 import social.hotmess.core.AppRoute
 import social.hotmess.core.CableConnection
 import social.hotmess.core.ChatMutes
@@ -48,6 +49,9 @@ class AppGraph(context: Context, val configuration: AppConfiguration = AppConfig
 
     /** Terms of use, blocking and reporting, as the API keeps them for the signed-in user. */
     val safety = SafetyStore(api)
+
+    /** Which promoted cards the user turned off (on this device only), and the reports of the ones they saw. */
+    val cards = CardSettings(context.applicationContext, audienceKit, scope)
 
     /** Who the user muted in each chat room, kept on this device only (the app's preferences). */
     val chatMutes = ChatMutes(PreferenceStringSets(context.applicationContext))
