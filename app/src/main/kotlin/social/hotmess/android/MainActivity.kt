@@ -280,7 +280,10 @@ class MainActivity : ComponentActivity(), GoogleAccounts {
         }
         val url = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.dataString ?: return
         if (graph.session.handleRedirect(url)) return
-        DeepLink.route(url)?.let { links.trySend(it) }
+        val route = DeepLink.route(url) ?: return
+        // A texted Ping link: Now shows its invitation.
+        if (route is AppRoute.NowPing && route.invitation != null) graph.openPingInvitation(route)
+        links.trySend(route)
     }
 
     /**

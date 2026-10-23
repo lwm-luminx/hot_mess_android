@@ -1,15 +1,26 @@
 package social.hotmess.android.ui.screens
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.ContactsContract
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -22,7 +33,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Campaign
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -31,6 +44,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -50,6 +64,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -60,6 +75,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import social.hotmess.android.ui.LocalAppGraph
 import social.hotmess.android.ui.components.Avatar
@@ -77,7 +94,9 @@ import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.Radius
 import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
+import social.hotmess.android.ui.textMessage
 import social.hotmess.core.ApiError
+import social.hotmess.core.AppRoute
 import social.hotmess.core.BlockedUser
 import social.hotmess.core.Formatting
 import social.hotmess.core.Friend
@@ -85,11 +104,16 @@ import social.hotmess.core.HotMessApi
 import social.hotmess.core.LoadState
 import social.hotmess.core.Ping
 import social.hotmess.core.PingChoices
+import social.hotmess.core.PingContact
+import social.hotmess.core.PingContacts
+import social.hotmess.core.PingInvitation
 import social.hotmess.core.PingPick
 import social.hotmess.core.PingReach
 import social.hotmess.core.PingSelection
 import social.hotmess.core.PingStrip
 import social.hotmess.core.PingTarget
+import social.hotmess.core.PingText
+import social.hotmess.core.RecordId
 import social.hotmess.core.ReportSubject
 import social.hotmess.core.ReportTarget
 
@@ -109,6 +133,10 @@ class PingActions(
     var error: String? by mutableStateOf<String?>(null)
 
     fun join(ping: Ping, target: PingTarget?) = perform(ping.id) { api.joinPing(ping.id, target?.id) }
+
+    /** "I'm in" from a texted link, on one pick ([targetId]) or the whole Ping, with the link's token. */
+    fun join(invitation: PingInvitation, targetId: String?) =
+        perform(invitation.id) { api.joinPing(invitation.id, targetId, invitationToken = invitation.token) }
 
     fun leave(ping: Ping) = perform(ping.id) { api.leavePing(ping.id) }
 
@@ -483,9 +511,9 @@ fun PingSheet(preselect: PingPick?, onDismiss: () -> Unit, onSent: (Ping) -> Uni
                 onSend = { selection, note, reach ->
                     graph.api.sendPing(selection.venueIds, selection.eventIds, note, localeId, reach)
                 },
-                onSent = { ping ->
+                onSent = { ping, done ->
                     onSent(ping)
-                    scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() }
+                    if (done) scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() }
                 },
             )
         }
@@ -499,9 +527,12 @@ private fun PingForm(
     hasLocale: Boolean,
     onCancel: () -> Unit,
     onSend: suspend (PingSelection, String, PingReach) -> Ping,
-    onSent: (Ping) -> Unit,
+    /** The Ping as sent, and whether the sheet is done; it stays open when the texts to contacts couldn't be made. */
+    onSent: (Ping, Boolean) -> Unit,
 ) {
     val editing = choices.myPing
+    val api = LocalAppGraph.current.api
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val shown = remember(choices, preselect) {
         choices.including(editing?.targets.orEmpty().mapNotNull { PingPick.of(it) } + listOfNotNull(preselect))
@@ -511,6 +542,11 @@ private fun PingForm(
     var reach by remember(editing?.id) { mutableStateOf(editing?.reach ?: PingReach.FRIENDS) }
     var sending by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    // Who gets the link by text, for this send only: editing starts with none, to text more people.
+    var contacts by remember { mutableStateOf(PingContacts()) }
+    val pickContact = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        result.data?.data?.let { context.phoneContact(it) }?.let { contacts = contacts.adding(it) }
+    }
 
     fun send() {
         if (sending) return
@@ -518,7 +554,26 @@ private fun PingForm(
         error = null
         scope.launch {
             try {
-                onSent(onSend(selection, note, reach))
+                val ping = onSend(selection, note, reach)
+                if (contacts.isEmpty) {
+                    onSent(ping, true)
+                    return@launch
+                }
+                // The signed link names you as the sender; the texts go from your own Messages app.
+                val url = try {
+                    api.pingShareLink(ping.id)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
+                }
+                if (url == null) {
+                    onSent(ping, false)
+                    error = "Your ping is out, but its link couldn't be made for texting. Send again to try the texts again."
+                    return@launch
+                }
+                context.textMessage(PingText.smsUri(contacts.numbers), PingText.body(ping, url))
+                onSent(ping, true)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -620,6 +675,17 @@ private fun PingForm(
                 color = if (reach == PingReach.FRIENDS_OF_CIRCLE) tokens.ink else tokens.inkMuted,
                 modifier = Modifier.padding(horizontal = Space.s1),
             )
+            ContactsPicker(
+                contacts,
+                onAdd = {
+                    try {
+                        pickContact.launch(Intent(Intent.ACTION_PICK, ContactsContract.CommonDataKinds.Phone.CONTENT_URI))
+                    } catch (_: ActivityNotFoundException) {
+                        error = "There's no contacts app to pick from."
+                    }
+                },
+                onRemove = { contacts = contacts.removing(it) },
+            )
             error?.let { Text(it, style = HotMessType.bodySmall, color = tokens.danger, modifier = Modifier.padding(horizontal = Space.s1)) }
             PrimaryButton(
                 if (sending) "Sending…" else "Send ping",
@@ -629,7 +695,11 @@ private fun PingForm(
                 modifier = Modifier.fillMaxWidth(),
             )
             Text(
-                "Your friends on Hot Mess will get this. It clears at 5am.",
+                if (contacts.isEmpty) {
+                    "Your friends on Hot Mess will get this. It clears at 5am."
+                } else {
+                    "Your friends on Hot Mess will get this, and Messages opens to text the link. It clears at 5am."
+                },
                 style = HotMessType.bodySmall,
                 color = tokens.inkMuted,
                 modifier = Modifier.fillMaxWidth().padding(bottom = Space.s2),
@@ -640,6 +710,74 @@ private fun PingForm(
 }
 
 private const val NOTE_LIMIT = 140
+
+/**
+ * "Add contacts" on the send sheet: people from the phone's contacts to text the Ping's link to, as removable chips,
+ * one pick at a time. The system picker hands over only the picked number, so it needs no Contacts permission.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ContactsPicker(contacts: PingContacts, onAdd: () -> Unit, onRemove: (PingContact) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(Space.s1)) {
+        if (!contacts.isEmpty) {
+            Text("Text the link to", style = HotMessType.caption, color = tokens.inkMuted, modifier = Modifier.padding(horizontal = Space.s1))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.s2)) {
+                contacts.contacts.forEach { contact ->
+                    InputChip(
+                        selected = false,
+                        onClick = { onRemove(contact) },
+                        label = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(contact.label, style = HotMessType.bodySmall, color = tokens.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (contact.name.isNotBlank()) {
+                                    Text(
+                                        contact.number,
+                                        style = HotMessType.bodySmall,
+                                        color = tokens.inkMuted,
+                                        maxLines = 1,
+                                        modifier = Modifier.padding(start = Space.s1),
+                                    )
+                                }
+                            }
+                        },
+                        trailingIcon = {
+                            Icon(Icons.Rounded.Close, contentDescription = "Remove ${contact.label}", tint = tokens.inkMuted, modifier = Modifier.size(16.dp))
+                        },
+                        modifier = Modifier.testTag("ping.contact"),
+                    )
+                }
+            }
+        }
+        TextButton(onClick = onAdd, modifier = Modifier.testTag("ping.addContacts")) {
+            Icon(Icons.Rounded.PersonAdd, contentDescription = null, tint = tokens.accentInk, modifier = Modifier.size(20.dp))
+            Text(
+                if (contacts.isEmpty) "Add contacts" else "Add another",
+                style = HotMessType.label,
+                color = tokens.accentInk,
+                modifier = Modifier.padding(start = Space.s1),
+            )
+        }
+    }
+}
+
+/** The name and number of a row picked from `CommonDataKinds.Phone`, readable through the picker's grant. */
+private fun Context.phoneContact(uri: Uri): PingContact? =
+    try {
+        contentResolver.query(
+            uri,
+            arrayOf(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, ContactsContract.CommonDataKinds.Phone.NUMBER),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            if (!cursor.moveToFirst()) return@use null
+            val name = cursor.getString(0).orEmpty()
+            val number = cursor.getString(1) ?: return@use null
+            PingContact(name, number)
+        }
+    } catch (_: SecurityException) {
+        null
+    }
 
 @Composable
 private fun PickGroup(title: String) {
@@ -694,4 +832,133 @@ private fun ReachPicker(selection: PingReach, onSelect: (PingReach) -> Unit) {
             }
         }
     }
+}
+
+/** What a texted Ping link shows: the Ping as a friend sees it, or its invitation. */
+private sealed interface InvitationState {
+    data object Loading : InvitationState
+
+    /** The Ping is already among the viewer's (a friend's), or they just joined it. */
+    data class Visible(val ping: Ping) : InvitationState
+
+    data class Invited(val invitation: PingInvitation) : InvitationState
+
+    /** The link ran out ([gone]), or the invitation couldn't load. */
+    data class Failed(val message: String, val gone: Boolean, val isRetryable: Boolean) : InvitationState
+}
+
+/**
+ * A Ping link texted from someone's send sheet ([link] carries its token). When the Ping is already a friend's that
+ * the viewer can see, it shows as on Now; otherwise the invitation (title, note, picks, when it ends) with "I'm in",
+ * which joins with the link's token. Your own Ping is on Now already, so the sheet doesn't open for it.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PingInvitationSheet(link: AppRoute.NowPing, onDismiss: () -> Unit, onOpenTarget: (PingTarget) -> Unit) {
+    val graph = LocalAppGraph.current
+    val pingId = link.pingId ?: return
+    val token = link.invitation ?: return
+    val userId = rememberUserId()
+    var attempt by remember { mutableIntStateOf(0) }
+    var state by remember(link) { mutableStateOf<InvitationState>(InvitationState.Loading) }
+    val actions = rememberPingActions { ping ->
+        state = InvitationState.Visible(ping)
+        graph.pingUpdated(ping.id)
+    }
+
+    LaunchedEffect(link, attempt) {
+        state = InvitationState.Loading
+        state = coroutineScope<InvitationState> {
+            val invitation = async { runCatching { graph.api.pingInvitation(graph.configuration.audienceHost, pingId, token) } }
+            // Already visible to the viewer: as a friend's, or their own.
+            val visible = try {
+                graph.api.nowOrPings(null).let { now -> listOfNotNull(now.myPing) + now.friendPings }
+                    .firstOrNull { RecordId.same(it.id, pingId) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+            when {
+                visible?.isMine == true -> {
+                    invitation.cancel()
+                    onDismiss()
+                    InvitationState.Loading
+                }
+                visible != null -> {
+                    invitation.cancel()
+                    InvitationState.Visible(visible)
+                }
+                else -> invitation.await().fold(
+                    onSuccess = { InvitationState.Invited(it) },
+                    onFailure = { error ->
+                        if (error is CancellationException) throw error
+                        val gone = PingInvitation.isGone(error)
+                        val apiError = ApiError.of(error)
+                        InvitationState.Failed(
+                            if (gone) "This ping has ended, or its link has expired." else apiError.message ?: "Try again in a moment.",
+                            gone = gone,
+                            isRetryable = !gone && apiError.isRetryable,
+                        )
+                    },
+                )
+            }
+        }
+    }
+
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = tokens.surface) {
+        Column(
+            Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = Space.s4, vertical = Space.s2),
+            verticalArrangement = Arrangement.spacedBy(Space.s3),
+        ) {
+            when (val current = state) {
+                InvitationState.Loading -> Box(Modifier.fillMaxWidth().padding(Space.s12), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = tokens.accent)
+                }
+                is InvitationState.Failed -> Column(
+                    Modifier.fillMaxWidth().padding(Space.s4),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(Space.s3),
+                ) {
+                    Text(current.message, style = HotMessType.body, color = tokens.inkMuted, textAlign = TextAlign.Center)
+                    if (current.isRetryable) PrimaryButton("Try again", { attempt++ }) else SecondaryButton("OK", onDismiss)
+                }
+                is InvitationState.Visible -> {
+                    Text("${current.ping.user.firstName}'s ping", style = HotMessType.heading, color = tokens.ink, modifier = Modifier.padding(horizontal = Space.s1))
+                    FriendPingCard(current.ping, userId, actions, onOpenTarget)
+                }
+                is InvitationState.Invited -> InvitationCard(current.invitation, busy = actions.busy != null) { targetId ->
+                    actions.join(current.invitation, targetId)
+                }
+            }
+        }
+    }
+}
+
+/** An invitation to a Ping the viewer can't otherwise see: who, their note, each pick with "I'm in", and the end. */
+@Composable
+private fun InvitationCard(invitation: PingInvitation, busy: Boolean, onJoin: (targetId: String?) -> Unit) {
+    Column(Modifier.padding(horizontal = Space.s1), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(invitation.headline, style = HotMessType.heading, color = tokens.ink)
+        invitation.noteText?.let { Text("“$it”", style = HotMessType.body, color = tokens.inkMuted, maxLines = 3, overflow = TextOverflow.Ellipsis) }
+        Text("Ends " + (invitation.expiresAt?.let { Formatting.clock(it) } ?: "5am"), style = HotMessType.bodySmall, color = tokens.inkMuted)
+    }
+    Card {
+        if (invitation.targets.isEmpty()) {
+            RowButton(null) {
+                Text("Anywhere tonight", style = HotMessType.body, color = tokens.ink, modifier = Modifier.weight(1f))
+                JoinButton(joined = false, enabled = !busy) { onJoin(null) }
+            }
+        } else {
+            invitation.targets.forEachIndexed { index, target ->
+                if (index > 0) RowDivider()
+                RowButton(null) {
+                    Text(target.name, style = HotMessType.subheading, color = tokens.ink, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    JoinButton(joined = false, enabled = !busy) { onJoin(target.id) }
+                }
+            }
+        }
+    }
+    Spacer(Modifier.height(Space.s2))
 }

@@ -662,6 +662,55 @@ data class PingTarget(
 @Serializable
 data class PingJoin(val id: String, val user: Friend, val targetId: String? = null)
 
+/**
+ * What a texted Ping link shows someone who may not be the sender's friend: `GET /v1/share/invitation`, which needs
+ * no sign-in and never names the circle. [title] is the API's ("Jordan wants to go out"); [token] is the link's `e`,
+ * which "I'm in" sends back as `invitationToken`.
+ */
+@Serializable
+data class PingInvitation(
+    val kind: String = "",
+    val id: String,
+    val title: String = "",
+    val note: String? = null,
+    @SerialName("sender_name") val senderName: String? = null,
+    /** The Ping's end, 5am. */
+    @SerialName("expires_at") @Serializable(with = InstantSerializer::class) val expiresAt: Instant? = null,
+    val targets: List<Target> = emptyList(),
+    /** Not in the response: the link's token, set by [parse]. */
+    val token: String = "",
+) {
+    /** A pick, by name. [path] is its page (`/venues/<id>` or `/events/<id>`). */
+    @Serializable
+    data class Target(val id: String, val name: String = "", val path: String? = null)
+
+    /** The note without surrounding space, or null when there's nothing to show. */
+    val noteText: String? get() = note?.trim()?.takeIf { it.isNotEmpty() }
+
+    /** "Drag Bingo or The Wildrose", or "Anywhere tonight?" with no picks. */
+    val placesSummary: String
+        get() = targets.map { it.name }.filter { it.isNotBlank() }.let { if (it.isEmpty()) Ping.ANYWHERE else Formatting.list(it, "or") }
+
+    /** "Jordan wants to go out", falling back to the sender's name when the API sent no title. */
+    val headline: String
+        get() = title.trim().ifEmpty { senderName?.trim()?.takeIf { it.isNotEmpty() }?.let { "$it wants to go out" } ?: "You're invited out" }
+
+    companion object {
+        /** The path a Ping's share link and invitation are for. */
+        fun path(pingId: String): String = "/pings/$pingId"
+
+        /** Whether [error] means the link has expired, ended or been altered (410 or 404), not that it couldn't load. */
+        fun isGone(error: Throwable): Boolean =
+            ApiError.of(error).let { it == ApiError.NotFound || (it is ApiError.Server && it.status == 410) }
+
+        /** The invitation in [text] with [token] kept on it, or null when it isn't a Ping's or doesn't decode. */
+        fun parse(text: String, token: String, json: kotlinx.serialization.json.Json = HotMessApi.json): PingInvitation? =
+            runCatching { json.decodeFromString(serializer(), text) }.getOrNull()
+                ?.takeIf { it.kind.isEmpty() || it.kind == "ping" }
+                ?.copy(token = token)
+    }
+}
+
 /** What's happening where the device is, from `reportLocation`. */
 @Serializable
 data class Now(

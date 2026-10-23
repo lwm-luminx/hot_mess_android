@@ -313,10 +313,44 @@ class HotMessApi(val client: AudienceKitClient) {
             ),
         ).sendPing.ping
 
-    /** "I'm in" on one pick ([targetId]), or on the Ping as a whole when that's null. */
-    suspend fun joinPing(pingId: String, targetId: String?): Ping =
-        mutate(Documents.JOIN_PING, JoinPingResponse.serializer(), graphQLVariables("pingId" to pingId, "targetId" to targetId))
-            .joinPing.ping
+    /**
+     * "I'm in" on one pick ([targetId]), or on the Ping as a whole when that's null. [invitationToken], a texted
+     * link's `e`, lets someone who isn't the sender's friend join.
+     */
+    suspend fun joinPing(pingId: String, targetId: String?, invitationToken: String? = null): Ping =
+        mutate(
+            Documents.JOIN_PING,
+            JoinPingResponse.serializer(),
+            graphQLVariables("pingId" to pingId, "targetId" to targetId, "invitationToken" to invitationToken),
+        ).joinPing.ping
+
+    /** The signed link to the user's Ping [pingId] to text to contacts, or null when the API made none. */
+    suspend fun pingShareLink(pingId: String): String? =
+        query(Documents.SHARE_LINK, ShareLinkResponse.serializer(), graphQLVariables("path" to PingInvitation.path(pingId)))
+            .shareLink?.url?.takeIf { it.isNotBlank() }
+
+    /**
+     * What a texted Ping link ([token], its `e`) shows: `GET /v1/share/invitation`, open to anyone. [host] names the
+     * audience. An expired, ended or altered link fails ([ApiError.NotFound] or a 410's [ApiError.Server]); see
+     * [PingInvitation.isGone].
+     */
+    suspend fun pingInvitation(host: String, pingId: String, token: String): PingInvitation {
+        val request = APIRequest(
+            path = "/v1/share/invitation",
+            queryItems = listOf("host" to host, "path" to PingInvitation.path(pingId), "e" to token),
+            authenticated = false,
+        )
+        val bytes = try {
+            client.data(request)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: AudienceKitException) {
+            // A link that's run out is expected, not a failure to report.
+            val error = ApiError.from(e)
+            throw if (PingInvitation.isGone(error)) error else failed(error, "GET /v1/share/invitation")
+        }
+        return PingInvitation.parse(bytes.toString(Charsets.UTF_8), token) ?: throw ApiError.NotFound
+    }
 
     /** Takes back "I'm in" on a friend's Ping. */
     suspend fun leavePing(pingId: String): Ping =
@@ -939,6 +973,11 @@ private data class JoinPingResponse(val joinPing: PingPayload)
 
 @Serializable
 private data class LeavePingResponse(val leavePing: PingPayload)
+
+@Serializable
+private data class ShareLinkResponse(val shareLink: Link? = null) {
+    @Serializable data class Link(val url: String? = null)
+}
 
 @Serializable
 private data class SafetyResponse(val me: Me? = null) {
