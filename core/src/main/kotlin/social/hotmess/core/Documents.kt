@@ -233,9 +233,20 @@ object Documents {
         }
     """.trimIndent()
 
+    /** [invitationToken] is a texted link's `e`, which lets someone who isn't the sender's friend join. */
     val JOIN_PING: String = """
-        mutation JoinPing(${'$'}pingId: ID!, ${'$'}targetId: ID) {
-          joinPing(input: { pingId: ${'$'}pingId, targetId: ${'$'}targetId }) { ping { $PING_FIELDS } }
+        mutation JoinPing(${'$'}pingId: ID!, ${'$'}targetId: ID, ${'$'}invitationToken: String) {
+          joinPing(input: { pingId: ${'$'}pingId, targetId: ${'$'}targetId, invitationToken: ${'$'}invitationToken }) { ping { $PING_FIELDS } }
+        }
+    """.trimIndent()
+
+    /**
+     * A signed link to [path] that names the signed-in user as its sender, for texting a Ping to contacts. The API
+     * ends it with the Ping (5am) at the latest.
+     */
+    val SHARE_LINK: String = """
+        query ShareLink(${'$'}path: String!) {
+          shareLink(path: ${'$'}path, lifetime: DAY) { url expiresAt }
         }
     """.trimIndent()
 
@@ -329,6 +340,16 @@ object Documents {
     val UNBLOCK_USER: String = """
         mutation UnblockUser(${'$'}userId: ID!) {
           unblockUser(input: { userId: ${'$'}userId }) { blockedUsers { id name avatarUrl } }
+        }
+    """.trimIndent()
+
+    /**
+     * Asks someone to be friends (`sendFriendRequest`), from a chat room's profile sheet; returns where the request
+     * stands (PENDING until they answer, ACCEPTED when they'd already asked the viewer).
+     */
+    val SEND_FRIEND_REQUEST: String = """
+        mutation SendFriendRequest(${'$'}userId: ID!) {
+          sendFriendRequest(input: { userId: ${'$'}userId }) { friendRequest { id status } }
         }
     """.trimIndent()
 

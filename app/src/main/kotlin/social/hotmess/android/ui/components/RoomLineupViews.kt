@@ -198,7 +198,7 @@ internal fun LineupMoreChip(folded: Int, onOpen: () -> Unit) {
  * ("Drag Bingo · The Wildrose") and a Done button; "Tonight's lineup", the [place]'s row then each of [lineup]
  * with its role, set time for a hard start, presence in words when the room says, and its badge; then
  * "Here now · N" and "Here recently" from [people]. Lineup rows open the listing ([onOpenLineup]); a guest
- * other than the viewer opens [onGuest], for reporting or blocking them.
+ * other than the viewer opens [onGuest], to see their profile.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
