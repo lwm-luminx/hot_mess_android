@@ -6,8 +6,8 @@ import java.time.Instant
 
 /**
  * A post by a venue or a talent listing: an announcement, a special, a poster or photos that stays on
- * their page, unlike chat. Hot Mess only reads posts and comments on them; venues post from Velvet,
- * talent from Backstage.
+ * their page, unlike chat. Everyone reads posts and comments on them; whoever manages the venue or the talent
+ * listing also writes and manages them here, as they do in Velvet and Backstage.
  */
 @Serializable
 data class Post(
@@ -31,6 +31,10 @@ data class Post(
     val person: Ref? = null,
     /** The venue posting it, or a talent post's event venue. */
     val venue: Ref? = null,
+    /** Whether the event's venue hid this talent post from the event. It still shows on the person's page. */
+    val hiddenFromEvent: Boolean = false,
+    /** Public posts are on the web too (hotmess.social, link previews) while their poster is public; Community ones need sign-in. */
+    val visibility: PostVisibility = PostVisibility.COMMUNITY,
 ) {
     @Serializable
     data class Ref(val id: String)
@@ -50,9 +54,16 @@ data class Post(
         get() = person?.let { PostPoster(PostPoster.Kind.PERSON, it.id, posterName) }
             ?: venue?.let { PostPoster(PostPoster.Kind.VENUE, it.id, posterName) }
 
-    /** What Share sends with the post's text: its poster's page, until hotmess.social has a page per post. */
-    val shareUrl: String?
-        get() = person?.let { "https://hotmess.social/people/${it.id}" } ?: venue?.let { "https://hotmess.social/venues/${it.id}" }
+    /** Who wrote it, for editing: the venue, or the talent listing. */
+    val author: PostAuthor?
+        get() = person?.let { PostAuthor(PostAuthor.Kind.PERSON, it.id, posterName) }
+            ?: venue?.let { PostAuthor(PostAuthor.Kind.VENUE, it.id, posterName) }
+
+    /**
+     * What Share sends with the post's text: the post's own page on hotmess.social. A Public post shows there and in
+     * link previews; a Community one asks whoever opens it to sign in. In the app it opens the post either way.
+     */
+    val shareUrl: String get() = "https://hotmess.social/posts/${id.lowercase()}"
 
     /**
      * The metadata line: "Pinned · 2h · Edited · on Drag Bingo". [showsPin] is off where pins don't float
@@ -162,3 +173,90 @@ fun postsSubject(kind: String, id: String): PostsSubject =
 /** Posts from the last [hours], for Now's "Latest from tonight". */
 fun List<Post>.recent(hours: Long, now: Instant = Instant.now()): List<Post> =
     filter { !it.createdAt.isBefore(now.minus(Duration.ofHours(hours))) }
+
+/** Who can see a post: the API's `PostVisibility`. */
+@Serializable
+enum class PostVisibility(val title: String, val summary: String) {
+    /** People signed in to Hot Mess. The default. */
+    COMMUNITY("Community", "People signed in to Hot Mess. A shared link asks them to sign in."),
+
+    /** The web too: hotmess.social, link previews and search, while the poster's own page is Public. */
+    PUBLIC("Public", "On hotmess.social too, in link previews and search. Comments stay in the app."),
+}
+
+/** Who a manager posts as: a venue they manage, or a talent listing they manage or act for (a troupe included). */
+data class PostAuthor(val kind: Kind, val id: String, val name: String) {
+    enum class Kind { VENUE, PERSON }
+
+    val isVenue: Boolean get() = kind == Kind.VENUE
+}
+
+/** Where a new post goes: the author's own page, or an event (at the venue, or one the person is on). */
+sealed interface PostTarget {
+    data object Page : PostTarget
+
+    data class Event(val id: String, val name: String) : PostTarget
+}
+
+/** What a manager does to a post from its menu. */
+enum class PostManageAction { EDIT, TOGGLE_PIN, TOGGLE_COMMENTS, TOGGLE_VISIBILITY, TOGGLE_HIDDEN_FROM_EVENT, DELETE }
+
+/** The venues and talent the signed-in user manages here, from the staff view (`me { listings }`); empty for everyone else. */
+data class ManagedListings(val venues: List<PostAuthor> = emptyList(), val people: List<PostAuthor> = emptyList()) {
+    val isEmpty: Boolean get() = venues.isEmpty() && people.isEmpty()
+
+    fun managesVenue(id: String?): Boolean = id != null && venues.any { RecordId.same(it.id, id) }
+
+    fun managesPerson(id: String?): Boolean = id != null && people.any { RecordId.same(it.id, id) }
+
+    /** Whether they may edit, pin, close comments on or delete it: they manage whoever posted it. */
+    fun canManage(post: Post): Boolean = if (post.person != null) managesPerson(post.person.id) else managesVenue(post.venue?.id)
+
+    /** Whether they may hide a talent post from its event: they manage the event's venue. */
+    fun canHideFromEvent(post: Post): Boolean = post.person != null && post.event != null && managesVenue(post.venue?.id)
+
+    /**
+     * Who they can post as on a page: the venue's or the person's own, or an event's (its venue, and whoever on it
+     * they manage).
+     */
+    fun authors(subject: PostsSubject, eventVenueId: String? = null, eventPeople: List<String> = emptyList()): List<PostAuthor> =
+        when (subject) {
+            is PostsSubject.Venue -> venues.filter { RecordId.same(it.id, subject.id) }
+            is PostsSubject.Person -> people.filter { RecordId.same(it.id, subject.id) }
+            is PostsSubject.Event ->
+                venues.filter { eventVenueId != null && RecordId.same(it.id, eventVenueId) } +
+                    people.filter { person -> eventPeople.any { RecordId.same(it, person.id) } }
+            is PostsSubject.Locale -> emptyList()
+        }
+
+    companion object {
+        val NONE = ManagedListings()
+
+        /** The most photos a post takes. */
+        const val MAX_PHOTOS = 4
+    }
+}
+
+/** A photo for a new post: a JPEG and what it shows. */
+class PostPhotoUpload(val jpeg: ByteArray, val altText: String = "")
+
+/** A manager's post written, edited or deleted, for the lists showing it. */
+sealed interface PostChange {
+    data class Updated(val post: Post) : PostChange
+
+    data class Deleted(val id: String) : PostChange
+}
+
+/**
+ * This list with [change] in it: an edited post in its place, a new one first, a deleted one gone. Where pins float
+ * ([floatsPins]), pinned posts go back to the top.
+ */
+fun List<Post>.applying(change: PostChange, floatsPins: Boolean = true): List<Post> {
+    val changed = when (change) {
+        is PostChange.Deleted -> filterNot { RecordId.same(it.id, change.id) }
+        is PostChange.Updated ->
+            if (any { RecordId.same(it.id, change.post.id) }) map { if (RecordId.same(it.id, change.post.id)) change.post else it }
+            else listOf(change.post) + this
+    }
+    return if (floatsPins) changed.sortedByDescending { it.pinned } else changed
+}

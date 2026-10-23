@@ -25,6 +25,7 @@ import social.hotmess.android.push.PushRegistrar
 import social.hotmess.android.session.AuthState
 import social.hotmess.android.session.BrandStore
 import social.hotmess.android.session.FacebookAppSignIn
+import social.hotmess.android.session.ListingsStore
 import social.hotmess.android.session.SafetyStore
 import social.hotmess.android.session.SessionStore
 import social.hotmess.android.support.ErrorReporter
@@ -48,6 +49,9 @@ class AppGraph(context: Context, val configuration: AppConfiguration = AppConfig
 
     /** Terms of use, blocking and reporting, as the API keeps them for the signed-in user. */
     val safety = SafetyStore(api)
+
+    /** The venues and talent the signed-in user manages, for writing and managing their posts. */
+    val listings = ListingsStore(api)
 
     /** Who the user muted in each chat room, kept on this device only (the app's preferences). */
     val chatMutes = ChatMutes(PreferenceStringSets(context.applicationContext))
@@ -99,11 +103,13 @@ class AppGraph(context: Context, val configuration: AppConfiguration = AppConfig
                         api.friends.clear()
                         notifications.clear()
                         safety.clear()
+                        listings.clear()
                         cable.disconnect()
                     }
                     AuthState.SignedIn -> {
                         if (isForeground) notifications.start()
                         scope.launch { safety.refresh() }
+                        scope.launch { listings.refresh() }
                     }
                     else -> Unit
                 }

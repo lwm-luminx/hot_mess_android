@@ -77,9 +77,13 @@ import social.hotmess.core.AppRoute
 import social.hotmess.core.BlockedUser
 import social.hotmess.core.LoadState
 import social.hotmess.core.Post
+import social.hotmess.core.PostChange
 import social.hotmess.core.PostComment
 import social.hotmess.core.PostDetail
+import social.hotmess.core.PostManageAction
 import social.hotmess.core.PostPoster
+import social.hotmess.core.PostVisibility
+import social.hotmess.core.applying
 import social.hotmess.core.PostsFilter
 import social.hotmess.core.PostsSubject
 import social.hotmess.core.ReportSubject
@@ -97,18 +101,45 @@ fun rememberPosts(subject: PostsSubject, from: PostsFilter = PostsFilter.ALL): L
 
 /**
  * The card actions every post list shares: open a route, report the post, and "Hide posts from {name}"
- * (confirmed, then [onHidden] drops their posts from the list). Shows its own dialogs.
+ * (confirmed, then [onHidden] drops their posts from the list). For whoever manages the poster, the manager's options
+ * too: edit, pin, comments, Public or Community, hide from the event and delete (confirmed), each handing [onChange] the
+ * post as saved. Shows its own dialogs.
  */
 @Composable
-fun rememberPostActions(navigator: Navigator, onHidden: (PostPoster) -> Unit = {}): PostActions {
+fun rememberPostActions(
+    navigator: Navigator,
+    onHidden: (PostPoster) -> Unit = {},
+    onChange: (PostChange) -> Unit = {},
+): PostActions {
     val graph = LocalAppGraph.current
     val scope = rememberCoroutineScope()
     val signedIn = rememberUserId() != null
+    val listings by graph.listings.state.collectAsStateWithLifecycle()
     var reporting by remember { mutableStateOf<ReportSubject?>(null) }
     var hiding by remember { mutableStateOf<PostPoster?>(null) }
+    var editing by remember { mutableStateOf<Post?>(null) }
+    var deleting by remember { mutableStateOf<Post?>(null) }
     var failure by remember { mutableStateOf<String?>(null) }
 
+    /** Runs a manager's change, reporting a refusal as the API wrote it. */
+    fun save(fallback: String, change: suspend () -> PostChange) {
+        scope.launch {
+            try {
+                onChange(change())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: ApiError.Rejected) {
+                failure = e.message
+            } catch (_: Exception) {
+                failure = fallback
+            }
+        }
+    }
+
     reporting?.let { ReportDialog(it) { reporting = null } }
+    editing?.let { post ->
+        PostComposer(PostComposerMode.Edit(post), onDismiss = { editing = null }) { onChange(PostChange.Updated(it)) }
+    }
     hiding?.let { poster ->
         AlertDialog(
             onDismissRequest = { hiding = null },
@@ -133,6 +164,24 @@ fun rememberPostActions(navigator: Navigator, onHidden: (PostPoster) -> Unit = {
             containerColor = tokens.surfaceRaised,
         )
     }
+    deleting?.let { post ->
+        AlertDialog(
+            onDismissRequest = { deleting = null },
+            title = { Text("Delete this post?", style = HotMessType.heading) },
+            text = { Text("It comes off every page it's on, with its comments.", style = HotMessType.body) },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleting = null
+                    save("Couldn't delete the post. Please try again.") {
+                        graph.api.deletePost(post.id)
+                        PostChange.Deleted(post.id)
+                    }
+                }) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel") } },
+            containerColor = tokens.surfaceRaised,
+        )
+    }
     failure?.let { message ->
         AlertDialog(
             onDismissRequest = { failure = null },
@@ -142,32 +191,63 @@ fun rememberPostActions(navigator: Navigator, onHidden: (PostPoster) -> Unit = {
             containerColor = tokens.surfaceRaised,
         )
     }
-    return remember(navigator, signedIn, onHidden) {
+    return remember(navigator, signedIn, listings, onHidden, onChange) {
         PostActions(
             open = navigator::open,
             report = { reporting = ReportSubject(ReportTarget.POST, it.id) },
             hidePoster = { hiding = it },
             signedIn = signedIn,
+            listings = listings,
+            manage = { post, action ->
+                val fallback = "Couldn't update the post. Please try again."
+                when (action) {
+                    PostManageAction.EDIT -> editing = post
+                    PostManageAction.DELETE -> deleting = post
+                    PostManageAction.TOGGLE_PIN -> save(fallback) { PostChange.Updated(graph.api.updatePost(post.id, pinned = !post.pinned)) }
+                    PostManageAction.TOGGLE_COMMENTS ->
+                        save(fallback) { PostChange.Updated(graph.api.updatePost(post.id, commentsOpen = !post.commentsOpen)) }
+                    PostManageAction.TOGGLE_VISIBILITY -> save(fallback) {
+                        val visibility = if (post.visibility == PostVisibility.PUBLIC) PostVisibility.COMMUNITY else PostVisibility.PUBLIC
+                        PostChange.Updated(graph.api.updatePost(post.id, visibility = visibility))
+                    }
+                    PostManageAction.TOGGLE_HIDDEN_FROM_EVENT ->
+                        save(fallback) { PostChange.Updated(graph.api.hidePostFromEvent(post.id, hidden = !post.hiddenFromEvent)) }
+                }
+            },
         )
     }
 }
 
 /**
  * A page's posts: the venue's "Posts", an event's "From the venue and hosts", a talent's "Posts". Two cards
- * then "See all"; nothing while loading, when there are none, or when they couldn't load.
+ * then "See all"; nothing while loading, when there are none, or when they couldn't load. For whoever manages the page
+ * ([writer]), "New post" too, and a hint while there are none.
  */
 fun LazyListScope.postsSection(
     title: String,
     subject: PostsSubject,
     state: LoadState<List<Post>>,
     actions: PostActions,
+    writer: PostWriter? = null,
     limit: Int = 2,
 ) {
     val posts = state.valueOrNull.orEmpty()
-    if (posts.isEmpty()) return
+    val writes = writer?.canWrite == true
+    if (posts.isEmpty() && !writes) return
     item(key = "posts-title") {
         Row(verticalAlignment = Alignment.CenterVertically) {
             SectionTitle(title, Modifier.weight(1f))
+            if (writes) {
+                Text(
+                    "New post",
+                    style = HotMessType.label,
+                    color = tokens.accentInk,
+                    modifier = Modifier
+                        .clickable(role = Role.Button) { writer?.start?.invoke() }
+                        .padding(horizontal = Space.s5, vertical = Space.s1)
+                        .testTag("posts.new"),
+                )
+            }
             if (posts.size > limit) {
                 Text(
                     "See all",
@@ -179,6 +259,16 @@ fun LazyListScope.postsSection(
                         .testTag("posts.seeAll"),
                 )
             }
+        }
+    }
+    if (posts.isEmpty()) {
+        item(key = "posts-empty") {
+            Text(
+                "Nothing posted yet. Posts stay on the page, unlike chat: specials, posters, photos and news.",
+                style = HotMessType.bodySmall,
+                color = tokens.inkMuted,
+                modifier = Modifier.padding(horizontal = Space.s5),
+            )
         }
     }
     items(posts.take(limit), key = { "post-${it.id}" }) { post ->
@@ -223,7 +313,11 @@ fun PostsScreen(subject: PostsSubject, title: String, navigator: Navigator) {
     val loader = rememberPosts(subject)
     val state by loader.state.collectAsStateWithLifecycle()
     val refreshing by loader.isRefreshing.collectAsStateWithLifecycle()
-    val actions = rememberPostActions(navigator) { poster -> loader.update { posts -> posts.filterNot { it.poster == poster } } }
+    val actions = rememberPostActions(
+        navigator,
+        onHidden = { poster -> loader.update { posts -> posts.filterNot { it.poster == poster } } },
+        onChange = { change -> loader.update { posts -> posts.applying(change, subject.floatsPins) } },
+    )
     ScreenScaffold(title, onBack = navigator::back) {
         LoadStateView(state, onRetry = { loader.load(subject, refresh = true) { graph.api.posts(subject) } }) { posts ->
             PullToRefreshBox(refreshing, onRefresh = { loader.load(subject, refresh = true) { graph.api.posts(subject) } }) {
@@ -251,7 +345,11 @@ fun UpdatesScreen(localeId: String, localeName: String, navigator: Navigator) {
     val loader = rememberPosts(subject, filter)
     val state by loader.state.collectAsStateWithLifecycle()
     val refreshing by loader.isRefreshing.collectAsStateWithLifecycle()
-    val actions = rememberPostActions(navigator) { poster -> loader.update { posts -> posts.filterNot { it.poster == poster } } }
+    val actions = rememberPostActions(
+        navigator,
+        onHidden = { poster -> loader.update { posts -> posts.filterNot { it.poster == poster } } },
+        onChange = { change -> loader.update { posts -> posts.applying(change, floatsPins = false) } },
+    )
     // Going needs someone signed in to have RSVP'd.
     val filters = PostsFilter.entries.filter { signedIn || it != PostsFilter.GOING }
 
@@ -314,7 +412,12 @@ fun PostScreen(id: String, navigator: Navigator) {
     val state by loader.state.collectAsStateWithLifecycle()
     val safety by graph.safety.state.collectAsStateWithLifecycle()
     val userId = rememberUserId()
-    val actions = rememberPostActions(navigator)
+    val actions = rememberPostActions(navigator, onChange = { change ->
+        when (change) {
+            is PostChange.Updated -> loader.update { detail -> detail?.copy(post = change.post) }
+            is PostChange.Deleted -> navigator.back()
+        }
+    })
     var draft by rememberSaveable { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
     var showsEarlier by rememberSaveable { mutableStateOf(false) }
