@@ -84,6 +84,8 @@ import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.Radius
 import social.hotmess.android.ui.theme.Sizes
 import social.hotmess.android.ui.theme.tokens
+import kotlinx.coroutines.CancellationException
+import social.hotmess.core.HelpVenue
 import social.hotmess.core.PostsSubject
 import social.hotmess.core.AppRoute
 import social.hotmess.core.CoverOffer
@@ -233,6 +235,18 @@ fun VenueScreen(id: String, navigator: Navigator) {
     val pairUp = remember(id) { PairUpController(graph.api, id, pairUpScope) }
     var pairingUp by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(id) { pairUp.load() }
+    // Whether the app places the user here, so "Get help" shows. Its own request, so an API without safety
+    // alerts still shows the venue.
+    var canGetHelp by remember(id) { mutableStateOf(false) }
+    LaunchedEffect(id) {
+        canGetHelp = try {
+            graph.api.venueSafety(id)?.canSendSafetyAlert == true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
+        }
+    }
     val actions = rememberPingActions { ping ->
         loader.update { overview -> overview.copy(friendPings = overview.friendPings.map { if (it.id == ping.id) ping else it }) }
         graph.pingUpdated(ping.id)
@@ -320,6 +334,12 @@ fun VenueScreen(id: String, navigator: Navigator) {
                             onOpen = { navigator.openChat(loaded.id, loaded.name) },
                             presence = remember(loaded.recentMessages) { peekPresence(loaded.recentMessages) },
                         )
+                    }
+                }
+                // Only while the app places the user here: staff can only help people who are there.
+                if (canGetHelp) {
+                    item(key = "get-help") {
+                        GetHelpRow { navigator.openHelp(HelpVenue(loaded.id, loaded.name, loaded.address)) }
                     }
                 }
                 if (overview.onNow.isNotEmpty()) {

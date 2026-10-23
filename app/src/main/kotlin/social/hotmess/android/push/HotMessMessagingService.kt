@@ -42,7 +42,11 @@ class HotMessMessagingService : FirebaseMessagingService() {
         if (graph.isForeground) return
         if (!graph.notifications.shouldPostSystemCopy(message.data[PushNotification.NOTIFICATION_ID])) return
         val notification = message.notification ?: return
-        val channel = if (route is AppRoute.Chat) CHAT_CHANNEL else PING_CHANNEL
+        val channel = when (route) {
+            is AppRoute.Chat -> CHAT_CHANNEL
+            is AppRoute.SafetyAlertHelp -> VENUE_CHANNEL
+            else -> PING_CHANNEL
+        }
         show(applicationContext, notification.title, notification.body, message.data, channel)
     }
 
@@ -50,7 +54,17 @@ class HotMessMessagingService : FirebaseMessagingService() {
         const val PING_CHANNEL = "pings"
         const val CHAT_CHANNEL = "chat"
 
-        private fun channelName(channel: String): String = if (channel == CHAT_CHANNEL) "Chat rooms" else "Pings"
+        /**
+         * Updates about a safety alert the user sent. Named so a lock screen never says what it's for, and
+         * silent: a buzz with no sound, as the alert's screen promises.
+         */
+        const val VENUE_CHANNEL = "venue_updates"
+
+        private fun channelName(channel: String): String = when (channel) {
+            CHAT_CHANNEL -> "Chat rooms"
+            VENUE_CHANNEL -> "Venue updates"
+            else -> "Pings"
+        }
 
         private fun show(context: Context, title: String?, body: String?, data: Map<String, String>, channel: String) {
             val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
@@ -58,7 +72,14 @@ class HotMessMessagingService : FirebaseMessagingService() {
             if (!granted) return
 
             val manager = context.getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(NotificationChannel(channel, channelName(channel), NotificationManager.IMPORTANCE_HIGH))
+            manager.createNotificationChannel(
+                NotificationChannel(channel, channelName(channel), NotificationManager.IMPORTANCE_HIGH).apply {
+                    if (channel == VENUE_CHANNEL) {
+                        setSound(null, null)
+                        enableVibration(true)
+                    }
+                },
+            )
 
             val open = Intent(context, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)

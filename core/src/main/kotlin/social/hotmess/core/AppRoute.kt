@@ -26,6 +26,9 @@ sealed interface AppRoute {
     /** A locale's updates feed, from Now. */
     data class Updates(val localeId: String, val localeName: String) : AppRoute
 
+    /** One of the user's safety alerts, from a push about it (`/safety-alerts/<id>`); it opens over Me. */
+    data class SafetyAlertHelp(val id: String) : AppRoute
+
     /** Which tab the route opens in. */
     val tab: AppTab
         get() = when (this) {
@@ -37,6 +40,8 @@ sealed interface AppRoute {
             is Chat -> if (room.kind == ChatRoom.Kind.VENUE) AppTab.VENUES else AppTab.NOW
             // A post opens wherever it's linked from; a link from outside lands on Now.
             is PostDetail, is Updates -> AppTab.NOW
+            // Me lists the user's safety alerts, so Back from one lands there.
+            is SafetyAlertHelp -> AppTab.ME
             is Posts -> when (subject) {
                 is PostsSubject.Venue -> AppTab.VENUES
                 is PostsSubject.Event -> AppTab.EVENTS
@@ -78,6 +83,7 @@ object DeepLink {
             "people" -> AppRoute.PersonDetail(id)
             "pings" -> AppRoute.NowPing(id)
             "posts" -> AppRoute.PostDetail(id)
+            "safety-alerts" -> AppRoute.SafetyAlertHelp(id)
             else -> null
         }
     }
