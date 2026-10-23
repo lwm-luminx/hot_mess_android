@@ -248,6 +248,39 @@ class HotMessApi(val client: AudienceKitClient) {
 
     // endregion
 
+    // region Photos
+
+    /** The newest photos of a venue, an event or a person (the ones they were on stage in); none for a locale. */
+    suspend fun photos(subject: PostsSubject, first: Int = 20): List<EventPhoto> {
+        val variables = graphQLVariables("id" to subject.id, "first" to first)
+        return when (subject) {
+            is PostsSubject.Venue -> query(Documents.VENUE_PHOTOS, VenuePhotosResponse.serializer(), variables).venues?.venue?.posts?.photos?.nodes
+            is PostsSubject.Event -> query(Documents.EVENT_PHOTOS, EventPhotosResponse.serializer(), variables).events?.event?.posts?.photos?.nodes
+            is PostsSubject.Person -> query(Documents.PERSON_PHOTOS, PersonPhotosResponse.serializer(), variables).people?.person?.posts?.photos?.nodes
+            is PostsSubject.Locale -> emptyList()
+        }.orEmpty().filterNotNull()
+    }
+
+    /**
+     * Adds a JPEG just taken with the camera at the venue the user is at. The API tags whoever is on stage and
+     * puts it on the event under way; its refusal ("Take photos at Purr while you're there") comes through as is.
+     */
+    suspend fun takePhoto(venueId: String, jpeg: ByteArray, altText: String? = null): EventPhoto {
+        val photo = "data:image/jpeg;base64," + java.util.Base64.getEncoder().encodeToString(jpeg)
+        return mutate(
+            Documents.ADD_EVENT_PHOTO,
+            AddEventPhotoResponse.serializer(),
+            graphQLVariables("venueId" to venueId, "photo" to photo, "altText" to altText?.trim()?.takeIf { it.isNotEmpty() }),
+        ).addEventPhoto.photo
+    }
+
+    /** Removes a photo the user took. */
+    suspend fun removePhoto(id: String) {
+        mutate(Documents.REMOVE_EVENT_PHOTO, RemoveEventPhotoResponse.serializer(), graphQLVariables("id" to id))
+    }
+
+    // endregion
+
     // region Ping
 
     /** The signed-in user's active Ping, without reporting the position. */
@@ -923,6 +956,42 @@ private data class PersonPostsResponse(val people: People? = null) {
 
 @Serializable
 private data class LocalePostsResponse(val locale: PostsOwner? = null)
+
+@Serializable
+private data class PhotoNodes(val nodes: List<EventPhoto?> = emptyList())
+
+@Serializable
+private data class PhotoPosts(val photos: PhotoNodes? = null)
+
+@Serializable
+private data class PhotosOwner(val posts: PhotoPosts? = null)
+
+@Serializable
+private data class VenuePhotosResponse(val venues: Venues? = null) {
+    @Serializable
+    data class Venues(val venue: PhotosOwner? = null)
+}
+
+@Serializable
+private data class EventPhotosResponse(val events: Events? = null) {
+    @Serializable
+    data class Events(val event: PhotosOwner? = null)
+}
+
+@Serializable
+private data class PersonPhotosResponse(val people: People? = null) {
+    @Serializable
+    data class People(val person: PhotosOwner? = null)
+}
+
+@Serializable
+private data class AddEventPhotoResponse(val addEventPhoto: Payload) {
+    @Serializable
+    data class Payload(val photo: EventPhoto)
+}
+
+@Serializable
+private data class RemoveEventPhotoResponse(val removeEventPhoto: JsonObject? = null)
 
 @Serializable
 private data class PostResponse(val posts: Posts? = null) {
