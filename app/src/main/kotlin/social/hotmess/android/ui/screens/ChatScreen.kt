@@ -130,6 +130,7 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
     private val _night = MutableStateFlow<VenueNight?>(null)
     val night: StateFlow<VenueNight?> = _night.asStateFlow()
 
+    /**
      * Friend requests sent from this room's profile sheet, by lowercase user id. The room's roster doesn't
      * carry requests, so this is what "Requested" knows; it lasts while the room's model does.
      */
