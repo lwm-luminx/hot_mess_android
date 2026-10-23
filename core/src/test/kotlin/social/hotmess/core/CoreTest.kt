@@ -196,6 +196,19 @@ class DeepLinkTest {
     }
 
     @Test
+    fun aTextedPingLinkKeepsItsInvitationAsItCame() {
+        assertEquals(AppRoute.NowPing(id, "v3.abc"), DeepLink.route("https://hotmess.social/pings/$id?e=v3.abc"))
+        assertEquals(AppRoute.NowPing(id, "v3.abc"), DeepLink.route("hotmess://pings/$id?utm=sms&e=v3.abc"))
+        // Opaque: never checked for a prefix or length, only percent-decoded, and a `+` stays one.
+        assertEquals(AppRoute.NowPing(id, "x+y/z="), DeepLink.route("https://hotmess.social/pings/$id?e=x+y%2Fz%3D"))
+        assertEquals(AppRoute.NowPing(id), DeepLink.route("https://hotmess.social/pings/$id?e="))
+        assertEquals(AppRoute.NowPing(id), DeepLink.route("https://hotmess.social/pings/$id?le=v3.abc"))
+        // Other pages ignore it.
+        assertEquals(AppRoute.VenueDetail(id), DeepLink.route("https://hotmess.social/venues/$id?e=v3.abc"))
+        assertEquals(PingPush(id), PingPush.parse(mapOf("url" to "https://hotmess.social/pings/$id?e=v3.abc")))
+    }
+
+    @Test
     fun readsChatRoomLinks() {
         assertEquals(AppRoute.Chat(ChatRoom.venue(id)), DeepLink.route("https://hotmess.social/venues/${id.uppercase()}/chat"))
         assertEquals(AppRoute.Chat(ChatRoom.locale(id)), DeepLink.route("https://hotmess.social/locales/$id/chat"))

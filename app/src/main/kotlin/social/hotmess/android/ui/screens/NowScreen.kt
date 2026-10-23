@@ -353,6 +353,19 @@ fun NowScreen(navigator: Navigator) {
             onSent = { ping -> loader.update { it.replacingPing(ping) } },
         )
     }
+    // A texted Ping link that was opened: its invitation, or the Ping itself when it's already a friend's.
+    val invitation by graph.pingInvitation.collectAsStateWithLifecycle()
+    invitation?.takeIf { it.pingId != null && it.invitation != null }?.let { link ->
+        PingInvitationSheet(
+            link,
+            onDismiss = { graph.openPingInvitation(null) },
+            onOpenTarget = { target ->
+                graph.openPingInvitation(null)
+                target.event?.let { navigator.open(AppRoute.EventDetail(it.id)) }
+                    ?: target.venue?.let { navigator.open(AppRoute.VenueDetail(it.id)) }
+            },
+        )
+    }
     endError?.let { message ->
         AlertDialog(
             onDismissRequest = { endError = null },

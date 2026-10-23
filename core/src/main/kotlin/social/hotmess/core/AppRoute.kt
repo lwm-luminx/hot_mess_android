@@ -11,8 +11,12 @@ sealed interface AppRoute {
     data class EventDetail(val id: String) : AppRoute
     data class PersonDetail(val id: String) : AppRoute
 
-    /** The Now tab, opened from a Ping push; [pingId] names the Ping it was about. */
-    data class NowPing(val pingId: String? = null) : AppRoute
+    /**
+     * The Now tab, opened from a Ping push or link; [pingId] names the Ping it was about. A link texted from the
+     * send sheet carries its signed [invitation] (the `e` query value), which lets someone who isn't the sender's
+     * friend see the Ping and join it. The token is opaque: it's passed on as it came.
+     */
+    data class NowPing(val pingId: String? = null, val invitation: String? = null) : AppRoute
 
     /** A chat room by its venue's or locale's id ([room]), from a link or a push about a room the user left. */
     data class Chat(val room: ChatRoom) : AppRoute
@@ -49,7 +53,8 @@ sealed interface AppRoute {
 object DeepLink {
     /**
      * Reads `hotmess://venues/<uuid>` (the type is the host) and
-     * `https://hotmess.social/venues/<uuid>`; likewise `events`, `people`, `posts` and `pings` (a Ping opens Now).
+     * `https://hotmess.social/venues/<uuid>`; likewise `events`, `people`, `posts` and `pings` (a Ping opens Now,
+     * keeping a texted invitation's `e`).
      * A room's link, `venues/<uuid>/chat` or `locales/<uuid>/chat`, opens its chat. Pushes carry such a
      * URL in `url`, which is what the app routes on (a `recent_chat` push carries its room's).
      */
@@ -76,9 +81,19 @@ object DeepLink {
             "venues" -> AppRoute.VenueDetail(id)
             "events" -> AppRoute.EventDetail(id)
             "people" -> AppRoute.PersonDetail(id)
-            "pings" -> AppRoute.NowPing(id)
+            "pings" -> AppRoute.NowPing(id, invitation = query(uri, "e"))
             "posts" -> AppRoute.PostDetail(id)
             else -> null
         }
     }
+
+    /** The decoded value of [name] in [uri]'s query, or null when it's missing or blank. */
+    private fun query(uri: URI, name: String): String? =
+        uri.rawQuery.orEmpty().split('&').firstNotNullOfOrNull { pair ->
+            val key = pair.substringBefore('=')
+            if (key != name || !pair.contains('=')) return@firstNotNullOfOrNull null
+            // Percent-decoding only: a literal `+` stays one, as a token may hold it.
+            val raw = pair.substringAfter('=').replace("+", "%2B")
+            runCatching { java.net.URLDecoder.decode(raw, Charsets.UTF_8.name()) }.getOrNull()
+        }?.takeIf { it.isNotBlank() }
 }

@@ -214,9 +214,20 @@ object Documents {
         }
     """.trimIndent()
 
+    /** [invitationToken] is a texted link's `e`, which lets someone who isn't the sender's friend join. */
     val JOIN_PING: String = """
-        mutation JoinPing(${'$'}pingId: ID!, ${'$'}targetId: ID) {
-          joinPing(input: { pingId: ${'$'}pingId, targetId: ${'$'}targetId }) { ping { $PING_FIELDS } }
+        mutation JoinPing(${'$'}pingId: ID!, ${'$'}targetId: ID, ${'$'}invitationToken: String) {
+          joinPing(input: { pingId: ${'$'}pingId, targetId: ${'$'}targetId, invitationToken: ${'$'}invitationToken }) { ping { $PING_FIELDS } }
+        }
+    """.trimIndent()
+
+    /**
+     * A signed link to [path] that names the signed-in user as its sender, for texting a Ping to contacts. The API
+     * ends it with the Ping (5am) at the latest.
+     */
+    val SHARE_LINK: String = """
+        query ShareLink(${'$'}path: String!) {
+          shareLink(path: ${'$'}path, lifetime: DAY) { url expiresAt }
         }
     """.trimIndent()
 
