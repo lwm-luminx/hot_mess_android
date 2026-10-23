@@ -58,7 +58,9 @@ import social.hotmess.android.ui.openUrl
 import social.hotmess.android.ui.rememberLoader
 import social.hotmess.android.ui.rememberShareLinks
 import social.hotmess.android.ui.theme.HotMessType
+import social.hotmess.core.PostChange
 import social.hotmess.core.PostsSubject
+import social.hotmess.core.applying
 import social.hotmess.core.ApiError
 import social.hotmess.core.AppRoute
 import social.hotmess.core.CoverOffer
@@ -157,7 +159,18 @@ fun EventScreen(id: String, navigator: Navigator) {
     val postsSubject = remember(id) { PostsSubject.Event(id) }
     val postsLoader = rememberPosts(postsSubject)
     val posts by postsLoader.state.collectAsStateWithLifecycle()
-    val postActions = rememberPostActions(navigator) { poster -> postsLoader.update { list -> list.filterNot { it.poster == poster } } }
+    val postActions = rememberPostActions(
+        navigator,
+        onHidden = { poster -> postsLoader.update { list -> list.filterNot { it.poster == poster } } },
+        onChange = { change -> postsLoader.update { list -> list.applying(change) } },
+    )
+    val loadedEvent = state.valueOrNull
+    val postWriter = rememberPostWriter(
+        postsSubject,
+        eventName = loadedEvent?.name,
+        eventVenueId = loadedEvent?.venue?.id,
+        eventPeople = loadedEvent?.people.orEmpty().map { it.id },
+    ) { post -> postsLoader.update { list -> list.applying(PostChange.Updated(post)) } }
 
     val checkout = rememberCoverCheckout { pass ->
         loader.load(id, refresh = true) { graph.api.event(id) }
@@ -252,7 +265,7 @@ fun EventScreen(id: String, navigator: Navigator) {
                         }
                     }
                 }
-                postsSection("From the venue and hosts", postsSubject, posts, postActions)
+                postsSection("From the venue and hosts", postsSubject, posts, postActions, postWriter)
                 item(key = "photos") { PhotosSection(postsSubject, navigator) }
                 item {
                     DetailSection("When") {

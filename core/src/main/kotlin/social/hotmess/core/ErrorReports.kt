@@ -121,8 +121,12 @@ val ApiError.reportDescription: String
         else -> this::class.simpleName ?: "error"
     }
 
-/** "query Venue" or "mutation SendPing", for error reports: a GraphQL document's first line up to its variables. */
+/**
+ * "query Venue" or "mutation SendPing", for error reports: a GraphQL document's first line up to its variables,
+ * past comments such as `# endpoint: staff`.
+ */
 fun operationName(document: String): String {
-    val name = document.trim().takeWhile { it != '(' && it != '{' && it != '\n' }.trim()
+    val body = document.lineSequence().dropWhile { it.isBlank() || it.trimStart().startsWith("#") }.joinToString("\n")
+    val name = body.trim().takeWhile { it != '(' && it != '{' && it != '\n' }.trim()
     return if (name.isEmpty()) "graphql" else "graphql $name"
 }

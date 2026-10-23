@@ -87,7 +87,9 @@ import social.hotmess.android.ui.theme.Sizes
 import social.hotmess.android.ui.theme.tokens
 import kotlinx.coroutines.CancellationException
 import social.hotmess.core.HelpVenue
+import social.hotmess.core.PostChange
 import social.hotmess.core.PostsSubject
+import social.hotmess.core.applying
 import social.hotmess.core.AppRoute
 import social.hotmess.core.CoverOffer
 import social.hotmess.core.Event
@@ -279,7 +281,12 @@ fun VenueScreen(id: String, navigator: Navigator) {
     val postsSubject = remember(id) { PostsSubject.Venue(id) }
     val postsLoader = rememberPosts(postsSubject)
     val posts by postsLoader.state.collectAsStateWithLifecycle()
-    val postActions = rememberPostActions(navigator) { poster -> postsLoader.update { list -> list.filterNot { it.poster == poster } } }
+    val postActions = rememberPostActions(
+        navigator,
+        onHidden = { poster -> postsLoader.update { list -> list.filterNot { it.poster == poster } } },
+        onChange = { change -> postsLoader.update { list -> list.applying(change) } },
+    )
+    val postWriter = rememberPostWriter(postsSubject) { post -> postsLoader.update { list -> list.applying(PostChange.Updated(post)) } }
     val listState = rememberLazyListState()
     val scrolled by rememberHeroCollapsed(listState)
     var heroTone by remember { mutableStateOf(PhotoTone.PLACEHOLDER) }
@@ -395,7 +402,7 @@ fun VenueScreen(id: String, navigator: Navigator) {
                 if (overview.friends.isNotEmpty()) {
                     item { FriendsHere(overview.friends) }
                 }
-                postsSection("Posts", postsSubject, posts, postActions)
+                postsSection("Posts", postsSubject, posts, postActions, postWriter)
                 item {
                     DetailSection("About") {
                         loaded.description?.takeIf { it.isNotBlank() }?.let {

@@ -25,6 +25,7 @@ import social.hotmess.android.push.PushRegistrar
 import social.hotmess.android.session.AuthState
 import social.hotmess.android.session.BrandStore
 import social.hotmess.android.session.FacebookAppSignIn
+import social.hotmess.android.session.ListingsStore
 import social.hotmess.android.session.SafetyStore
 import social.hotmess.android.session.SessionStore
 import social.hotmess.android.session.TribeStore
@@ -50,6 +51,9 @@ class AppGraph(context: Context, val configuration: AppConfiguration = AppConfig
 
     /** Terms of use, blocking and reporting, as the API keeps them for the signed-in user. */
     val safety = SafetyStore(api)
+
+    /** The venues and talent the signed-in user manages, for writing and managing their posts. */
+    val listings = ListingsStore(api)
 
     /** Which promoted cards the user turned off (on this device only), and the reports of the ones they saw. */
     val cards = CardSettings(context.applicationContext, audienceKit, scope)
@@ -107,12 +111,14 @@ class AppGraph(context: Context, val configuration: AppConfiguration = AppConfig
                         api.friends.clear()
                         notifications.clear()
                         safety.clear()
+                        listings.clear()
                         tribes.clear()
                         cable.disconnect()
                     }
                     AuthState.SignedIn -> {
                         if (isForeground) notifications.start()
                         scope.launch { safety.refresh() }
+                        scope.launch { listings.refresh() }
                     }
                     else -> Unit
                 }
