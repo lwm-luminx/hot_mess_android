@@ -84,7 +84,8 @@ data class Venue(
 
     val facebookUrl: String? get() = profile?.facebook?.link ?: facebookId?.let { "https://facebook.com/$it" }
 
-    val shareUrl: String get() = "https://hotmess.social/venues/${id.lowercase()}"
+    /** Its record's path, which the API signs a share link to ([HotMessApi.shareLink]). */
+    val sharePath: String get() = "/venues/${id.lowercase()}"
 
     /** What the venue screen's hero rotates through: its banner, then its banner images, once each; else its photo. */
     val heroPhotos: List<String>
@@ -445,7 +446,8 @@ data class Event(
 
     val facebookUrl: String? get() = facebookId?.let { "https://facebook.com/events/$it" }
 
-    val shareUrl: String get() = "https://hotmess.social/events/${id.lowercase()}"
+    /** Its record's path, which the API signs a share link to ([HotMessApi.shareLink]). */
+    val sharePath: String get() = "/events/${id.lowercase()}"
 
     enum class PhotoPriority { STANDARD, VENUE_FIRST, PERSON_FIRST }
 

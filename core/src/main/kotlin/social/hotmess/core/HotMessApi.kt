@@ -383,6 +383,48 @@ class HotMessApi(val client: AudienceKitClient) {
 
     // endregion
 
+    // region Share links
+
+    /**
+     * A link to share [path] (`/venues/<id>`, `/events/<id>`) by, signed to open it for a month. Throws when it
+     * can't be had, [ApiError.NotFound] when the API won't share that record: there's no unsigned link to fall back on.
+     */
+    suspend fun shareLink(path: String): String =
+        query(Documents.RECORD_SHARE_LINK, ShareLinkResponse.serializer(), graphQLVariables("path" to path))
+            .shareLink?.url?.takeIf { it.isNotBlank() } ?: throw ApiError.NotFound
+
+    /**
+     * Whether a share link to [path] on [host], with its signed [expiry] (`e`), has expired or been tampered with.
+     * An expiry already past [now] (Unix seconds) is expired without asking; otherwise `GET /v1/share` decides, and
+     * only its 410 means expired. Never throws: offline or any other answer opens the record as links always have.
+     */
+    suspend fun shareLinkExpired(
+        host: String,
+        path: String,
+        expiry: String,
+        now: Long = System.currentTimeMillis() / 1000,
+    ): Boolean {
+        if (ShareLinkExpiry.hasPassed(expiry, now)) return true
+        return try {
+            client.data(
+                APIRequest(
+                    path = "/v1/share",
+                    queryItems = listOf("host" to host, "path" to path, "e" to expiry),
+                    authenticated = false,
+                ),
+            )
+            false
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: AudienceKitException.Http) {
+            e.status == 410
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    // endregion
+
     // region Pair me up
 
     /** Pair me up at a venue: null where the venue doesn't have it. */

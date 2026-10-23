@@ -33,6 +33,9 @@ sealed interface AppRoute {
     /** One of the user's safety alerts, from a push about it (`/safety-alerts/<id>`); it opens over Me. */
     data class SafetyAlertHelp(val id: String) : AppRoute
 
+    /** A share link that has expired: Venues, which says so, in place of the record it named. */
+    data object LinkExpired : AppRoute
+
     /** Which tab the route opens in. */
     val tab: AppTab
         get() = when (this) {
@@ -40,6 +43,7 @@ sealed interface AppRoute {
             is EventDetail -> AppTab.EVENTS
             is PersonDetail -> AppTab.PEOPLE
             is NowPing -> AppTab.NOW
+            LinkExpired -> AppTab.VENUES
             // A venue's room over its page; a locale's is reached from Now.
             is Chat -> if (room.kind == ChatRoom.Kind.VENUE) AppTab.VENUES else AppTab.NOW
             // A post opens wherever it's linked from; a link from outside lands on Now.
@@ -57,13 +61,24 @@ sealed interface AppRoute {
 
 object DeepLink {
     /**
+     * A link as the app opens it: its [route], and what `GET /v1/share` checks a share link by. [host] is the
+     * link's (null for a `hotmess:` link), [path] its record's (`/venues/<uuid>`), and [expiry] its signed
+     * expiry, the `e` query value, on a venue's, event's or person's link; null on links from before share links
+     * expired, which open as they always have. A Ping's `e` is its invitation, which Now checks itself.
+     */
+    data class Link(val route: AppRoute, val host: String?, val path: String, val expiry: String?)
+
+    /**
      * Reads `hotmess://venues/<uuid>` (the type is the host) and
      * `https://hotmess.social/venues/<uuid>`; likewise `events`, `people`, `posts` and `pings` (a Ping opens Now,
      * keeping a texted invitation's `e`).
      * A room's link, `venues/<uuid>/chat` or `locales/<uuid>/chat`, opens its chat. Pushes carry such a
      * URL in `url`, which is what the app routes on (a `recent_chat` push carries its room's).
      */
-    fun route(url: String): AppRoute? {
+    fun route(url: String): AppRoute? = link(url)?.route
+
+    /** [route], with the link's host, path and `e` (`?e=<token>`) for checking a share link. */
+    fun link(url: String): Link? {
         val uri = runCatching { URI(url) }.getOrNull() ?: return null
         val segments = if (uri.scheme == "hotmess") {
             listOfNotNull(uri.host, uri.path).flatMap { it.split('/') }
@@ -71,6 +86,18 @@ object DeepLink {
             uri.path.orEmpty().split('/')
         }.filter { it.isNotEmpty() }
 
+        val token = query(uri, "e")
+        val route = route(segments, token) ?: return null
+        val checked = route is AppRoute.VenueDetail || route is AppRoute.EventDetail || route is AppRoute.PersonDetail
+        return Link(
+            route = route,
+            host = uri.host.takeIf { uri.scheme != "hotmess" },
+            path = segments.joinToString("/", prefix = "/"),
+            expiry = token.takeIf { checked },
+        )
+    }
+
+    private fun route(segments: List<String>, token: String?): AppRoute? {
         if (segments.size < 2) return null
         val id = runCatching { java.util.UUID.fromString(segments[1]).toString() }.getOrNull() ?: return null
 
@@ -86,7 +113,7 @@ object DeepLink {
             "venues" -> AppRoute.VenueDetail(id)
             "events" -> AppRoute.EventDetail(id)
             "people" -> AppRoute.PersonDetail(id)
-            "pings" -> AppRoute.NowPing(id, invitation = query(uri, "e"))
+            "pings" -> AppRoute.NowPing(id, invitation = token)
             "posts" -> AppRoute.PostDetail(id)
             "safety-alerts" -> AppRoute.SafetyAlertHelp(id)
             else -> null
@@ -102,4 +129,19 @@ object DeepLink {
             val raw = pair.substringAfter('=').replace("+", "%2B")
             runCatching { java.net.URLDecoder.decode(raw, Charsets.UTF_8.name()) }.getOrNull()
         }?.takeIf { it.isNotBlank() }
+}
+
+/**
+ * A share link's `e`. A signed-out sharer's is `<expiry in Unix seconds, base36>.<signature>`: only the API can check
+ * the signature, but the expiry can be read here, so a link that has plainly expired never waits on the network. A
+ * signed-in sharer's names them, and is opaque (`v3.<hash>`, or `v2.<token>` from before 2026-10-23): the API decides.
+ */
+object ShareLinkExpiry {
+    private val readable = Regex("""\A([0-9a-z]{1,10})\.[A-Za-z0-9_-]{16}\z""")
+
+    /** When the link stops opening its record, in Unix seconds; null when [token] doesn't say. */
+    fun expiresAt(token: String): Long? = readable.find(token)?.groupValues?.get(1)?.toLongOrNull(36)
+
+    /** Whether [token]'s expiry has passed by [now] (Unix seconds). One that can't be read is left to the API. */
+    fun hasPassed(token: String, now: Long): Boolean = expiresAt(token)?.let { now >= it } ?: false
 }

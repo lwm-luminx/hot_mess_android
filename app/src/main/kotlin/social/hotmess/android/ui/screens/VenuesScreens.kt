@@ -54,6 +54,7 @@ import social.hotmess.android.payments.rememberCoverCheckout
 import social.hotmess.android.ui.LocalAppGraph
 import social.hotmess.android.ui.Navigator
 import social.hotmess.android.ui.ScreenScaffold
+import social.hotmess.android.ui.ShareLinkFailure
 import social.hotmess.android.ui.components.CardRows
 import social.hotmess.android.ui.components.ChatPeek
 import social.hotmess.android.ui.components.CoverRow
@@ -79,7 +80,7 @@ import social.hotmess.android.ui.dial
 import social.hotmess.android.ui.openMap
 import social.hotmess.android.ui.openUrl
 import social.hotmess.android.ui.rememberLoader
-import social.hotmess.android.ui.share
+import social.hotmess.android.ui.rememberShareLinks
 import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.Radius
 import social.hotmess.android.ui.theme.Sizes
@@ -223,6 +224,7 @@ fun VenueScreen(id: String, navigator: Navigator) {
     val state by loader.state.collectAsStateWithLifecycle()
 
     LaunchedEffect(id) { loader.load(id) { graph.api.venueOverview(id) } }
+    val shareLinks = rememberShareLinks()
 
     val checkout = rememberCoverCheckout { pass ->
         loader.load(id, refresh = true) { graph.api.venueOverview(id) }
@@ -269,7 +271,7 @@ fun VenueScreen(id: String, navigator: Navigator) {
         onBack = navigator::back,
         actions = {
             if (venue != null) {
-                IconButton(onClick = { context.share(venue.shareUrl, venue.name) }) {
+                IconButton(onClick = { shareLinks.share(venue.sharePath, venue.name) }) {
                     Icon(Icons.Rounded.Share, contentDescription = "Share")
                 }
                 IconButton(onClick = { reporting = ReportSubject(ReportTarget.VENUE, venue.id) }) {
@@ -400,7 +402,7 @@ fun VenueScreen(id: String, navigator: Navigator) {
                         // Its links in one order, each naming where it goes; Share when it has none.
                         val links = SocialLink.aboutLinks(loaded.socialLinks, loaded.facebookUrl)
                         if (links.isEmpty()) {
-                            InfoRow("Share", icon = Icons.Rounded.Share, onClick = { context.share(loaded.shareUrl, loaded.name) })
+                            InfoRow("Share", icon = Icons.Rounded.Share, onClick = { shareLinks.share(loaded.sharePath, loaded.name) })
                         }
                         links.forEachIndexed { index, link ->
                             if (index > 0) RowDivider()
@@ -432,6 +434,7 @@ fun VenueScreen(id: String, navigator: Navigator) {
     }
 
     CoverCheckoutFailure(checkout)
+    ShareLinkFailure(shareLinks)
     val here = venue
     if (pingHere && here != null) {
         PingSheet(

@@ -35,6 +35,7 @@ import social.hotmess.android.payments.rememberCoverCheckout
 import social.hotmess.android.ui.LocalAppGraph
 import social.hotmess.android.ui.Navigator
 import social.hotmess.android.ui.ScreenScaffold
+import social.hotmess.android.ui.ShareLinkFailure
 import social.hotmess.android.ui.components.CoverRow
 import social.hotmess.android.ui.components.DetailSection
 import social.hotmess.android.ui.components.EmptyRow
@@ -55,7 +56,7 @@ import social.hotmess.android.ui.components.cardSection
 import social.hotmess.android.ui.components.rememberHeroCollapsed
 import social.hotmess.android.ui.openUrl
 import social.hotmess.android.ui.rememberLoader
-import social.hotmess.android.ui.share
+import social.hotmess.android.ui.rememberShareLinks
 import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.core.PostsSubject
 import social.hotmess.core.ApiError
@@ -150,6 +151,7 @@ fun EventScreen(id: String, navigator: Navigator) {
     val loader = rememberLoader<Event>("event-$id")
     val state by loader.state.collectAsStateWithLifecycle()
     var rsvpError by remember { mutableStateOf<String?>(null) }
+    val shareLinks = rememberShareLinks()
 
     LaunchedEffect(id) { loader.load(id) { graph.api.event(id) } }
     val postsSubject = remember(id) { PostsSubject.Event(id) }
@@ -196,7 +198,7 @@ fun EventScreen(id: String, navigator: Navigator) {
         onBack = navigator::back,
         actions = {
             if (event != null) {
-                IconButton(onClick = { context.share(event.shareUrl, event.name) }) {
+                IconButton(onClick = { shareLinks.share(event.sharePath, event.name) }) {
                     Icon(Icons.Rounded.Share, contentDescription = "Share")
                 }
             }
@@ -281,6 +283,7 @@ fun EventScreen(id: String, navigator: Navigator) {
     }
 
     CoverCheckoutFailure(checkout)
+    ShareLinkFailure(shareLinks)
     if (pingHere && event != null) {
         PingSheet(
             preselect = PingPick.EventPick(event),

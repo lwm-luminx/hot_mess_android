@@ -101,6 +101,16 @@ object Documents {
         }
     """.trimIndent()
 
+    /**
+     * A link to one of the audience's venues, events or people that opens it for a month, then says it has expired;
+     * null when the path names nothing it shares.
+     */
+    val RECORD_SHARE_LINK: String = """
+        query RecordShareLink(${'$'}path: String!) {
+          shareLink(path: ${'$'}path, lifetime: MONTH) { url expiresAt }
+        }
+    """.trimIndent()
+
     /** Whether the signed-in user gets pushes about rooms they left in the last 30 minutes. Off until they turn it on. */
     val RECENT_CHAT_PUSH: String = """
         query RecentChatPush {
