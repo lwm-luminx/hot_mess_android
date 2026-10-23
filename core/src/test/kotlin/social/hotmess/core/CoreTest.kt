@@ -18,6 +18,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -195,6 +196,19 @@ class DeepLinkTest {
     }
 
     @Test
+    fun aTextedPingLinkKeepsItsInvitationAsItCame() {
+        assertEquals(AppRoute.NowPing(id, "v3.abc"), DeepLink.route("https://hotmess.social/pings/$id?e=v3.abc"))
+        assertEquals(AppRoute.NowPing(id, "v3.abc"), DeepLink.route("hotmess://pings/$id?utm=sms&e=v3.abc"))
+        // Opaque: never checked for a prefix or length, only percent-decoded, and a `+` stays one.
+        assertEquals(AppRoute.NowPing(id, "x+y/z="), DeepLink.route("https://hotmess.social/pings/$id?e=x+y%2Fz%3D"))
+        assertEquals(AppRoute.NowPing(id), DeepLink.route("https://hotmess.social/pings/$id?e="))
+        assertEquals(AppRoute.NowPing(id), DeepLink.route("https://hotmess.social/pings/$id?le=v3.abc"))
+        // Other pages ignore it.
+        assertEquals(AppRoute.VenueDetail(id), DeepLink.route("https://hotmess.social/venues/$id?e=v3.abc"))
+        assertEquals(PingPush(id), PingPush.parse(mapOf("url" to "https://hotmess.social/pings/$id?e=v3.abc")))
+    }
+
+    @Test
     fun readsChatRoomLinks() {
         assertEquals(AppRoute.Chat(ChatRoom.venue(id)), DeepLink.route("https://hotmess.social/venues/${id.uppercase()}/chat"))
         assertEquals(AppRoute.Chat(ChatRoom.locale(id)), DeepLink.route("https://hotmess.social/locales/$id/chat"))
@@ -258,8 +272,26 @@ class DeepLinkTest {
         val now = Instant.parse("2026-10-20T00:00:00Z").epochSecond
         assertTrue(ShareLinkExpiry.hasPassed("t85s00.AbCdEf-_12345678", now))
         assertFalse(ShareLinkExpiry.hasPassed("vbbc00.AbCdEf-_12345678", now))
-        assertTrue(ShareLinkExpiry.hasPassed("vbbc00.sig", 1_893_456_000L), "expired at the second it names")
+        assertTrue(ShareLinkExpiry.hasPassed("vbbc00.AbCdEf-_12345678", 1_893_456_000L), "expired at the second it names")
         assertFalse(ShareLinkExpiry.hasPassed("garbled", now), "left to the API to refuse")
+        assertFalse(ShareLinkExpiry.hasPassed("vbbc00.sig", now), "not a signature, so left to the API")
+    }
+
+    @Test
+    fun leavesASignedInSharersLinkToTheApi() {
+        // `v3` reads as base36 (1119, in 1970): only the API knows when a sender-naming link ends.
+        val now = Instant.parse("2026-10-20T00:00:00Z").epochSecond
+        assertNull(ShareLinkExpiry.expiresAt("v3.AbCdEfGhIjKlMnOpQrStUv"))
+        assertFalse(ShareLinkExpiry.hasPassed("v3.AbCdEfGhIjKlMnOpQrStUv", now))
+        assertFalse(ShareLinkExpiry.hasPassed("v2.${"x".repeat(120)}--AbCd==", now))
+    }
+
+    @Test
+    fun aPingsInvitationIsNotAShareLinkExpiry() {
+        val link = DeepLink.link("https://hotmess.social/pings/$id?e=v3.AbCdEfGhIjKlMnOpQrStUv")!!
+        assertEquals(AppRoute.NowPing(id, invitation = "v3.AbCdEfGhIjKlMnOpQrStUv"), link.route)
+        assertNull(link.expiry, "Now checks the invitation itself")
+        assertNull(DeepLink.link("https://hotmess.social/venues/$id/chat?e=vbbc00.AbCdEf-_12345678")!!.expiry)
     }
 }
 
@@ -479,7 +511,7 @@ class ChatProtocolTest {
     fun aSpecialStopsShowingAtItsEnd() {
         val special = line(
             """"message":"Special: Two for one","userId":"u-1","role":"VENUE",
-              "kind":"SPECIAL","title":"Two for one","body":"Well drinks","endsAt":"2026-10-10T06:00:00Z"""",
+              "kind":"SPECIAL","title":"Two for one","body":"At the merch table","endsAt":"2026-10-10T06:00:00Z"""",
         )
         assertEquals(ChatKind.SPECIAL, special.kind)
         assertEquals(Instant.parse("2026-10-10T06:00:00Z"), special.endsAt)
@@ -660,9 +692,64 @@ class ChatProtocolTest {
         )
         assertEquals(emptyList(), ChatProtocol.parse(result("""{"__typename":"ChatMessageRemoved"}""")))
         assertEquals(
-            listOf(ChatProtocol.Frame.Cleared),
+            listOf(ChatProtocol.Frame.Cleared(Instant.parse("2026-10-09T04:00:00.123Z"), expired = false)),
             ChatProtocol.parse(result("""{"__typename":"ChatRoomCleared","clearedAt":"2026-10-09T04:00:00.123Z"}""")),
         )
+        assertEquals(
+            listOf(ChatProtocol.Frame.Cleared(Instant.parse("2026-10-09T04:00:00Z"), expired = true)),
+            ChatProtocol.parse(result("""{"__typename":"ChatRoomCleared","clearedAt":"2026-10-09T04:00:00Z","expired":true}""")),
+        )
+    }
+
+    @Test
+    fun aVenuePageListsItsLinksOnceInOneOrderAndRotatesItsPhotos() {
+        val instagram = SocialLink("ig", handle = "clubtriangles", provider = "instagram", url = "https://instagram.com/clubtriangles")
+        val tiktok = SocialLink("tt", handle = "triangles", provider = "tiktok", url = "https://tiktok.com/@triangles")
+        val venmo = SocialLink("v", handle = "triangles", provider = "venmo", url = "https://venmo.com/triangles")
+        val bare = SocialLink("x", handle = "x", provider = "x")
+        val page = "https://www.facebook.com/clubtriangles"
+
+        val links = SocialLink.aboutLinks(listOf(tiktok, instagram, instagram, venmo, bare), page)
+        assertEquals(listOf("facebook", "instagram", "tiktok"), links.map { it.provider })
+        assertEquals(page, links.first().url)
+        assertEquals("Facebook", links.first().serviceName)
+        // A listed Facebook profile wins over the page's own link.
+        val listed = SocialLink("fb", handle = "triangles.sf", provider = "facebook", url = "https://facebook.com/triangles.sf")
+        assertEquals(listOf("fb", "ig"), SocialLink.aboutLinks(listOf(instagram, listed), page).map { it.id })
+
+        val venue = Venue("v-1", bannerUrl = "g.jpg", bannerPhotos = listOf(BannerPhoto("1.jpg"), BannerPhoto("g.jpg"), BannerPhoto(null)))
+        assertEquals(listOf("g.jpg", "1.jpg"), venue.heroPhotos)
+        assertEquals(listOf("p.jpg"), Venue("v-2", photoUrl = "p.jpg").heroPhotos)
+
+        val events = (1..4).map { Event(id = "e-$it", name = "Night $it", startAt = Instant.parse("2026-10-2${it}T04:00:00Z")) }
+        val overview = VenueOverview(Venue("v-3"), events = events)
+        assertEquals(listOf("e-1", "e-2"), overview.comingUp.map { it.id })
+        assertEquals(listOf("e-3", "e-4"), overview.laterEvents.map { it.id })
+    }
+
+    @Test
+    fun marksWhereTheRoomCleared() {
+        val cutoff = Instant.parse("2026-10-22T04:00:00Z")
+        val old = VenueMessage(id = "old", body = "last night", userId = "u-1", sentAt = cutoff.minusSeconds(3_600))
+        val new = VenueMessage(id = "new", body = "tonight", userId = "u-1", sentAt = cutoff.plusSeconds(60))
+
+        // Only admins get lines from before the cutoff, and only they get the divider.
+        assertNull(ChatClearMark.forHistory(listOf(new), cutoff))
+        val mark = assertNotNull(ChatClearMark.forHistory(listOf(old, new), cutoff))
+        assertEquals(ChatClearMark(cutoff, expired = true), mark)
+        assertEquals("Cleared for everyone but admins above", mark.label())
+
+        // Expiring keeps what came after, and the mark goes with what it divided.
+        val left = ChatClearMark.remaining(listOf(old, new), cutoff)
+        assertEquals(listOf("new"), left.map { it.id })
+        assertNull(ChatClearMark.afterClear(mark, left, cutoff, expired = true))
+
+        // An admin clearing the room leaves a mark where it happened.
+        val clearedAt = Instant.parse("2026-10-22T09:10:00Z")
+        val cleared = ChatClearMark.afterClear(null, emptyList(), clearedAt, expired = false)
+        assertEquals(ChatClearMark(clearedAt, expired = false), cleared)
+        assertEquals("Chat cleared at 2:10am", cleared?.label(ZoneId.of("America/Los_Angeles")))
+        assertEquals(emptyList(), ChatClearMark.remaining(listOf(old, new), null))
     }
 
     @Test
@@ -899,26 +986,26 @@ class HotMessApiTest {
     fun asksTheApiWhetherAShareLinkHasExpired() = runTest {
         val now = Instant.parse("2026-10-20T00:00:00Z").epochSecond
         val urls = mutableListOf<String>()
-        assertTrue(shareApi(410, urls).shareLinkExpired("hotmess.social", "/venues/v-1", "vbbc00.sig", now), "410 is expired or tampered")
-        assertEquals("https://api.example/v1/share?host=hotmess.social&path=%2Fvenues%2Fv-1&e=vbbc00.sig", urls.single())
+        assertTrue(shareApi(410, urls).shareLinkExpired("hotmess.social", "/venues/v-1", "vbbc00.AbCdEf-_12345678", now), "410 is expired or tampered")
+        assertEquals("https://api.example/v1/share?host=hotmess.social&path=%2Fvenues%2Fv-1&e=vbbc00.AbCdEf-_12345678", urls.single())
 
-        assertFalse(shareApi(200, urls).shareLinkExpired("hotmess.social", "/venues/v-1", "vbbc00.sig", now))
-        assertFalse(shareApi(404, urls).shareLinkExpired("hotmess.social", "/venues/v-1", "vbbc00.sig", now), "the record says what's missing")
-        assertFalse(shareApi(503, urls).shareLinkExpired("hotmess.social", "/venues/v-1", "vbbc00.sig", now), "opens as before")
+        assertFalse(shareApi(200, urls).shareLinkExpired("hotmess.social", "/venues/v-1", "vbbc00.AbCdEf-_12345678", now))
+        assertFalse(shareApi(404, urls).shareLinkExpired("hotmess.social", "/venues/v-1", "vbbc00.AbCdEf-_12345678", now), "the record says what's missing")
+        assertFalse(shareApi(503, urls).shareLinkExpired("hotmess.social", "/venues/v-1", "vbbc00.AbCdEf-_12345678", now), "opens as before")
     }
 
     @Test
     fun aShareLinkPastItsExpiryNeverAsks() = runTest {
         val urls = mutableListOf<String>()
         val now = Instant.parse("2026-10-20T00:00:00Z").epochSecond
-        assertTrue(shareApi(200, urls).shareLinkExpired("hotmess.social", "/venues/v-1", "t85s00.sig", now))
+        assertTrue(shareApi(200, urls).shareLinkExpired("hotmess.social", "/venues/v-1", "t85s00.AbCdEf-_12345678", now))
         assertTrue(urls.isEmpty())
     }
 
     @Test
     fun mintsAShareLink() = runTest {
         val url = "https://hotmess.social/venues/v-1?e=vbbc00.AbCdEf-_12345678"
-        val (api, bodies) = api("ShareLink" to """{"data":{"shareLink":{"url":"$url","expiresAt":"2030-01-01T00:00:00Z"}}}""")
+        val (api, bodies) = api("RecordShareLink" to """{"data":{"shareLink":{"url":"$url","expiresAt":"2030-01-01T00:00:00Z"}}}""")
 
         assertEquals(url, api.shareLink("/venues/v-1"))
         val body = HotMessApi.json.parseToJsonElement(bodies.single()).jsonObject
@@ -928,7 +1015,7 @@ class HotMessApiTest {
 
     @Test
     fun aRecordTheApiWontShareHasNoLink() = runTest {
-        val (api, _) = api("ShareLink" to """{"data":{"shareLink":null}}""")
+        val (api, _) = api("RecordShareLink" to """{"data":{"shareLink":null}}""")
         assertFailsWith<ApiError.NotFound> { api.shareLink("/venues/v-1") }
     }
 

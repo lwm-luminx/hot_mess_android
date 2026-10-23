@@ -36,6 +36,19 @@ fun Context.share(url: String, title: String) {
 }
 
 /**
+ * The Messages app, addressed to [smsUri] (`smsto:` one or more numbers) with [body] written. With no app for SMS (a
+ * tablet, no SIM) the share sheet gets the same text instead.
+ */
+fun Context.textMessage(smsUri: String, body: String) {
+    try {
+        startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse(smsUri)).putExtra("sms_body", body).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    } catch (_: ActivityNotFoundException) {
+        val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, body)
+        startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+}
+
+/**
  * Shares a venue's or event's page by a link the API signs to open it for a month ([HotMessApi.shareLink]), so it
  * says it has expired after that. The share sheet opens once the link comes back; when it can't be had,
  * [ShareLinkFailure] says why, and nothing is shared (there's no unsigned link to fall back on).

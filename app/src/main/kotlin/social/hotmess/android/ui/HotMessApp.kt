@@ -51,6 +51,10 @@ import kotlinx.serialization.Serializable
 import social.hotmess.android.location.LocationAccess
 import social.hotmess.android.session.AuthState
 import social.hotmess.android.ui.screens.EventScreen
+import social.hotmess.android.ui.screens.GetHelpScreen
+import social.hotmess.android.ui.screens.GettingHelpScreen
+import social.hotmess.android.ui.screens.SafetyAlertsScreen
+import social.hotmess.android.ui.screens.SupportScreen
 import social.hotmess.android.ui.screens.EventsScreen
 import social.hotmess.android.ui.screens.LaunchScreen
 import social.hotmess.android.ui.screens.LoginScreen
@@ -60,6 +64,9 @@ import social.hotmess.android.ui.screens.PassScreen
 import social.hotmess.android.ui.screens.PassesScreen
 import social.hotmess.android.ui.screens.PeopleScreen
 import social.hotmess.android.ui.screens.PersonScreen
+import social.hotmess.android.ui.screens.PostScreen
+import social.hotmess.android.ui.screens.PostsScreen
+import social.hotmess.android.ui.screens.UpdatesScreen
 import social.hotmess.android.ui.screens.UpdateRequiredScreen
 import social.hotmess.android.ui.screens.VenueChatScreen
 import social.hotmess.android.ui.screens.VenueScreen
@@ -69,6 +76,8 @@ import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.AppRoute
 import social.hotmess.core.AppTab
 import social.hotmess.core.ChatRoom
+import social.hotmess.core.HelpVenue
+import social.hotmess.core.postsSubject
 
 // Routes. Each tab's root, and the detail screens any tab can push.
 @Serializable data object NowRoute
@@ -83,7 +92,19 @@ import social.hotmess.core.ChatRoom
 @Serializable data class ChatRoute(val id: String, val name: String, val locale: Boolean = false)
 /** A cover pass, with its live QR code. */
 @Serializable data class PassRoute(val id: String)
+@Serializable data class PostRoute(val id: String)
+/** [kind] is the [PostsSubject]'s: venue, event, person or locale. */
+@Serializable data class PostsRoute(val kind: String, val id: String, val title: String)
+@Serializable data class UpdatesRoute(val localeId: String, val localeName: String)
 @Serializable data object PassesRoute
+/** Get help at a venue the user is at ([address] for a friend or a ride). */
+@Serializable data class HelpRoute(val venueId: String, val venueName: String, val address: String = "")
+/** One of the user's safety alerts, from a push or Me. */
+@Serializable data class SafetyAlertRoute(val id: String)
+/** "Need support?", with the note staff wrote when they shared it. */
+@Serializable data class SupportRoute(val note: String = "")
+@Serializable data object SafetyAlertsRoute
+@Serializable data object GettingHelpRoute
 
 private val AppTab.route: Any
     get() = when (this) {
@@ -121,12 +142,18 @@ interface Navigator {
     /** A cover pass, full screen. */
     fun openPass(admissionId: String)
     fun openPasses()
+    /** Get help at the venue the user is at: tell staff, a friend, a ride, support. */
+    fun openHelp(venue: HelpVenue)
+    fun openSafetyAlert(id: String)
+    fun openSupport(note: String?)
+    fun openSafetyAlerts()
+    fun openGettingHelp()
     fun back()
 }
 
 /** Update required, launch, sign-in or the app, by session state. */
 @Composable
-fun HotMessApp(links: Flow<AppRoute>, onSignIn: () -> Unit, onGoogleSignIn: () -> Unit) {
+fun HotMessApp(links: Flow<AppRoute>, onSignIn: () -> Unit, onGoogleSignIn: () -> Unit, onAppleSignIn: () -> Unit = {}) {
     val graph = LocalAppGraph.current
     val state by graph.session.state.collectAsStateWithLifecycle()
     val requiredVersion by graph.session.requiredVersion.collectAsStateWithLifecycle()
@@ -143,7 +170,7 @@ fun HotMessApp(links: Flow<AppRoute>, onSignIn: () -> Unit, onGoogleSignIn: () -
         when (screen) {
             0 -> UpdateRequiredScreen(requiredVersion)
             1 -> LaunchScreen()
-            2 -> LoginScreen(onSignIn = onSignIn, onGoogleSignIn = onGoogleSignIn)
+            2 -> LoginScreen(onSignIn = onSignIn, onGoogleSignIn = onGoogleSignIn, onAppleSignIn = onAppleSignIn)
             else -> MainShell(links)
         }
     }
@@ -196,6 +223,10 @@ private fun MainShell(links: Flow<AppRoute>) {
                         if (!locale) navController.navigate(VenueRoute(route.room.id))
                         ChatRoute(route.room.id, "", locale = locale)
                     }
+                    is AppRoute.PostDetail -> PostRoute(route.id)
+                    is AppRoute.Posts -> PostsRoute(route.subject.kind, route.subject.id, route.title)
+                    is AppRoute.Updates -> UpdatesRoute(route.localeId, route.localeName)
+                    is AppRoute.SafetyAlertHelp -> SafetyAlertRoute(route.id)
                 },
             )
         }
@@ -214,6 +245,26 @@ private fun MainShell(links: Flow<AppRoute>) {
 
         override fun openPasses() {
             navController.navigate(PassesRoute) { launchSingleTop = true }
+        }
+
+        override fun openHelp(venue: HelpVenue) {
+            navController.navigate(HelpRoute(venue.id, venue.name, venue.address.orEmpty())) { launchSingleTop = true }
+        }
+
+        override fun openSafetyAlert(id: String) {
+            navController.navigate(SafetyAlertRoute(id)) { launchSingleTop = true }
+        }
+
+        override fun openSupport(note: String?) {
+            navController.navigate(SupportRoute(note.orEmpty()))
+        }
+
+        override fun openSafetyAlerts() {
+            navController.navigate(SafetyAlertsRoute)
+        }
+
+        override fun openGettingHelp() {
+            navController.navigate(GettingHelpRoute)
         }
 
         override fun back() {
@@ -276,6 +327,23 @@ private fun MainShell(links: Flow<AppRoute>) {
             }
             composable<PassRoute> { PassScreen(it.toRoute<PassRoute>().id, navigator) }
             composable<PassesRoute> { PassesScreen(navigator) }
+            composable<PostRoute> { PostScreen(it.toRoute<PostRoute>().id, navigator) }
+            composable<PostsRoute> {
+                val route = it.toRoute<PostsRoute>()
+                PostsScreen(postsSubject(route.kind, route.id), route.title, navigator)
+            }
+            composable<HelpRoute> {
+                val route = it.toRoute<HelpRoute>()
+                GetHelpScreen(HelpVenue(route.venueId, route.venueName, route.address.ifBlank { null }), null, navigator)
+            }
+            composable<SafetyAlertRoute> { GetHelpScreen(null, it.toRoute<SafetyAlertRoute>().id, navigator) }
+            composable<SupportRoute> { SupportScreen(it.toRoute<SupportRoute>().note.ifBlank { null }, navigator) }
+            composable<SafetyAlertsRoute> { SafetyAlertsScreen(navigator) }
+            composable<GettingHelpRoute> { GettingHelpScreen(navigator) }
+            composable<UpdatesRoute> {
+                val route = it.toRoute<UpdatesRoute>()
+                UpdatesScreen(route.localeId, route.localeName, navigator)
+            }
         }
     }
 }

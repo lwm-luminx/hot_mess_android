@@ -147,3 +147,50 @@ data class PingPush(val pingId: String?, val kind: String? = null) {
         }
     }
 }
+
+/**
+ * Someone picked from the phone's contacts on the send sheet, to text the Ping's link to. [number] is as the
+ * contact has it; nothing about them goes to the server.
+ */
+data class PingContact(val name: String, val number: String) {
+    /** The number with only what a dialer reads: digits, and a leading `+`. Empty when there are no digits. */
+    val dialable: String
+        get() {
+            val digits = number.filter { it.isDigit() }
+            if (digits.isEmpty()) return ""
+            return if (number.trim().startsWith("+")) "+$digits" else digits
+        }
+
+    /** The name, or the number when the contact has none. */
+    val label: String get() = name.trim().ifEmpty { number.trim() }
+}
+
+/** The contacts picked on the send sheet, in the order they were picked, each number once. */
+data class PingContacts(val contacts: List<PingContact> = emptyList()) {
+    val isEmpty: Boolean get() = contacts.isEmpty()
+
+    /** With [contact] added at the end; unchanged when its number has no digits or is already picked. */
+    fun adding(contact: PingContact): PingContacts {
+        val number = contact.dialable
+        if (number.isEmpty() || contacts.any { it.dialable == number }) return this
+        return copy(contacts = contacts + contact)
+    }
+
+    fun removing(contact: PingContact): PingContacts = copy(contacts = contacts.filterNot { it.dialable == contact.dialable })
+
+    /** Every picked number, ready for an `smsto:` address. */
+    val numbers: List<String> get() = contacts.map { it.dialable }
+}
+
+/** The text the send sheet hands to the Messages app for picked contacts: the Ping in a line and its signed link. */
+object PingText {
+    /** "I'm going out tonight: Drag Bingo or The Wildrose. Come with? https://hotmess.social/pings/…". */
+    fun body(ping: Ping, url: String): String {
+        val places = ping.targets.map { it.name }.filter { it.isNotBlank() }
+        val line = if (places.isEmpty()) "I'm going out tonight" else "I'm going out tonight: " + Formatting.list(places, "or")
+        return "$line. Come with? $url"
+    }
+
+    /** `smsto:` addressed to every one of [numbers], separated by `;` as Android's Messages apps read it. */
+    fun smsUri(numbers: List<String>): String = "smsto:" + numbers.filter { it.isNotEmpty() }.joinToString(";")
+}

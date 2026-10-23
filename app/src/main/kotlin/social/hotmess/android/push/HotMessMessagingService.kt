@@ -22,11 +22,10 @@ import social.hotmess.core.PushNotification
 
 /**
  * Firebase hands new tokens here. In the background Firebase shows notifications itself, and tapping
- * one opens [MainActivity] with the message's data (`url`, `ping_id`; `kind` for analytics) as extras. In the
- * foreground Firebase shows nothing, so a push whose `url` the app routes is shown here, with the same extras,
- * and a Ping's reloads Now (a push about a chat room the user just left, whose `url` is the room's, goes in
- * its own channel), unless the same notification (by `notification_id`) came over the cable and
- * [InAppNotifications] showed it.
+ * one opens [MainActivity] with the message's data (`url`, `ping_id`; `kind` for analytics) as extras. While
+ * the app is in front nothing is posted (a Ping's push still reloads Now; the cable's in-app copy is the only
+ * banner). Otherwise a data push whose `url` the app routes is posted here, with the same extras (a push about
+ * a chat room the user just left, whose `url` is the room's, goes in its own channel).
  */
 class HotMessMessagingService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
@@ -39,11 +38,15 @@ class HotMessMessagingService : FirebaseMessagingService() {
             ?: PingPush.parse(message.data)?.let { AppRoute.NowPing(it.pingId) }
             ?: return
         val graph = applicationContext.appGraph
-        // The in-app copy was shown (and reloaded Now) already, or gets a moment to be: drop this one.
-        if (!graph.notifications.shouldPostSystemCopy(message.data[PushNotification.NOTIFICATION_ID])) return
         if (route is AppRoute.NowPing) graph.pingUpdated(route.pingId)
+        if (graph.isForeground) return
+        if (!graph.notifications.shouldPostSystemCopy(message.data[PushNotification.NOTIFICATION_ID])) return
         val notification = message.notification ?: return
-        val channel = if (route is AppRoute.Chat) CHAT_CHANNEL else PING_CHANNEL
+        val channel = when (route) {
+            is AppRoute.Chat -> CHAT_CHANNEL
+            is AppRoute.SafetyAlertHelp -> VENUE_CHANNEL
+            else -> PING_CHANNEL
+        }
         show(applicationContext, notification.title, notification.body, message.data, channel)
     }
 
@@ -51,7 +54,17 @@ class HotMessMessagingService : FirebaseMessagingService() {
         const val PING_CHANNEL = "pings"
         const val CHAT_CHANNEL = "chat"
 
-        private fun channelName(channel: String): String = if (channel == CHAT_CHANNEL) "Chat rooms" else "Pings"
+        /**
+         * Updates about a safety alert the user sent. Named so a lock screen never says what it's for, and
+         * silent: a buzz with no sound, as the alert's screen promises.
+         */
+        const val VENUE_CHANNEL = "venue_updates"
+
+        private fun channelName(channel: String): String = when (channel) {
+            CHAT_CHANNEL -> "Chat rooms"
+            VENUE_CHANNEL -> "Venue updates"
+            else -> "Pings"
+        }
 
         private fun show(context: Context, title: String?, body: String?, data: Map<String, String>, channel: String) {
             val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
@@ -59,7 +72,14 @@ class HotMessMessagingService : FirebaseMessagingService() {
             if (!granted) return
 
             val manager = context.getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(NotificationChannel(channel, channelName(channel), NotificationManager.IMPORTANCE_HIGH))
+            manager.createNotificationChannel(
+                NotificationChannel(channel, channelName(channel), NotificationManager.IMPORTANCE_HIGH).apply {
+                    if (channel == VENUE_CHANNEL) {
+                        setSound(null, null)
+                        enableVibration(true)
+                    }
+                },
+            )
 
             val open = Intent(context, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)

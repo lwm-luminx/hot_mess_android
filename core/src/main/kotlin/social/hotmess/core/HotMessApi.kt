@@ -128,6 +128,19 @@ class HotMessApi(val client: AudienceKitClient) {
         )
     }
 
+    /** A venue's night for its chat room: its face, tonight's running order and what's up next. */
+    suspend fun venueLineup(id: String): VenueNight {
+        val venue = query(Documents.VENUE_LINEUP, VenueLineupResponse.serializer(), graphQLVariables("id" to id)).venue
+            ?: throw ApiError.NotFound
+        return VenueNight(
+            venueId = venue.id,
+            name = venue.name,
+            photoUrl = venue.photoUrl,
+            entries = venue.people?.runningOrder?.nodes.orEmpty().filterNotNull(),
+            upNextId = venue.people?.upNext?.id,
+        )
+    }
+
     // endregion
 
     // region People
@@ -193,11 +206,90 @@ class HotMessApi(val client: AudienceKitClient) {
      * Says [body] in [room] as the signed-in user (`sendMyChatMessage`), returning the line as the room
      * sees it, or null if the response didn't carry one. The room also delivers it to everyone following,
      * the sender included. Errors written for people ("You're not at the venue") come through as they are.
+     * With [promptId] it answers that prompt, and comes back with `promptId` set.
      */
-    suspend fun sendChatMessage(room: ChatRoom, body: String): VenueMessage? {
-        val data = mutate(ChatProtocol.SEND_MESSAGE, JsonObject.serializer(), mapOf("input" to ChatProtocol.sendInput(room, body)))
+    suspend fun sendChatMessage(room: ChatRoom, body: String, promptId: String? = null): VenueMessage? {
+        val data = mutate(ChatProtocol.SEND_MESSAGE, JsonObject.serializer(), mapOf("input" to ChatProtocol.sendInput(room, body, promptId)))
         val payload = data["sendMyChatMessage"] as? JsonObject
         return ChatProtocol.message(payload?.get("message"))
+    }
+
+    // endregion
+
+    // region Posts
+
+    /** A page of posts: a venue's, an event's, a person's or a locale's (filtered by [from]). */
+    suspend fun posts(subject: PostsSubject, from: PostsFilter = PostsFilter.ALL, first: Int = 20): List<Post> {
+        val variables = graphQLVariables("id" to subject.id, "first" to first)
+        return when (subject) {
+            is PostsSubject.Venue -> query(Documents.VENUE_POSTS, VenuePostsResponse.serializer(), variables).venues?.venue?.posts?.list?.nodes
+            is PostsSubject.Event -> query(Documents.EVENT_POSTS, EventPostsResponse.serializer(), variables).events?.event?.posts?.list?.nodes
+            is PostsSubject.Person -> query(Documents.PERSON_POSTS, PersonPostsResponse.serializer(), variables).people?.person?.posts?.list?.nodes
+            is PostsSubject.Locale -> query(
+                Documents.LOCALE_POSTS,
+                LocalePostsResponse.serializer(),
+                graphQLVariables("id" to subject.id, "first" to first, "from" to from.name),
+            ).locale?.posts?.list?.nodes
+        }.orEmpty().filterNotNull()
+    }
+
+    /** One post and its comments, oldest first; null once it's removed. */
+    suspend fun post(id: String): PostDetail? =
+        query(Documents.POST, PostResponse.serializer(), graphQLVariables("id" to id)).posts?.post?.let {
+            PostDetail(it.post, it.comments.nodes.filterNotNull())
+        }
+
+    suspend fun commentOnPost(postId: String, body: String): PostComment =
+        mutate(Documents.CREATE_POST_COMMENT, CreatePostCommentResponse.serializer(), graphQLVariables("postId" to postId, "body" to body.trim()))
+            .createPostComment.comment
+
+    suspend fun removePostComment(id: String) {
+        mutate(Documents.REMOVE_POST_COMMENT, RemovePostCommentResponse.serializer(), graphQLVariables("id" to id))
+    }
+
+    /** "Hide posts from {name}", or showing them again. */
+    suspend fun mutePosts(poster: PostPoster, muted: Boolean = true): Boolean =
+        mutate(
+            Documents.MUTE_POST_AUTHOR,
+            MutePostAuthorResponse.serializer(),
+            graphQLVariables(
+                "venueId" to poster.id.takeIf { poster.kind == PostPoster.Kind.VENUE },
+                "personId" to poster.id.takeIf { poster.kind == PostPoster.Kind.PERSON },
+                "muted" to muted,
+            ),
+        ).mutePostAuthor.muted
+
+    // endregion
+
+    // region Photos
+
+    /** The newest photos of a venue, an event or a person (the ones they were on stage in); none for a locale. */
+    suspend fun photos(subject: PostsSubject, first: Int = 20): List<EventPhoto> {
+        val variables = graphQLVariables("id" to subject.id, "first" to first)
+        return when (subject) {
+            is PostsSubject.Venue -> query(Documents.VENUE_PHOTOS, VenuePhotosResponse.serializer(), variables).venues?.venue?.posts?.photos?.nodes
+            is PostsSubject.Event -> query(Documents.EVENT_PHOTOS, EventPhotosResponse.serializer(), variables).events?.event?.posts?.photos?.nodes
+            is PostsSubject.Person -> query(Documents.PERSON_PHOTOS, PersonPhotosResponse.serializer(), variables).people?.person?.posts?.photos?.nodes
+            is PostsSubject.Locale -> emptyList()
+        }.orEmpty().filterNotNull()
+    }
+
+    /**
+     * Adds a JPEG just taken with the camera at the venue the user is at. The API tags whoever is on stage and
+     * puts it on the event under way; its refusal ("Take photos at Purr while you're there") comes through as is.
+     */
+    suspend fun takePhoto(venueId: String, jpeg: ByteArray, altText: String? = null): EventPhoto {
+        val photo = "data:image/jpeg;base64," + java.util.Base64.getEncoder().encodeToString(jpeg)
+        return mutate(
+            Documents.ADD_EVENT_PHOTO,
+            AddEventPhotoResponse.serializer(),
+            graphQLVariables("venueId" to venueId, "photo" to photo, "altText" to altText?.trim()?.takeIf { it.isNotEmpty() }),
+        ).addEventPhoto.photo
+    }
+
+    /** Removes a photo the user took. */
+    suspend fun removePhoto(id: String) {
+        mutate(Documents.REMOVE_EVENT_PHOTO, RemoveEventPhotoResponse.serializer(), graphQLVariables("id" to id))
     }
 
     // endregion
@@ -234,10 +326,44 @@ class HotMessApi(val client: AudienceKitClient) {
             ),
         ).sendPing.ping
 
-    /** "I'm in" on one pick ([targetId]), or on the Ping as a whole when that's null. */
-    suspend fun joinPing(pingId: String, targetId: String?): Ping =
-        mutate(Documents.JOIN_PING, JoinPingResponse.serializer(), graphQLVariables("pingId" to pingId, "targetId" to targetId))
-            .joinPing.ping
+    /**
+     * "I'm in" on one pick ([targetId]), or on the Ping as a whole when that's null. [invitationToken], a texted
+     * link's `e`, lets someone who isn't the sender's friend join.
+     */
+    suspend fun joinPing(pingId: String, targetId: String?, invitationToken: String? = null): Ping =
+        mutate(
+            Documents.JOIN_PING,
+            JoinPingResponse.serializer(),
+            graphQLVariables("pingId" to pingId, "targetId" to targetId, "invitationToken" to invitationToken),
+        ).joinPing.ping
+
+    /** The signed link to the user's Ping [pingId] to text to contacts, or null when the API made none. */
+    suspend fun pingShareLink(pingId: String): String? =
+        query(Documents.SHARE_LINK, ShareLinkResponse.serializer(), graphQLVariables("path" to PingInvitation.path(pingId)))
+            .shareLink?.url?.takeIf { it.isNotBlank() }
+
+    /**
+     * What a texted Ping link ([token], its `e`) shows: `GET /v1/share/invitation`, open to anyone. [host] names the
+     * audience. An expired, ended or altered link fails ([ApiError.NotFound] or a 410's [ApiError.Server]); see
+     * [PingInvitation.isGone].
+     */
+    suspend fun pingInvitation(host: String, pingId: String, token: String): PingInvitation {
+        val request = APIRequest(
+            path = "/v1/share/invitation",
+            queryItems = listOf("host" to host, "path" to PingInvitation.path(pingId), "e" to token),
+            authenticated = false,
+        )
+        val bytes = try {
+            client.data(request)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: AudienceKitException) {
+            // A link that's run out is expected, not a failure to report.
+            val error = ApiError.from(e)
+            throw if (PingInvitation.isGone(error)) error else failed(error, "GET /v1/share/invitation")
+        }
+        return PingInvitation.parse(bytes.toString(Charsets.UTF_8), token) ?: throw ApiError.NotFound
+    }
 
     /** Takes back "I'm in" on a friend's Ping. */
     suspend fun leavePing(pingId: String): Ping =
@@ -264,8 +390,8 @@ class HotMessApi(val client: AudienceKitClient) {
      * can't be had, [ApiError.NotFound] when the API won't share that record: there's no unsigned link to fall back on.
      */
     suspend fun shareLink(path: String): String =
-        query(Documents.SHARE_LINK, ShareLinkResponse.serializer(), graphQLVariables("path" to path)).shareLink?.url
-            ?: throw ApiError.NotFound
+        query(Documents.RECORD_SHARE_LINK, ShareLinkResponse.serializer(), graphQLVariables("path" to path))
+            .shareLink?.url?.takeIf { it.isNotBlank() } ?: throw ApiError.NotFound
 
     /**
      * Whether a share link to [path] on [host], with its signed [expiry] (`e`), has expired or been tampered with.
@@ -375,7 +501,7 @@ class HotMessApi(val client: AudienceKitClient) {
      */
     suspend fun signInMethods(host: String): SignInMethods? =
         try {
-            val path = "/v1/token/methods?host=" + java.net.URLEncoder.encode(host, Charsets.UTF_8)
+            val path = "/v1/token/methods?host=" + java.net.URLEncoder.encode(host, Charsets.UTF_8.name())
             val bytes = client.data(APIRequest(method = "GET", path = path, authenticated = false))
             json.decodeFromString(SignInMethods.serializer(), bytes.toString(Charsets.UTF_8))
         } catch (e: CancellationException) {
@@ -423,6 +549,17 @@ class HotMessApi(val client: AudienceKitClient) {
         mutate(Documents.SET_RECENT_CHAT_PUSH, SetRecentChatPushResponse.serializer(), graphQLVariables("enabled" to enabled))
             .setRecentChatPush.recentChatPush
 
+    /**
+     * Whether chat rooms show the user's initials instead of their photo (`me.chatInitials`), or null when
+     * there's no signed-in user.
+     */
+    suspend fun chatInitials(): Boolean? = query(Documents.CHAT_INITIALS, ChatInitialsResponse.serializer()).me?.chatInitials
+
+    /** Turns "Use my initials instead" on or off (`setChatInitials`); returns the setting as it now is. */
+    suspend fun setChatInitials(enabled: Boolean): Boolean =
+        mutate(Documents.SET_CHAT_INITIALS, SetChatInitialsResponse.serializer(), graphQLVariables("enabled" to enabled))
+            .setChatInitials.chatInitials
+
     // endregion
 
     // region Safety
@@ -447,6 +584,14 @@ class HotMessApi(val client: AudienceKitClient) {
         mutate(Documents.UNBLOCK_USER, UnblockUserResponse.serializer(), graphQLVariables("userId" to userId)).unblockUser.blockedUsers
 
     /**
+     * Asks [userId] to be friends (`sendFriendRequest`); returns the request's status as the API names it
+     * ("PENDING", "ACCEPTED"). A refusal the API words for people is shown as written.
+     */
+    suspend fun sendFriendRequest(userId: String): String =
+        mutate(Documents.SEND_FRIEND_REQUEST, SendFriendRequestResponse.serializer(), graphQLVariables("userId" to userId))
+            .sendFriendRequest.friendRequest.status
+
+    /**
      * Reports something to the audience's admins (`reportContent`), who see it at once. With [block], the person
      * behind it is blocked too when there is one; the result says whether they were.
      */
@@ -460,6 +605,64 @@ class HotMessApi(val client: AudienceKitClient) {
     /** Deletes the user's account and everything recorded about them, and ends every session. */
     suspend fun deleteAccount(): Boolean =
         mutate(Documents.DELETE_ACCOUNT, DeleteAccountResponse.serializer()).deleteAccount.deleted
+
+    // endregion
+
+    // region Safety alerts
+
+    /**
+     * Whether the user can send a safety alert at the venue and whether anyone on shift hears them. Its own
+     * request, so an API without these fields still shows the venue.
+     */
+    suspend fun venueSafety(venueId: String): VenueSafety? =
+        query(SafetyAlertDocuments.VENUE_SAFETY, VenueSafetyResponse.serializer(), graphQLVariables("id" to venueId))
+            .venues?.venue
+
+    /** "I feel unsafe" to the staff on shift. While the user's alert there is open, the API adds to it instead. */
+    suspend fun sendSafetyAlert(venueId: String, draft: SafetyAlertDraft): SafetyAlert =
+        safetyAlertMutation(SafetyAlertDocuments.SEND, draft.variables("venueId" to venueId))
+
+    /** "Add more": where they are and what's going on, after sending. */
+    suspend fun updateSafetyAlert(id: String, draft: SafetyAlertDraft): SafetyAlert =
+        safetyAlertMutation(SafetyAlertDocuments.UPDATE, draft.variables("id" to id))
+
+    /** "Tell staff again": rings the staff on shift and the venue's managers. */
+    suspend fun remindSafetyAlert(id: String): SafetyAlert =
+        safetyAlertMutation(SafetyAlertDocuments.REMIND, graphQLVariables("id" to id))
+
+    /** "I'm OK now, cancel the alert". */
+    suspend fun cancelSafetyAlert(id: String): SafetyAlert =
+        safetyAlertMutation(SafetyAlertDocuments.CANCEL, graphQLVariables("id" to id))
+
+    /** A message in the alert's private thread, never shown in venue chat. */
+    suspend fun sendSafetyAlertMessage(id: String, body: String): SafetyAlert =
+        safetyAlertMutation(SafetyAlertDocuments.MESSAGE, graphQLVariables("id" to id, "body" to body.trim()))
+
+    /** One of the user's alerts as it stands now. */
+    suspend fun safetyAlert(id: String): SafetyAlert? =
+        query(SafetyAlertDocuments.ONE, OneSafetyAlertResponse.serializer(), graphQLVariables("id" to id)).me?.safetyAlert
+
+    /** The user's alerts that are still open, and those closed in the last day. */
+    suspend fun safetyAlerts(): List<SafetyAlert> =
+        query(SafetyAlertDocuments.MINE, MySafetyAlertsResponse.serializer()).me?.safetyAlerts.orEmpty()
+
+    /** "Need support?" for a region (ISO 3166-2 like US-UT, or a country); the API falls back to its default. */
+    suspend fun supportResources(region: String?): SupportResources =
+        query(SafetyAlertDocuments.SUPPORT, SupportResourcesResponse.serializer(), graphQLVariables("region" to region))
+            .supportResources
+
+    /** Each safety alert mutation answers with `{ safetyAlert }` under its own name. */
+    private suspend fun safetyAlertMutation(document: String, variables: Map<String, JsonElement>): SafetyAlert =
+        mutate(document, SAFETY_ALERT_PAYLOADS, variables).values.firstOrNull()?.safetyAlert
+            ?: throw failed(ApiError.Decoding("safetyAlert"), operationName(document))
+
+    private fun SafetyAlertDraft.variables(vararg extra: Pair<String, Any?>): Map<String, JsonElement> =
+        graphQLVariables(
+            "place" to place,
+            "concerns" to SafetyConcern.entries.filter { it in concerns },
+            "description" to trimmedDescription,
+            *extra,
+        )
 
     // endregion
 
@@ -558,7 +761,13 @@ data class VenueOverview(
     val friendPings: List<Ping> = emptyList(),
     /** Who's on there right now. */
     val onNow: List<Appearance> = emptyList(),
-)
+) {
+    /** The next two events, near the top of the venue screen. */
+    val comingUp: List<Event> get() = events.take(2)
+
+    /** The events after those, at the bottom. */
+    val laterEvents: List<Event> get() = events.drop(2)
+}
 
 /** Visible venues, those in [localeId] first, then by the audience's order and name. */
 fun List<Venue>.sortedForList(localeId: String?): List<Venue> =
@@ -687,8 +896,13 @@ private data class SetRecentChatPushResponse(val setRecentChatPush: Payload) {
 }
 
 @Serializable
-private data class ShareLinkResponse(val shareLink: Link? = null) {
-    @Serializable data class Link(val url: String, val expiresAt: String? = null)
+private data class ChatInitialsResponse(val me: Me? = null) {
+    @Serializable data class Me(val chatInitials: Boolean = false)
+}
+
+@Serializable
+private data class SetChatInitialsResponse(val setChatInitials: Payload) {
+    @Serializable data class Payload(val chatInitials: Boolean = false)
 }
 
 @Serializable
@@ -715,6 +929,7 @@ private data class VenueNode(
     val distance: Double? = null,
     val photoUrl: String? = null,
     val bannerUrl: String? = null,
+    val bannerPhotos: List<BannerPhoto> = emptyList(),
     val point: String? = null,
     val profile: ListingProfile? = null,
     val chat: ChatMixin? = null,
@@ -733,6 +948,7 @@ private data class VenueNode(
         distance = distance,
         photoUrl = photoUrl,
         bannerUrl = bannerUrl,
+        bannerPhotos = bannerPhotos,
         point = point,
         profile = profile,
         chat = chat,
@@ -748,6 +964,23 @@ private data class VenueResponse(val venues: Venues? = null) {
 
     /** `venues { venue(id:) }`. */
     val venue: VenueNode? get() = venues?.venue
+}
+
+@Serializable
+private data class VenueLineupResponse(val venues: Venues? = null) {
+    @Serializable data class Venues(val venue: Night? = null)
+
+    @Serializable
+    data class Night(val id: String, val name: String = "", val photoUrl: String? = null, val people: People? = null)
+
+    /** The venue's people mixin; null where the module is off. */
+    @Serializable
+    data class People(val runningOrder: Connection<LineupEntry>? = null, val upNext: UpNext? = null)
+
+    @Serializable data class UpNext(val id: String)
+
+    /** `venues { venue(id:) }`. */
+    val venue: Night? get() = venues?.venue
 }
 
 @Serializable
@@ -814,6 +1047,11 @@ private data class JoinPingResponse(val joinPing: PingPayload)
 private data class LeavePingResponse(val leavePing: PingPayload)
 
 @Serializable
+private data class ShareLinkResponse(val shareLink: Link? = null) {
+    @Serializable data class Link(val url: String? = null)
+}
+
+@Serializable
 private data class SafetyResponse(val me: Me? = null) {
     @Serializable
     data class Me(val termsAcceptedAt: String? = null, val blockedUsers: List<BlockedUser> = emptyList())
@@ -826,6 +1064,12 @@ private data class BlockUserResponse(val blockUser: Payload) {
 
 @Serializable
 private data class UnblockUserResponse(val unblockUser: BlockUserResponse.Payload)
+
+@Serializable
+private data class SendFriendRequestResponse(val sendFriendRequest: Payload) {
+    @Serializable data class Payload(val friendRequest: Request)
+    @Serializable data class Request(val id: String, val status: String)
+}
 
 @Serializable
 private data class ReportContentResponse(val reportContent: ReportResult)
@@ -858,6 +1102,8 @@ private data class PairUpPayload(val pairUp: PairUpState? = null)
 
 private val PAIR_UP_PAYLOADS = MapSerializer(String.serializer(), PairUpPayload.serializer())
 
+private val SAFETY_ALERT_PAYLOADS = MapSerializer(String.serializer(), SafetyAlertPayload.serializer())
+
 @Serializable
 private data class ShowPairUpCodeResponse(val showPairUpCode: Payload) {
     @Serializable data class Payload(val code: String)
@@ -865,3 +1111,115 @@ private data class ShowPairUpCodeResponse(val showPairUpCode: Payload) {
 
 @Serializable
 private data class ScanPairUpCodeResponse(val scanPairUpCode: PairUpScan)
+
+@Serializable
+private data class PostNodes(val nodes: List<Post?> = emptyList())
+
+@Serializable
+private data class PostList(val list: PostNodes? = null)
+
+@Serializable
+private data class PostsOwner(val posts: PostList? = null)
+
+@Serializable
+private data class VenuePostsResponse(val venues: Venues? = null) {
+    @Serializable
+    data class Venues(val venue: PostsOwner? = null)
+}
+
+@Serializable
+private data class EventPostsResponse(val events: Events? = null) {
+    @Serializable
+    data class Events(val event: PostsOwner? = null)
+}
+
+@Serializable
+private data class PersonPostsResponse(val people: People? = null) {
+    @Serializable
+    data class People(val person: PostsOwner? = null)
+}
+
+@Serializable
+private data class LocalePostsResponse(val locale: PostsOwner? = null)
+
+@Serializable
+private data class PhotoNodes(val nodes: List<EventPhoto?> = emptyList())
+
+@Serializable
+private data class PhotoPosts(val photos: PhotoNodes? = null)
+
+@Serializable
+private data class PhotosOwner(val posts: PhotoPosts? = null)
+
+@Serializable
+private data class VenuePhotosResponse(val venues: Venues? = null) {
+    @Serializable
+    data class Venues(val venue: PhotosOwner? = null)
+}
+
+@Serializable
+private data class EventPhotosResponse(val events: Events? = null) {
+    @Serializable
+    data class Events(val event: PhotosOwner? = null)
+}
+
+@Serializable
+private data class PersonPhotosResponse(val people: People? = null) {
+    @Serializable
+    data class People(val person: PhotosOwner? = null)
+}
+
+@Serializable
+private data class AddEventPhotoResponse(val addEventPhoto: Payload) {
+    @Serializable
+    data class Payload(val photo: EventPhoto)
+}
+
+@Serializable
+private data class RemoveEventPhotoResponse(val removeEventPhoto: JsonObject? = null)
+
+@Serializable
+private data class PostResponse(val posts: Posts? = null) {
+    @Serializable
+    data class Posts(val post: PostWithComments? = null)
+}
+
+/** `post(id:)`: the card's fields with its comments beside them. */
+@Serializable(with = PostWithCommentsSerializer::class)
+internal data class PostWithComments(val post: Post, val comments: CommentNodes)
+
+@Serializable
+internal data class CommentNodes(val nodes: List<PostComment?> = emptyList())
+
+/** Reads one object as both the [Post] and its `comments`. */
+internal object PostWithCommentsSerializer : KSerializer<PostWithComments> {
+    override val descriptor = Post.serializer().descriptor
+
+    override fun deserialize(decoder: kotlinx.serialization.encoding.Decoder): PostWithComments {
+        val input = decoder as kotlinx.serialization.json.JsonDecoder
+        val element = input.decodeJsonElement()
+        val comments = (element as? JsonObject)?.get("comments")
+        return PostWithComments(
+            post = input.json.decodeFromJsonElement(Post.serializer(), element),
+            comments = comments?.let { input.json.decodeFromJsonElement(CommentNodes.serializer(), it) } ?: CommentNodes(),
+        )
+    }
+
+    override fun serialize(encoder: kotlinx.serialization.encoding.Encoder, value: PostWithComments) =
+        throw UnsupportedOperationException("PostWithComments is only read")
+}
+
+@Serializable
+private data class CreatePostCommentResponse(val createPostComment: Payload) {
+    @Serializable
+    data class Payload(val comment: PostComment)
+}
+
+@Serializable
+private data class RemovePostCommentResponse(val removePostComment: JsonObject? = null)
+
+@Serializable
+private data class MutePostAuthorResponse(val mutePostAuthor: Payload) {
+    @Serializable
+    data class Payload(val muted: Boolean = true)
+}

@@ -67,6 +67,8 @@
                 <data android:pathPrefix="/venues/" />
                 <data android:pathPrefix="/events/" />
                 <data android:pathPrefix="/people/" />
+                <!-- A Ping, from a push or a link texted from the send sheet (with its invitation in `e`). -->
+                <data android:pathPrefix="/pings/" />
                 <!-- A locale's chat room (a venue's, /venues/<id>/chat, is under /venues/). -->
                 <data android:pathPattern="/locales/.*/chat" />
             </intent-filter>
@@ -77,6 +79,14 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="fbconnect" android:host="cct.${applicationId}" />
+            </intent-filter>
+
+            <!-- Sign in with Apple: the API hands Apple's web sign-in back here, to this package only (AppleWebSignIn). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="audiencekit-apple" android:host="callback" />
             </intent-filter>
 
             <!-- A Business-type Facebook app's dialog redirects to fb<app id>://authorize/ instead. -->

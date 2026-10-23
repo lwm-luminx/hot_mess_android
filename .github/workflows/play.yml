@@ -1,0 +1,107 @@
+name: Google Play
+
+# Ships Hot Mess to Google Play's internal testing track, the way Xcode Cloud ships the iOS app to TestFlight:
+#   next  -> Staging (Next API)      social.hotmess.android.staging, internal testing
+#   main  -> Release (production)    social.hotmess.android.app, internal testing
+# Promoting a build to closed, open or production testing stays a Play Console step.
+#
+# Repository secrets (Settings > Secrets and variables > Actions):
+#   PLAY_SERVICE_ACCOUNT_JSON  a Google Cloud service account key with "Release to testing tracks" on both apps in
+#                              Play Console (Users and permissions)
+#   PLAY_UPLOAD_KEYSTORE       the upload keystore, base64 (`base64 -i upload.jks | tr -d '\n'`)
+#   PLAY_UPLOAD_STORE_PASSWORD, PLAY_UPLOAD_KEY_ALIAS, PLAY_UPLOAD_KEY_PASSWORD
+#   HOTMESS_PROPERTIES         the other hotmess.* lines from local.properties (hotmess.firebase.*,
+#                              hotmess.google.serverClientId, hotmess.apple.servicesId); not the hotmess.upload.* ones
+# Without them the bundle is still built and kept as a run artifact, and the upload is skipped with a warning.
+
+on:
+  push:
+    branches: [next, main]
+  # Pull requests build the Staging bundle to check this workflow, and never upload.
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: play-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  hotmess:
+    name: Hot Mess
+    runs-on: ubuntu-latest
+    env:
+      VARIANT: ${{ github.ref_name == 'main' && 'release' || 'staging' }}
+      PACKAGE: ${{ github.ref_name == 'main' && 'social.hotmess.android.app' || 'social.hotmess.android.staging' }}
+      HAS_PLAY: ${{ github.event_name != 'pull_request' && secrets.PLAY_SERVICE_ACCOUNT_JSON != '' && secrets.PLAY_UPLOAD_KEYSTORE != '' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: lwm-luminx/audience-kit-sdk
+          ref: main
+          path: audience-kit-sdk
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Signing and app settings
+        if: env.HAS_PLAY == 'true'
+        env:
+          KEYSTORE: ${{ secrets.PLAY_UPLOAD_KEYSTORE }}
+          STORE_PASSWORD: ${{ secrets.PLAY_UPLOAD_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.PLAY_UPLOAD_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.PLAY_UPLOAD_KEY_PASSWORD }}
+          PROPERTIES: ${{ secrets.HOTMESS_PROPERTIES }}
+        run: |
+          echo "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          {
+            printf '%s\n' "$PROPERTIES" | grep -v '^hotmess\.upload\.' || true
+            echo "hotmess.upload.storeFile=$RUNNER_TEMP/upload.jks"
+            echo "hotmess.upload.storePassword=$STORE_PASSWORD"
+            echo "hotmess.upload.keyAlias=${KEY_ALIAS:-upload}"
+            echo "hotmess.upload.keyPassword=${KEY_PASSWORD:-$STORE_PASSWORD}"
+            echo "hotmess.stagingSigning=upload"
+          } > local.properties
+          # Without Firebase the app builds but never registers for push; don't ship that.
+          if ! grep -q '^hotmess\.firebase\.applicationId=.' local.properties; then
+            echo "::error::HOTMESS_PROPERTIES has no hotmess.firebase.applicationId; push wouldn't work in this build"
+            exit 1
+          fi
+
+      - name: Build the ${{ env.VARIANT }} bundle
+        run: |
+          task="bundle${VARIANT^}"
+          ./gradlew ":app:$task"
+          bundle="app/build/outputs/bundle/$VARIANT/app-$VARIANT.aab"
+          test -f "$bundle"
+          echo "BUNDLE=$bundle" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hotmess-${{ env.VARIANT }}-${{ github.run_number }}
+          path: |
+            ${{ env.BUNDLE }}
+            app/build/outputs/mapping/${{ env.VARIANT }}/mapping.txt
+          if-no-files-found: error
+
+      - name: Skip the upload without Play secrets
+        if: env.HAS_PLAY != 'true' && github.event_name != 'pull_request'
+        run: echo "::warning::PLAY_SERVICE_ACCOUNT_JSON or PLAY_UPLOAD_KEYSTORE isn't set; built $PACKAGE but didn't upload it"
+
+      - id: auth
+        if: env.HAS_PLAY == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/androidpublisher
+
+      - name: Upload to Play internal testing
+        if: env.HAS_PLAY == 'true'
+        env:
+          GOOGLE_PLAY_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: >
+          python3 scripts/play-upload.py --package "$PACKAGE" --bundle "$BUNDLE" --track internal
+          --release-name "${{ github.ref_name }} ${GITHUB_SHA::7}"

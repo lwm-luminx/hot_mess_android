@@ -25,7 +25,8 @@ object Documents {
         "id name description distance point photoUrl bannerUrl profile { address phone facebook { facebookId isLiked link } }"
 
     /** A chat line as a preview shows it: rich messages in words (`message`), with the sender's role and presence. */
-    const val CHAT_LINE_FIELDS: String = "id message name userId avatarUrl sentAt presence role kind endsAt postedAsVenue postedAsPerson"
+    const val CHAT_LINE_FIELDS: String =
+        "id message name userId avatarUrl sentAt presence role kind endsAt postedAsVenue postedAsPerson postedAsAudience promptId"
 
     /**
      * A room's last few chat lines, oldest first, in the venue's or locale's chat mixin (`chat { ... }`); empty unless
@@ -52,6 +53,10 @@ object Documents {
 
     /** Who's on at a venue right now, in its people mixin. */
     const val ON_NOW_FIELDS: String = "people { onNow { nodes { id role startsAt endsAt person { id name avatarUrl } } } }"
+
+    /** A lineup entry as a chat room shows it: who, as what, where it is in the night, and its set when it has a hard start. */
+    const val LINEUP_ENTRY_FIELDS: String =
+        "id kind role state startTiming startsAt endsAt title person { id name avatarUrl } people { nodes { id name avatarUrl } }"
 
     const val FRIEND_FIELDS: String = "id name facebookId avatarUrl"
 
@@ -100,8 +105,8 @@ object Documents {
      * A link to one of the audience's venues, events or people that opens it for a month, then says it has expired;
      * null when the path names nothing it shares.
      */
-    val SHARE_LINK: String = """
-        query ShareLink(${'$'}path: String!) {
+    val RECORD_SHARE_LINK: String = """
+        query RecordShareLink(${'$'}path: String!) {
           shareLink(path: ${'$'}path, lifetime: MONTH) { url expiresAt }
         }
     """.trimIndent()
@@ -116,6 +121,19 @@ object Documents {
     val SET_RECENT_CHAT_PUSH: String = """
         mutation SetRecentChatPush(${'$'}enabled: Boolean!) {
           setRecentChatPush(input: { enabled: ${'$'}enabled }) { recentChatPush }
+        }
+    """.trimIndent()
+
+    /** Whether chat rooms show the signed-in user's initials instead of their photo. Off unless they turn it on. */
+    val CHAT_INITIALS: String = """
+        query ChatInitials {
+          me { chatInitials }
+        }
+    """.trimIndent()
+
+    val SET_CHAT_INITIALS: String = """
+        mutation SetChatInitials(${'$'}enabled: Boolean!) {
+          setChatInitials(input: { enabled: ${'$'}enabled }) { chatInitials }
         }
     """.trimIndent()
 
@@ -136,6 +154,7 @@ object Documents {
           venues {
             venue(id: ${'$'}id) {
               $VENUE_FIELDS
+              bannerPhotos { url }
               chat { open $RECENT_MESSAGES }
               tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } viewerAdmission { ${Queries.ADMISSION_FIELDS} } } }
               $ON_NOW_FIELDS
@@ -143,6 +162,21 @@ object Documents {
               $PROFILE_SOCIAL_LINKS
               friends { list { nodes { $FRIEND_OUT_FIELDS } } }
               ping { friendPings { $PING_FIELDS } }
+            }
+          }
+        }
+    """.trimIndent()
+
+    /**
+     * A venue's night for its chat room: its name and photo (the room's venue face), tonight's running order (acts,
+     * intermissions and entries with no set time) and what's up next.
+     */
+    val VENUE_LINEUP: String = """
+        query VenueLineup(${'$'}id: ID!) {
+          venues {
+            venue(id: ${'$'}id) {
+              id name photoUrl
+              people { runningOrder { nodes { $LINEUP_ENTRY_FIELDS } } upNext { id } }
             }
           }
         }
@@ -209,9 +243,20 @@ object Documents {
         }
     """.trimIndent()
 
+    /** [invitationToken] is a texted link's `e`, which lets someone who isn't the sender's friend join. */
     val JOIN_PING: String = """
-        mutation JoinPing(${'$'}pingId: ID!, ${'$'}targetId: ID) {
-          joinPing(input: { pingId: ${'$'}pingId, targetId: ${'$'}targetId }) { ping { $PING_FIELDS } }
+        mutation JoinPing(${'$'}pingId: ID!, ${'$'}targetId: ID, ${'$'}invitationToken: String) {
+          joinPing(input: { pingId: ${'$'}pingId, targetId: ${'$'}targetId, invitationToken: ${'$'}invitationToken }) { ping { $PING_FIELDS } }
+        }
+    """.trimIndent()
+
+    /**
+     * A signed link to [path] that names the signed-in user as its sender, for texting a Ping to contacts. The API
+     * ends it with the Ping (5am) at the latest.
+     */
+    val SHARE_LINK: String = """
+        query ShareLink(${'$'}path: String!) {
+          shareLink(path: ${'$'}path, lifetime: DAY) { url expiresAt }
         }
     """.trimIndent()
 
@@ -308,6 +353,16 @@ object Documents {
         }
     """.trimIndent()
 
+    /**
+     * Asks someone to be friends (`sendFriendRequest`), from a chat room's profile sheet; returns where the request
+     * stands (PENDING until they answer, ACCEPTED when they'd already asked the viewer).
+     */
+    val SEND_FRIEND_REQUEST: String = """
+        mutation SendFriendRequest(${'$'}userId: ID!) {
+          sendFriendRequest(input: { userId: ${'$'}userId }) { friendRequest { id status } }
+        }
+    """.trimIndent()
+
     /** Files a report with the audience's admins, and blocks the person behind it when [block] is true and there is one. */
     val REPORT_CONTENT: String = """
         mutation ReportContent(${'$'}targetType: ReportTarget!, ${'$'}targetId: ID!, ${'$'}reason: String, ${'$'}block: Boolean) {
@@ -328,4 +383,107 @@ object Documents {
           registerDevice(input: { notificationToken: ${'$'}notificationToken, appId: ${'$'}appId, sandbox: ${'$'}sandbox }) { registered }
         }
     """.trimIndent()
+
+    // region Posts
+
+    /** A post card's fields: its poster, photos, the event it's on and its comment count. */
+    const val POST_FIELDS: String =
+        "id body posterName posterAvatarUrl roleLabel actingPersonName createdAt edited pinned commentsOpen commentCount " +
+            "photos { url altText } event { id name startAt } person { id } venue { id }"
+
+    const val POST_COMMENT_FIELDS: String = "id authorId authorName authorAvatarUrl body createdAt viewerCanRemove"
+
+    /** A venue's own posts: on it, its events and its series, pinned first. */
+    val VENUE_POSTS: String = """
+        query VenuePosts(${'$'}id: ID!, ${'$'}first: Int!) {
+          venues { venue(id: ${'$'}id) { posts { list(first: ${'$'}first) { nodes { $POST_FIELDS } } } } }
+        }
+    """.trimIndent()
+
+    /** Posts on an event by its venue and the people on it. */
+    val EVENT_POSTS: String = """
+        query EventPosts(${'$'}id: ID!, ${'$'}first: Int!) {
+          events { event(id: ${'$'}id) { posts { list(first: ${'$'}first) { nodes { $POST_FIELDS } } } } }
+        }
+    """.trimIndent()
+
+    /** A talent listing's own posts. */
+    val PERSON_POSTS: String = """
+        query PersonPosts(${'$'}id: ID!, ${'$'}first: Int!) {
+          people { person(id: ${'$'}id) { posts { list(first: ${'$'}first) { nodes { $POST_FIELDS } } } } }
+        }
+    """.trimIndent()
+
+    /** A locale's updates from the last 14 days, newest first, from everyone, venues, talent or the events you're going to. */
+    val LOCALE_POSTS: String = """
+        query LocalePosts(${'$'}id: ID!, ${'$'}first: Int!, ${'$'}from: PostsFrom!) {
+          locale(id: ${'$'}id) { posts { list(first: ${'$'}first, from: ${'$'}from) { nodes { $POST_FIELDS } } } }
+        }
+    """.trimIndent()
+
+    /** One post and its comments, oldest first. */
+    val POST: String = """
+        query Post(${'$'}id: ID!) {
+          posts { post(id: ${'$'}id) { $POST_FIELDS comments(first: 100) { nodes { $POST_COMMENT_FIELDS } } } }
+        }
+    """.trimIndent()
+
+    val CREATE_POST_COMMENT: String = """
+        mutation CreatePostComment(${'$'}postId: ID!, ${'$'}body: String!) {
+          createPostComment(input: { postId: ${'$'}postId, body: ${'$'}body }) { comment { $POST_COMMENT_FIELDS } }
+        }
+    """.trimIndent()
+
+    val REMOVE_POST_COMMENT: String = """
+        mutation RemovePostComment(${'$'}id: ID!) {
+          removePostComment(input: { id: ${'$'}id }) { comment { id } }
+        }
+    """.trimIndent()
+
+    /** A photo's fields: who took it, a photographer's or a member's, who's on stage in it, and its event. */
+    const val PHOTO_FIELDS: String =
+        "id url altText caption source takenBy takenAt viewUrl viewerCanRemove people { id name } event { id name }"
+
+    /** A venue's photos, newest first: photographers' and members'. */
+    val VENUE_PHOTOS: String = """
+        query VenuePhotos(${'$'}id: ID!, ${'$'}first: Int!) {
+          venues { venue(id: ${'$'}id) { posts { photos(first: ${'$'}first) { nodes { $PHOTO_FIELDS } } } } }
+        }
+    """.trimIndent()
+
+    /** An event's photos, newest first. */
+    val EVENT_PHOTOS: String = """
+        query EventPhotos(${'$'}id: ID!, ${'$'}first: Int!) {
+          events { event(id: ${'$'}id) { posts { photos(first: ${'$'}first) { nodes { $PHOTO_FIELDS } } } } }
+        }
+    """.trimIndent()
+
+    /** The photos a person was on stage in, newest first. */
+    val PERSON_PHOTOS: String = """
+        query PersonPhotos(${'$'}id: ID!, ${'$'}first: Int!) {
+          people { person(id: ${'$'}id) { posts { photos(first: ${'$'}first) { nodes { $PHOTO_FIELDS } } } } }
+        }
+    """.trimIndent()
+
+    /** A photo just taken with the camera at the venue you're at; the API tags whoever is on stage. */
+    val ADD_EVENT_PHOTO: String = """
+        mutation AddEventPhoto(${'$'}venueId: ID!, ${'$'}photo: String!, ${'$'}altText: String) {
+          addEventPhoto(input: { venueId: ${'$'}venueId, photo: ${'$'}photo, altText: ${'$'}altText }) { photo { $PHOTO_FIELDS } }
+        }
+    """.trimIndent()
+
+    val REMOVE_EVENT_PHOTO: String = """
+        mutation RemoveEventPhoto(${'$'}id: ID!) {
+          removeEventPhoto(input: { id: ${'$'}id }) { id }
+        }
+    """.trimIndent()
+
+    /** "Hide posts from {name}": a venue's or a person's, or shows them again. */
+    val MUTE_POST_AUTHOR: String = """
+        mutation MutePostAuthor(${'$'}venueId: ID, ${'$'}personId: ID, ${'$'}muted: Boolean) {
+          mutePostAuthor(input: { venueId: ${'$'}venueId, personId: ${'$'}personId, muted: ${'$'}muted }) { muted }
+        }
+    """.trimIndent()
+
+    // endregion
 }

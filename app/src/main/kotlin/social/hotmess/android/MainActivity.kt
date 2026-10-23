@@ -83,7 +83,12 @@ class MainActivity : ComponentActivity(), GoogleAccounts {
             HotMessTheme(branding = branding?.theme) {
                 CompositionLocalProvider(LocalAppGraph provides graph, LocalGoogleAccounts provides this) {
                     Box(Modifier.fillMaxSize()) {
-                        HotMessApp(links = linkFlow, onSignIn = ::signIn, onGoogleSignIn = ::signInWithGoogle)
+                        HotMessApp(
+                            links = linkFlow,
+                            onSignIn = ::signIn,
+                            onGoogleSignIn = ::signInWithGoogle,
+                            onAppleSignIn = ::signInWithApple,
+                        )
                         // A notification that came over the cable while the app is open; a tap opens it as a push's would.
                         NotificationBanner(graph.notifications) { notification -> openPush(notification.data) }
                     }
@@ -124,6 +129,15 @@ class MainActivity : ComponentActivity(), GoogleAccounts {
     /** Facebook's login dialog in a Custom Tab, for phones without the Facebook app. */
     private fun signInWithFacebookDialog() {
         val url = graph.session.beginSignIn() ?: return
+        CustomTabsIntent.Builder()
+            .setEphemeralBrowsingEnabled(graph.configuration.privateSignIn)
+            .build()
+            .launchUrl(this, url.toUri())
+    }
+
+    /** Apple's web sign-in in a Custom Tab; the API hands the result back through [handle]. */
+    private fun signInWithApple() {
+        val url = graph.session.beginAppleSignIn() ?: return
         CustomTabsIntent.Builder()
             .setEphemeralBrowsingEnabled(graph.configuration.privateSignIn)
             .build()
@@ -267,16 +281,19 @@ class MainActivity : ComponentActivity(), GoogleAccounts {
         val url = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.dataString ?: return
         if (graph.session.handleRedirect(url)) return
         val link = DeepLink.link(url) ?: return
+        val route = link.route
+        // A texted Ping link: Now shows its invitation.
+        if (route is AppRoute.NowPing && route.invitation != null) graph.openPingInvitation(route)
         val expiry = link.expiry
         if (expiry == null) {
-            links.trySend(link.route)
+            links.trySend(route)
             return
         }
         // A share link signs when it expires: one that has opens Venues and says so, never the record.
         lifecycleScope.launch {
             val host = link.host ?: graph.configuration.audienceHost
             val expired = graph.api.shareLinkExpired(host, link.path, expiry)
-            links.trySend(if (expired) AppRoute.LinkExpired else link.route)
+            links.trySend(if (expired) AppRoute.LinkExpired else route)
         }
     }
 

@@ -7,6 +7,7 @@ import java.util.Properties
 // AGP 9 compiles Kotlin itself (built-in Kotlin), so there's no separate Kotlin Android plugin.
 plugins {
     id("com.android.application") // on the root build classpath; see ../build.gradle.kts
+    id("newrelic") // also on the root build classpath
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
 }
@@ -62,19 +63,32 @@ data class Environment(
      */
     val audienceHost: String = "hotmess.admin.audiencekit.com",
     val googleServerClientId: String = "",
+    /**
+     * The Services ID for Sign in with Apple, which Android runs as Apple's web sign-in in a Custom Tab (the SDK's
+     * AppleWebSignIn; the API's doc/TOKENS.md, "Sign in with Apple on Android"). Apple returns to the API over HTTPS,
+     * so builds against a local API go without. Empty hides "Continue with Apple"; Release gets it from
+     * `hotmess.apple.servicesId` once the Services ID is set up.
+     */
+    val appleServicesId: String = "",
+    /**
+     * The New Relic mobile app's token (one per app in New Relic). It ships in the app, so it isn't a secret.
+     * Without one the agent doesn't start.
+     */
+    val newRelicToken: String = "",
 )
 
 val environments = mapOf(
     // The emulator reaches the host's localhost at 10.0.2.2.
     "debug" to Environment("debug", "http://10.0.2.2:3000", "", "842337999153841"),
     "staging" to Environment("staging", "https://api.next.audiencekit.com", "", "1660272792277019", "staging",
-        facebookClientToken = "5d40b408dee01b2985755736fd046296", audienceHost = "hotmess.admin.next.audiencekit.com"),
+        facebookClientToken = "5d40b408dee01b2985755736fd046296", audienceHost = "hotmess.admin.next.audiencekit.com",
+        appleServicesId = "social.hotmess.signin", newRelicToken = "AA5ae44dcde02fb1820cebf78f3cde4514ea836c87-NRMA"),
     // Debug for the sign-in test: Hot Mess's development app against the local API. The app is in development
     // mode, so the test signs its account (which needs a role on the app) in to Chrome first, and sign-in shares
     // Chrome's session rather than using a private tab.
     "signInTest" to Environment("signInTest", "http://10.0.2.2:3000", "", "2967605370250663"),
     "release" to Environment("release", "https://api.audiencekit.com", "b0f8b66a-e636-495d-9475-0f5317ea08e0", "1168782378316790",
-        facebookClientToken = "ee4e193e42709c8aaf8f3aa6b383feab"),
+        facebookClientToken = "ee4e193e42709c8aaf8f3aa6b383feab", newRelicToken = "AA5ae44dcde02fb1820cebf78f3cde4514ea836c87-NRMA"),
 )
 
 android {
@@ -86,7 +100,7 @@ android {
         minSdk = 28
         targetSdk = 36
         versionCode = buildNumber
-        versionName = "2.0"
+        versionName = "2.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // The Facebook sign-in test's test user, from the environment (scripts/facebook-signin-test.sh
@@ -144,7 +158,10 @@ android {
             initWith(getByName("release"))
             applicationIdSuffix = ".staging"
             versionNameSuffix = "-staging"
-            signingConfig = signingConfigs.getByName("debug")
+            // Debug-signed for local installs. The Play workflow (.github/workflows/play.yml) sets
+            // `hotmess.stagingSigning=upload` to sign it with the upload key for the staging app's Play listing.
+            signingConfig = signingConfigs.findByName("upload")?.takeIf { secret("stagingSigning") == "upload" }
+                ?: signingConfigs.getByName("debug")
             matchingFallbacks += listOf("release")
         }
         create("signInTest") {
@@ -174,8 +191,10 @@ android {
         buildConfigField("String", "FACEBOOK_CLIENT_TOKEN", "\"${environment.facebookClientToken}\"")
         buildConfigField("String", "FACEBOOK_LOGIN_CONFIG_ID", "\"${environment.facebookLoginConfigId}\"")
         buildConfigField("String", "GOOGLE_SERVER_CLIENT_ID", "\"${environment.googleServerClientId.ifEmpty { secret("google.serverClientId") }}\"")
+        buildConfigField("String", "APPLE_SERVICES_ID", "\"${environment.appleServicesId.ifEmpty { secret("apple.servicesId").takeIf { name == "release" }.orEmpty() }}\"")
         buildConfigField("boolean", "PRIVATE_SIGN_IN", environment.privateSignIn.toString())
         buildConfigField("String", "AUDIENCEKIT_ENVIRONMENT", "\"${environment.audienceKitEnvironment}\"")
+        buildConfigField("String", "NEW_RELIC_TOKEN", "\"${environment.newRelicToken}\"")
         resValue(
             "string",
             "app_name",
@@ -204,6 +223,11 @@ android {
     testOptions {
         unitTests.isReturnDefaultValues = true
     }
+}
+
+// Only the builds people run report to New Relic; local and UI-test builds aren't instrumented.
+newrelic {
+    excludeVariantInstrumentation("debug", "signInTest")
 }
 
 dependencies {
@@ -238,6 +262,8 @@ dependencies {
     implementation(libs.androidx.fragment)
     implementation(libs.maplibre)
     implementation(libs.firebase.messaging)
+    // Mobile monitoring: crashes, HTTP timings and errors, app launches.
+    implementation(libs.newrelic.android.agent)
     // Cover charge: Stripe's payment sheet or Square's card entry takes the payment.
     implementation(libs.stripe.android)
     implementation(libs.square.card.entry)

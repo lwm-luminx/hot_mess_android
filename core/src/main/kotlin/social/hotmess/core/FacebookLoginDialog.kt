@@ -33,7 +33,7 @@ class FacebookLoginDialog(
             if (configId != null) add("config_id" to configId) else add("scope" to permissions.joinToString(","))
         }
         return "https://www.facebook.com/v26.0/dialog/oauth?" +
-            query.joinToString("&") { (name, value) -> "$name=${URLEncoder.encode(value, Charsets.UTF_8)}" }
+            query.joinToString("&") { (name, value) -> "$name=${URLEncoder.encode(value, Charsets.UTF_8.name())}" }
     }
 
     /** Whether [url] is this dialog's redirect, rather than some other link into the app. */
@@ -65,6 +65,6 @@ class FacebookLoginDialog(
         raw.orEmpty().split('&').filter { it.isNotEmpty() }.map { item ->
             val name = item.substringBefore('=')
             val value = item.substringAfter('=', "")
-            URLDecoder.decode(name, Charsets.UTF_8) to URLDecoder.decode(value, Charsets.UTF_8)
+            URLDecoder.decode(name, Charsets.UTF_8.name()) to URLDecoder.decode(value, Charsets.UTF_8.name())
         }
 }

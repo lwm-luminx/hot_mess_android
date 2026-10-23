@@ -1,5 +1,6 @@
 package social.hotmess.android.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,10 +10,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.NotificationsActive
+import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.ConfirmationNumber
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Email
+import androidx.compose.material.icons.rounded.Face
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.Notifications
@@ -32,9 +37,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.CancellationException
@@ -45,6 +53,7 @@ import social.hotmess.android.ui.LocalAppGraph
 import social.hotmess.android.ui.Navigator
 import social.hotmess.android.ui.ScreenScaffold
 import social.hotmess.android.ui.components.Avatar
+import social.hotmess.android.ui.components.ChatBubble
 import social.hotmess.android.ui.components.DangerRow
 import social.hotmess.android.ui.components.DetailInset
 import social.hotmess.android.ui.components.DetailRowPadding
@@ -52,17 +61,20 @@ import social.hotmess.android.ui.components.DetailSection
 import social.hotmess.android.ui.components.Feed
 import social.hotmess.android.ui.components.InfoRow
 import social.hotmess.android.ui.components.RowDivider
+import social.hotmess.android.ui.components.TinyAvatarSize
 import social.hotmess.android.ui.openAppSettings
 import social.hotmess.android.ui.openUrl
 import social.hotmess.android.ui.theme.HotMessType
+import social.hotmess.android.ui.theme.Radius
 import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.LegalLinks
+import social.hotmess.core.initialsForDisplay
 
 private enum class Confirm { RESET, SIGN_OUT, DELETE }
 
 /**
- * You: who you're signed in as, location access, chat notifications, the people you block, feedback, the terms and
+ * You: who you're signed in as, location access, your chat photo, chat notifications, the people you block, feedback, the terms and
  * privacy policy, about the app, signing out, and deleting your account.
  */
 @Composable
@@ -83,6 +95,8 @@ fun MeScreen(navigator: Navigator) {
     // Pushes about rooms they just left (me.recentChatPush); null until known, and the row stays hidden
     // when the server can't say (signed out, or an older API).
     var recentChatPush by remember { mutableStateOf<Boolean?>(null) }
+    // "Use my initials instead" in chat rooms (me.chatInitials); hidden, like the push setting, until known.
+    var chatInitials by remember { mutableStateOf<Boolean?>(null) }
     // Connect Google, offered while the account has no Google sign-in (me.self.signedInWithGoogle is false).
     val googleAccounts = LocalGoogleAccounts.current
     var connectingGoogle by remember { mutableStateOf(false) }
@@ -94,6 +108,16 @@ fun MeScreen(navigator: Navigator) {
         if (!graph.session.isSignedIn) return@LaunchedEffect
         recentChatPush = try {
             graph.api.recentChatPush()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+    }
+    LaunchedEffect(Unit) {
+        if (!graph.session.isSignedIn) return@LaunchedEffect
+        chatInitials = try {
+            graph.api.chatInitials()
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -139,6 +163,20 @@ fun MeScreen(navigator: Navigator) {
         scope.launch {
             recentChatPush = try {
                 graph.api.setRecentChatPush(enabled)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                before
+            }
+        }
+    }
+
+    fun setChatInitials(enabled: Boolean) {
+        val before = chatInitials
+        chatInitials = enabled
+        scope.launch {
+            chatInitials = try {
+                graph.api.setChatInitials(enabled)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -211,6 +249,37 @@ fun MeScreen(navigator: Navigator) {
                     }
                 }
             }
+            chatInitials?.let { initials ->
+                item {
+                    DetailSection("Chat photo") {
+                        ChatPhotoSample(user?.name.orEmpty(), if (initials) null else user?.avatarUrl)
+                        Column(
+                            Modifier.fillMaxWidth().padding(horizontal = DetailInset, vertical = Space.s2),
+                            verticalArrangement = Arrangement.spacedBy(Space.s2),
+                        ) {
+                            Text(
+                                "In chat, everyone sees your photo this small, on purpose. It's enough for friends to spot you, " +
+                                    "and not enough for strangers to judge you.",
+                                style = HotMessType.body,
+                                color = tokens.ink,
+                            )
+                            Text(
+                                "We keep only a small copy for chat rooms. Nobody in a chat can open a bigger one.",
+                                style = HotMessType.bodySmall,
+                                color = tokens.inkMuted,
+                            )
+                        }
+                        RowDivider()
+                        SwitchRow(
+                            "Use my initials instead",
+                            "Show \"${user?.name.orEmpty().initialsForDisplay().take(1).ifEmpty { "?" }}\" on a colour, no photo",
+                            checked = initials,
+                            icon = Icons.Rounded.Face,
+                            onCheckedChange = ::setChatInitials,
+                        )
+                    }
+                }
+            }
             recentChatPush?.let { enabled ->
                 item {
                     DetailSection("Notifications") {
@@ -222,6 +291,16 @@ fun MeScreen(navigator: Navigator) {
                             onCheckedChange = ::setRecentChatPush,
                         )
                     }
+                }
+            }
+            // "Need support?" is here whether or not the user is out; a venue's Get help only on the venue they're at.
+            item {
+                DetailSection("Help and safety") {
+                    InfoRow("Need support?", icon = Icons.Rounded.Favorite, onClick = { navigator.openSupport(null) }, trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight)
+                    RowDivider()
+                    InfoRow("Getting help at a venue", icon = Icons.Rounded.Shield, onClick = navigator::openGettingHelp, trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight)
+                    RowDivider()
+                    InfoRow("Your safety alerts", icon = Icons.Rounded.NotificationsActive, onClick = navigator::openSafetyAlerts, trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight)
                 }
             }
             safety?.blockedUsers?.takeIf { it.isNotEmpty() }?.let { blocked ->
@@ -357,6 +436,37 @@ fun MeScreen(navigator: Navigator) {
             },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text("Cancel") } },
         )
+    }
+}
+
+/**
+ * How you look in chat, at real size: your tiny avatar (or initials), your name as the room shows it to
+ * strangers ("Rick M.") and a sample bubble.
+ */
+@Composable
+private fun ChatPhotoSample(name: String, avatarUrl: String?) {
+    val parts = name.split(' ').filter { it.isNotEmpty() }
+    val shown = when {
+        parts.isEmpty() -> "You"
+        parts.size == 1 -> parts[0]
+        else -> "${parts.first()} ${parts.last().first().uppercaseChar()}."
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = DetailInset, vertical = Space.s3)
+            .clip(Radius.bubble)
+            .background(tokens.surface)
+            .padding(horizontal = Space.s3, vertical = 14.dp)
+            .semantics(mergeDescendants = true) { contentDescription = "Example of your message in a chat room" },
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(Space.s2),
+    ) {
+        Avatar(avatarUrl, name.ifBlank { "You" }, size = TinyAvatarSize)
+        Column {
+            Text(shown, style = HotMessType.caption, color = tokens.inkMuted, modifier = Modifier.padding(start = Space.s1, bottom = 2.dp))
+            ChatBubble("anyone know who's on next?", own = false, last = true)
+        }
     }
 }
 
