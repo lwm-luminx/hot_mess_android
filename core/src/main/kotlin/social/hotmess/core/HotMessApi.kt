@@ -412,6 +412,10 @@ class HotMessApi(val client: AudienceKitClient) {
         pairUpMutation(Documents.LEAVE_PAIR_UP, graphQLVariables("venueId" to venueId))
 
     /** A fresh single-use code to show the partner. */
+    /** Agrees to share the meeting in the venue's chat; it's posted once both have. */
+    suspend fun sharePairUp(matchId: String): PairUpState? =
+        pairUpMutation(Documents.SHARE_PAIR_UP, graphQLVariables("matchId" to matchId))
+
     suspend fun showPairUpCode(matchId: String): String =
         mutate(Documents.SHOW_PAIR_UP_CODE, ShowPairUpCodeResponse.serializer(), graphQLVariables("matchId" to matchId))
             .showPairUpCode.code

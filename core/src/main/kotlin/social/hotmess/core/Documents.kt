@@ -263,7 +263,7 @@ object Documents {
     """.trimIndent()
 
     private const val PAIR_UP_MATCH_FIELDS =
-        "id accepted partnerAccepted bonus metAt endReason topic { key text } partner { id name avatarUrl lookFor }"
+        "id accepted partnerAccepted shared partnerShared bonus metAt endReason topic { key text } partner { id name avatarUrl lookFor }"
 
     private const val PAIR_UP_STATE_FIELDS =
         "status lookFor metCount match { $PAIR_UP_MATCH_FIELDS } bonus { $PAIR_UP_MATCH_FIELDS }"
@@ -301,6 +301,12 @@ object Documents {
     val LEAVE_PAIR_UP: String = """
         mutation LeavePairUp(${'$'}venueId: ID!) {
           leavePairUp(input: { venueId: ${'$'}venueId }) { pairUp { $PAIR_UP_STATE_FIELDS } }
+        }
+    """.trimIndent()
+
+    val SHARE_PAIR_UP: String = """
+        mutation SharePairUp(${'$'}matchId: ID!) {
+          sharePairUp(input: { matchId: ${'$'}matchId }) { pairUp { $PAIR_UP_STATE_FIELDS } }
         }
     """.trimIndent()
 
