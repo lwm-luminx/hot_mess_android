@@ -93,6 +93,7 @@ import social.hotmess.core.FriendVenue
 import social.hotmess.core.Now
 import social.hotmess.core.NowLocale
 import social.hotmess.core.PhotoTone
+import social.hotmess.core.RoomLineup
 import social.hotmess.core.Venue
 import java.time.Instant
 
@@ -420,24 +421,27 @@ private fun EventHeadline(event: Event, onOpen: () -> Unit) {
 
 /**
  * The last few lines of the venue's chat, and the way into the room. At an [event] the room is the event's:
- * named and pictured for it, since its host may not be a listed venue.
+ * named for it, since its host may not be a listed venue. Its faces (NowHosts.md) are the venue, the lineup
+ * people in chat now, then, a gap apart, friends; the line under the title says the same in words.
  */
 @Composable
 private fun SmallTalk(venue: Venue, event: Event?, friends: List<Friend>, navigator: Navigator) {
     val graph = LocalAppGraph.current
     val user by graph.session.user.collectAsStateWithLifecycle()
     val roomName = event?.name ?: venue.name
-    val roomPhoto = event?.bannerUrl ?: venue.photoUrl
+    val others = friends.filterNot { it.id.equals(user?.id, ignoreCase = true) }.distinctBy { it.id.lowercase() }
+    // Now doesn't hear the room's lineup presence (only the room does), so nobody on the lineup is known to be in
+    // chat here yet; the line falls back to the venue and the count.
+    val lineupInChat = emptyList<ChatPeekParticipant>()
     val participants = buildList {
-        add(ChatPeekParticipant("venue-${venue.id}", roomName, roomPhoto, isPlace = true))
-        add(ChatPeekParticipant("viewer", "You", user?.avatarUrl))
-        friends.filterNot { it.id.equals(user?.id, ignoreCase = true) }
-            .distinctBy { it.id.lowercase() }.forEach { friend ->
-                add(ChatPeekParticipant(
-                    friend.id, friend.name, friend.avatarUrl, presenceOf(friend.presence),
-                ))
-            }
+        add(ChatPeekParticipant("venue-${venue.id}", venue.name, venue.photoUrl, isPlace = true))
+        addAll(lineupInChat)
+        others.forEachIndexed { index, friend ->
+            add(ChatPeekParticipant(friend.id, friend.name, friend.avatarUrl, presenceOf(friend.presence), gapBefore = index == 0))
+        }
     }
+    // The friend the line names: one in chat now, else any here.
+    val friend = (others.firstOrNull { presenceOf(it.presence) == Presence.ONLINE } ?: others.firstOrNull())?.name
     ChatPeek(
         rememberPeekMessages(venue.recentMessages),
         title = "Small talk",
@@ -445,6 +449,8 @@ private fun SmallTalk(venue: Venue, event: Event?, friends: List<Friend>, naviga
         onOpen = { navigator.openChat(venue.id, roomName) },
         presence = remember(venue.recentMessages) { peekPresence(venue.recentMessages) },
         participants = participants,
+        // Now isn't told how many are in the room, so the line leaves the count off.
+        subtitle = RoomLineup.peekLine(venue.name, lineupInChat.size, friend, count = null),
     )
 }
 

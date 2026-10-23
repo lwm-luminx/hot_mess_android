@@ -128,6 +128,19 @@ class HotMessApi(val client: AudienceKitClient) {
         )
     }
 
+    /** A venue's night for its chat room: its face, tonight's running order and what's up next. */
+    suspend fun venueLineup(id: String): VenueNight {
+        val venue = query(Documents.VENUE_LINEUP, VenueLineupResponse.serializer(), graphQLVariables("id" to id)).venue
+            ?: throw ApiError.NotFound
+        return VenueNight(
+            venueId = venue.id,
+            name = venue.name,
+            photoUrl = venue.photoUrl,
+            entries = venue.people?.runningOrder?.nodes.orEmpty().filterNotNull(),
+            upNextId = venue.people?.upNext?.id,
+        )
+    }
+
     // endregion
 
     // region People
@@ -909,6 +922,23 @@ private data class VenueResponse(val venues: Venues? = null) {
 
     /** `venues { venue(id:) }`. */
     val venue: VenueNode? get() = venues?.venue
+}
+
+@Serializable
+private data class VenueLineupResponse(val venues: Venues? = null) {
+    @Serializable data class Venues(val venue: Night? = null)
+
+    @Serializable
+    data class Night(val id: String, val name: String = "", val photoUrl: String? = null, val people: People? = null)
+
+    /** The venue's people mixin; null where the module is off. */
+    @Serializable
+    data class People(val runningOrder: Connection<LineupEntry>? = null, val upNext: UpNext? = null)
+
+    @Serializable data class UpNext(val id: String)
+
+    /** `venues { venue(id:) }`. */
+    val venue: Night? get() = venues?.venue
 }
 
 @Serializable
