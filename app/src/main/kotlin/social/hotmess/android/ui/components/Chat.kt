@@ -114,6 +114,8 @@ import social.hotmess.core.RoomLineup
 import social.hotmess.core.RecordId
 import social.hotmess.core.RoomPerson
 import social.hotmess.core.SharedEvent
+import social.hotmess.core.SharedTribe
+import social.hotmess.core.accessibilityPhrase
 import java.time.Duration
 import java.time.Instant
 
@@ -212,6 +214,8 @@ data class ChatThreadMessage(
     val promptId: String? = null,
     /** Tapping the sender's avatar or name opens their profile sheet: a person posting as themselves, not the viewer. */
     val opensProfile: Boolean = false,
+    /** The tribes the viewer and the sender both picked: a BothMark on their avatar and a BothLine after their name. */
+    val sharedTribes: List<SharedTribe> = emptyList(),
 ) {
     /** Whether the room still shows it: a special disappears at its end time. */
     fun isShowing(at: Instant): Boolean {
@@ -569,14 +573,17 @@ private fun BubbleRow(
                 AudienceMark(message.senderName?.takeIf { it.isNotBlank() } ?: "Hot Mess", size = avatar)
             } else if (entry.last) {
                 val friendRing = tokens.accent
+                val shares = message.sharedTribes.isNotEmpty() && !message.asPlace && !message.asListing
                 Avatar(
                     message.avatarUrl,
                     message.senderName.orEmpty(),
                     size = avatar,
-                    // A friend's tiny avatar: a 1.5dp `accent` ring outside a 2dp gap, drawn outside its bounds.
+                    // A friend's tiny avatar: a 1.5dp `accent` ring outside a 2dp gap, drawn outside its bounds. Someone
+                    // who shares a tribe with the viewer gets the BothMark's ring and badge in its place.
                     modifier = Modifier
+                        .bothMark(shares, tokens.accent, tokens.onAccent, tokens.surface)
                         .then(
-                            if (message.friend && !message.asPlace && !message.asListing) {
+                            if (message.friend && !shares && !message.asPlace && !message.asListing) {
                                 Modifier.drawBehind {
                                     val stroke = 1.5.dp.toPx()
                                     drawCircle(friendRing, radius = size.minDimension / 2f + 2.dp.toPx() + stroke / 2f, style = Stroke(width = stroke))
@@ -638,6 +645,9 @@ private fun BubbleRow(
                         )
                     }
                     RoleTag(message.role)
+                }
+                if (!message.asPlace && !message.asListing && message.sharedTribes.isNotEmpty()) {
+                    BothLine(message.sharedTribes, Modifier.padding(start = Space.s3, bottom = 2.dp))
                 }
             }
             if (rich != null) {
@@ -1015,7 +1025,8 @@ fun HereNowStrip(
 private fun HereNowFace(person: RoomPerson, presence: Presence, onOpen: (() -> Unit)? = null) {
     val name = person.name ?: "Someone"
     val whenHere = if (person.isRecent) "here recently" else "here now"
-    val description = if (person.friend) "$name, friend, $whenHere" else "$name, $whenHere"
+    val tribes = person.sharedTribes.orEmpty()
+    val description = listOfNotNull(name, "friend".takeIf { person.friend }, tribes.accessibilityPhrase, whenHere).joinToString(", ")
     val ringColor = tokens.accent
     Avatar(
         person.avatarUrl,
@@ -1036,8 +1047,10 @@ private fun HereNowFace(person: RoomPerson, presence: Presence, onOpen: (() -> U
                     Modifier
                 },
             )
+            // Someone who shares a tribe: the BothMark's ring, and its badge unless the friend ring already marks them.
+            .bothMark(tribes.isNotEmpty(), tokens.accent, tokens.onAccent, tokens.surfaceRaised, badge = !person.friend)
             .then(
-                if (person.friend) {
+                if (person.friend && tribes.isEmpty()) {
                     Modifier.drawBehind {
                         val stroke = 1.5.dp.toPx()
                         drawCircle(ringColor, radius = size.minDimension / 2f + 2.dp.toPx() + stroke / 2f, style = Stroke(width = stroke))

@@ -68,6 +68,7 @@ import social.hotmess.core.ReportTarget
 import social.hotmess.core.RoomLineup
 import social.hotmess.core.RoomPeople
 import social.hotmess.core.RoomPerson
+import social.hotmess.core.SharedTribe
 import social.hotmess.core.VenueChatConnection
 import social.hotmess.core.Venue
 import social.hotmess.core.VenueMessage
@@ -160,6 +161,20 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
         }
     }
 
+    /**
+     * The tribes the viewer shares with each person in the room, by lowercase user id: from the roster, presence
+     * and their lines. Only the viewer's own matches, and only where the API has tribes; empty while disconnected.
+     */
+    private val _sharedTribes = MutableStateFlow<Map<String, List<SharedTribe>>>(emptyMap())
+    val sharedTribes: StateFlow<Map<String, List<SharedTribe>>> = _sharedTribes.asStateFlow()
+
+    /** What the room said the viewer shares with [userId]; a null list said nothing. */
+    private fun noteSharedTribes(userId: String, tribes: List<SharedTribe>?) {
+        if (tribes == null) return
+        val id = userId.lowercase()
+        if (_sharedTribes.value[id] != tribes) _sharedTribes.value = _sharedTribes.value + (id to tribes)
+    }
+
     /** A line on its way to the room; the composer waits for it. */
     private val _sending = MutableStateFlow(false)
     val sending: StateFlow<Boolean> = _sending.asStateFlow()
@@ -230,10 +245,12 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
                 }
             }
             backoff = 1_000L
+            // Each person's shared tribes, only from an API that has them (an older one would refuse the room).
+            val sharedTribes = graph.tribes.supportsTribes()
             while (true) {
                 var away = false
                 var ended = false
-                VenueChatConnection(room, audienceId, graph.cable).events().takeWhile { event ->
+                VenueChatConnection(room, audienceId, graph.cable, sharedTribes).events().takeWhile { event ->
                     when (event) {
                         VenueChatConnection.Event.Connected -> {
                             _status.value = Status.CONNECTED
@@ -246,6 +263,7 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
                             graph.api.friends.record(event.friends)
                             _people.value = _people.value.roster(event.online, event.people, event.recent)
                             _lineupPresence.value = event.lineup
+                            (event.people + event.recent).forEach { noteSharedTribes(it.userId, it.sharedTribes) }
                         }
                         is VenueChatConnection.Event.LineupChanged -> _lineupPresence.value = event.lineup
                         is VenueChatConnection.Event.PresenceChanged -> {
@@ -255,6 +273,7 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
                                 // Listed until recentUntil, offline (or with the push dot), when the room says so.
                                 _people.value.left(event.userId, event.recentUntil, event.reachable)
                             }
+                            if (event.online) noteSharedTribes(event.userId, event.sharedTribes)
                             val id = event.userId.lowercase()
                             _reachable.value = if (event.reachable) _reachable.value + id else _reachable.value - id
                         }
@@ -273,6 +292,7 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
                             _people.value = RoomPeople()
                             _reachable.value = emptySet()
                             _lineupPresence.value = null
+                            _sharedTribes.value = emptyMap()
                         }
                         VenueChatConnection.Event.Ended -> ended = true
                         VenueChatConnection.Event.Rejected, VenueChatConnection.Event.Left -> away = true
@@ -300,6 +320,7 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
         if (line.reachable && !line.isFromListing) _reachable.value = _reachable.value + line.userId.lowercase()
         // An older server's roster has no names: a line someone sends names them in "Here now".
         if (!line.isFromListing) _people.value = _people.value.described(line.userId, line.name, line.avatarUrl)
+        if (!line.isFromListing && !line.isOutgoing(graph.session.user.value?.id)) noteSharedTribes(line.userId, line.sharedTribes)
         val current = _messages.value
         val index = current.indexOfFirst { it.id == line.id }
         _messages.value = if (index >= 0) current.toMutableList().also { it[index] = line } else current + line
@@ -315,6 +336,8 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
         _messages.value = listOfNotNull(older) + lines
         _clearMark.value = ChatClearMark.forHistory(lines, expiresBefore)
         _reachable.value = lines.filter { it.reachable && !it.isFromListing }.map { it.userId.lowercase() }.toSet()
+        val me = graph.session.user.value?.id
+        lines.filter { !it.isFromListing && !it.isOutgoing(me) }.forEach { noteSharedTribes(it.userId, it.sharedTribes) }
     }
 
     /** An announcement was pinned (replacing whichever was) or unpinned. */
@@ -338,6 +361,7 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
         _people.value = RoomPeople()
         _reachable.value = emptySet()
         _lineupPresence.value = null
+        _sharedTribes.value = emptyMap()
     }
 
     /**
@@ -394,6 +418,7 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
     val outOfRange by model.outOfRange.collectAsStateWithLifecycle()
     val people by model.people.collectAsStateWithLifecycle()
     val reachable by model.reachable.collectAsStateWithLifecycle()
+    val sharedTribes by model.sharedTribes.collectAsStateWithLifecycle()
     val clearMark by model.clearMark.collectAsStateWithLifecycle()
     val night by model.night.collectAsStateWithLifecycle()
     val lineupPresence by model.lineupPresence.collectAsStateWithLifecycle()
@@ -401,10 +426,12 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
     val safety by graph.safety.state.collectAsStateWithLifecycle()
     val userId = user?.id
     val friends = graph.api.friends
-    // Who's here, the viewer then friends first; a roster can add friends' full names, so it redraws the thread too.
-    val hereNow = remember(people, userId, safety) {
+    // Who's here, the viewer then friends first, each with what they share with the viewer; a roster can add friends'
+    // full names, so it redraws the thread too.
+    val hereNow = remember(people, userId, safety, sharedTribes) {
         RoomPeople.hereNow(people.byId.values, userId) { friends.fullName(it) }
             .filterNot { safety?.isBlocked(it.userId) == true }
+            .map { person -> sharedTribes[person.userId.lowercase()]?.let { person.copy(sharedTribes = it) } ?: person }
     }
     // A venue's room (an event's at the venue too) leads with the venue's face and tonight's lineup; a locale's has neither.
     val place = night?.let { ChatPlace(it.venueId, it.name.ifBlank { venueName }, it.photoUrl) }
@@ -434,6 +461,7 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
             person.name?.takeIf { it.isNotBlank() } ?: "Someone",
             person.avatarUrl,
             friend = person.friend || friends.fullName(person.userId) != null,
+            sharedTribes = sharedTribes[person.userId.lowercase()].orEmpty(),
         )
     }
     val friendRequests by model.friendRequests.collectAsStateWithLifecycle()
@@ -509,8 +537,8 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
             // Muted people's lines leave this room only, for this reader; answer counts still include them.
             val unmuted = remember(shown, muted) { ChatMutes.visible(shown, muted) }
             val notDismissed = remember(unmuted, dismissedPrompts) { unmuted.filterNot { it.kind == ChatKind.PROMPT && it.id in dismissedPrompts } }
-            val thread = remember(notDismissed, userId, people) {
-                notDismissed.map { it.threadMessage(userId, friends, notDismissed, people) }
+            val thread = remember(notDismissed, userId, people, sharedTribes) {
+                notDismissed.map { it.threadMessage(userId, friends, notDismissed, people, sharedTribes) }
             }
             // The night's pinned prompt (the newest), the PromptBar's; and the prompt being answered.
             val pinnedPrompt = remember(shown) { ChatPrompts.pinned(shown)?.prompt }
@@ -538,6 +566,7 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
                             line.senderName?.takeIf { it.isNotBlank() } ?: "Someone",
                             sent.avatarUrl,
                             friend = line.friend,
+                            sharedTribes = line.sharedTribes,
                         )
                     }
                 },
@@ -685,7 +714,13 @@ private fun roomNameFallback(room: ChatRoom, graph: AppGraph): String = when (ro
  * "First L."), a post as the venue or as a listing by its own name and photo, a prompt as the audience
  * (its name and mark), an answer with its Prompt label from [lines], and a rich message as its card.
  */
-private fun VenueMessage.threadMessage(viewerId: String?, friends: FriendDirectory, lines: List<VenueMessage>, people: RoomPeople) = ChatThreadMessage(
+private fun VenueMessage.threadMessage(
+    viewerId: String?,
+    friends: FriendDirectory,
+    lines: List<VenueMessage>,
+    people: RoomPeople,
+    sharedTribes: Map<String, List<SharedTribe>>,
+) = ChatThreadMessage(
     id = id,
     // A post as a listing or the audience groups apart from the poster's own lines, and takes no presence of theirs.
     senderId = when {
@@ -712,4 +747,6 @@ private fun VenueMessage.threadMessage(viewerId: String?, friends: FriendDirecto
     prompt = if (kind == ChatKind.PROMPT) prompt else null,
     promptId = if (kind == ChatKind.TEXT) promptId else null,
     opensProfile = opensProfile(viewerId),
+    // The viewer's own matches with a person posting as themselves; never on the viewer's own lines.
+    sharedTribes = if (isFromListing || isOutgoing(viewerId)) emptyList() else sharedTribes[userId.lowercase()].orEmpty(),
 )
