@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- As backup_rules.xml: everything but the session token, so the cards the user turned off
+     (com.audiencekit.cards.xml) come back on a new phone. -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="com.audiencekit.session.xml" />

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ViewAgenda
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Shield
@@ -18,6 +19,7 @@ import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Email
 import androidx.compose.material.icons.rounded.Face
+import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.Notifications
@@ -85,6 +87,8 @@ fun MeScreen(navigator: Navigator) {
     val locale by graph.location.locale.collectAsStateWithLifecycle()
     val access by graph.location.access.collectAsStateWithLifecycle()
     val safety by graph.safety.state.collectAsStateWithLifecycle()
+    // "Your tribes", shown once the API answers with them (hidden signed out, or on an older API).
+    val tribes by graph.tribes.choices.collectAsStateWithLifecycle()
     var unblocking by remember { mutableStateOf<String?>(null) }
     var deleting by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<String?>(null) }
@@ -104,6 +108,7 @@ fun MeScreen(navigator: Navigator) {
 
     LaunchedEffect(Unit) { graph.session.refreshUser() }
     LaunchedEffect(Unit) { graph.safety.refresh() }
+    LaunchedEffect(Unit) { if (graph.session.isSignedIn) graph.tribes.load() }
     LaunchedEffect(Unit) {
         if (!graph.session.isSignedIn) return@LaunchedEffect
         recentChatPush = try {
@@ -280,6 +285,28 @@ fun MeScreen(navigator: Navigator) {
                     }
                 }
             }
+            tribes?.let { choices ->
+                item {
+                    DetailSection(
+                        "Tribes",
+                        footer = {
+                            Text(
+                                "Nobody sees your list. When you and someone in a venue chat share one, just the two of you see it.",
+                                style = HotMessType.bodySmall,
+                                color = tokens.inkMuted,
+                            )
+                        },
+                    ) {
+                        InfoRow(
+                            "Your tribes",
+                            value = if (choices.picked.isEmpty()) "None yet" else "${choices.picked.size} picked",
+                            icon = Icons.Rounded.Groups,
+                            onClick = navigator::openTribes,
+                            trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        )
+                    }
+                }
+            }
             recentChatPush?.let { enabled ->
                 item {
                     DetailSection("Notifications") {
@@ -301,6 +328,17 @@ fun MeScreen(navigator: Navigator) {
                     InfoRow("Getting help at a venue", icon = Icons.Rounded.Shield, onClick = navigator::openGettingHelp, trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight)
                     RowDivider()
                     InfoRow("Your safety alerts", icon = Icons.Rounded.NotificationsActive, onClick = navigator::openSafetyAlerts, trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight)
+                }
+            }
+            item {
+                // Promoted cards the user turned off: kept on this phone, never sent.
+                DetailSection("Cards") {
+                    InfoRow(
+                        "Cards you see",
+                        icon = Icons.Rounded.ViewAgenda,
+                        onClick = navigator::openCardsYouSee,
+                        trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                    )
                 }
             }
             safety?.blockedUsers?.takeIf { it.isNotEmpty() }?.let { blocked ->

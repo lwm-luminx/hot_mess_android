@@ -124,6 +124,22 @@ object Documents {
         }
     """.trimIndent()
 
+    /** The tribe picker's list by category, the cap, and the signed-in user's picks. */
+    val TRIBES: String = """
+        query Tribes {
+          tribeCap
+          tribeCatalog { key name tribes { id name } }
+          me { self { tribes { tag { id } } } }
+        }
+    """.trimIndent()
+
+    /** Replaces the signed-in user's tribes; refused past the cap, changing nothing. */
+    val SET_TRIBES: String = """
+        mutation SetTribes(${'$'}ids: [ID!]!) {
+          setTribes(input: { tagIds: ${'$'}ids }) { tribes { tag { id } } }
+        }
+    """.trimIndent()
+
     /** Whether chat rooms show the signed-in user's initials instead of their photo. Off unless they turn it on. */
     val CHAT_INITIALS: String = """
         query ChatInitials {

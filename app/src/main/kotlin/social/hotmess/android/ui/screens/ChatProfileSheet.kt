@@ -30,21 +30,30 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import social.hotmess.android.ui.components.Avatar
+import social.hotmess.android.ui.components.BothGlyph
 import social.hotmess.android.ui.components.Presence
 import social.hotmess.android.ui.components.PrimaryButton
 import social.hotmess.android.ui.components.SecondaryButton
 import social.hotmess.android.ui.components.TinyAvatarSize
+import social.hotmess.android.ui.components.bothMark
 import social.hotmess.android.ui.theme.HotMessTheme
 import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.FriendState
+import social.hotmess.core.SharedTribe
 
 /**
  * Someone tapped in a chat room: their user id, the name the room shows them by ("First L.", or a friend's
- * full name), their chat photo, and whether they're the viewer's friend.
+ * full name), their chat photo, whether they're the viewer's friend, and the tribes the two of them both picked.
  */
-data class ChatProfile(val userId: String, val name: String, val avatarUrl: String?, val friend: Boolean)
+data class ChatProfile(
+    val userId: String,
+    val name: String,
+    val avatarUrl: String?,
+    val friend: Boolean,
+    val sharedTribes: List<SharedTribe> = emptyList(),
+)
 
 /**
  * The sheet tapping someone in chat opens: their tiny chat avatar (the presence dot while they're in the
@@ -102,12 +111,15 @@ private fun ChatProfileContent(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val ring = tokens.accent
+            val shares = profile.sharedTribes.isNotEmpty()
             Avatar(
                 profile.avatarUrl,
                 profile.name,
                 size = TinyAvatarSize,
-                // As in the room: a friend's 1.5dp `accent` ring outside a 2dp gap.
-                modifier = if (profile.friend) {
+                // As in the room: a friend's 1.5dp `accent` ring outside a 2dp gap, or the BothMark.
+                modifier = if (shares) {
+                    Modifier.bothMark(true, tokens.accent, tokens.onAccent, tokens.surface)
+                } else if (profile.friend) {
                     Modifier.drawBehind {
                         val stroke = 1.5.dp.toPx()
                         drawCircle(ring, radius = size.minDimension / 2f + 2.dp.toPx() + stroke / 2f, style = Stroke(width = stroke))
@@ -133,6 +145,7 @@ private fun ChatProfileContent(
                 if (online) Text("In chat now", style = HotMessType.bodySmall, color = tokens.inkMuted)
             }
         }
+        if (profile.sharedTribes.isNotEmpty()) YouBothCard(profile.sharedTribes)
         Row(
             Modifier
                 .fillMaxWidth()
@@ -179,6 +192,30 @@ private fun ChatProfileContent(
     }
 }
 
+/**
+ * What the viewer and this person both picked, each by its phrase ("You're both bears"), on `accent-soft`. Only
+ * the two of them ever see it; it says so, since the list itself stays private.
+ */
+@Composable
+private fun YouBothCard(tribes: List<SharedTribe>) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .background(tokens.accentSoft)
+            .semantics(mergeDescendants = true) {}
+            .padding(horizontal = Space.s3, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(Space.s1),
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            BothGlyph(14.dp)
+            Text("You both", style = HotMessType.label, color = tokens.accentInk)
+        }
+        tribes.forEach { Text(it.bothPhrase, style = HotMessType.bodySmall, color = tokens.ink) }
+        Text("Only the two of you see this.", style = HotMessType.caption, color = tokens.inkMuted)
+    }
+}
+
 @Composable
 private fun SheetTextButton(text: String, color: Color, onClick: () -> Unit) {
     TextButton(onClick = onClick, modifier = Modifier.heightIn(min = 48.dp)) {
@@ -192,7 +229,7 @@ private fun ChatProfilePreview() {
     HotMessTheme(darkTheme = false) {
         Column(Modifier.background(tokens.surface).padding(top = Space.s4)) {
             ChatProfileContent(
-                ChatProfile("u-1", "Jo P.", null, friend = false),
+                ChatProfile("u-1", "Jo P.", null, friend = false, sharedTribes = listOf(SharedTribe("t1", "Bear", "You're both bears"))),
                 Presence.ONLINE, FriendState.NONE, addingFriend = false, friendError = null, muted = false,
                 {}, {}, {}, {}, {},
             )

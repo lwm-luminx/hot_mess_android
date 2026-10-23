@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The session token is encrypted with a key that never leaves this device's keystore, so a
-     restored copy couldn't be read. Leave it out. -->
+     restored copy couldn't be read. Leave it out. Everything else is backed up, including
+     com.audiencekit.cards.xml: the promoted-card categories the user turned off, which come back on a
+     new phone this way (they're never sent to the server). An <include> here would back up only what
+     it names, so don't add one without including that file too. -->
 <full-backup-content>
     <exclude domain="sharedpref" path="com.audiencekit.session.xml" />
 </full-backup-content>
