@@ -42,22 +42,30 @@ import social.hotmess.android.ui.components.HereNowStrip
 import social.hotmess.android.ui.components.Message
 import social.hotmess.android.ui.components.Presence
 import social.hotmess.android.ui.components.PromptBar
+import social.hotmess.android.ui.components.PromptBarState
 import social.hotmess.android.ui.components.RichContent
 import social.hotmess.android.ui.components.RoomBanner
 import social.hotmess.android.ui.components.RoomBannerKind
+import social.hotmess.core.ApiError
 import social.hotmess.core.AppRoute
 import social.hotmess.core.BlockedUser
 import social.hotmess.core.ChatClearMark
 import social.hotmess.core.ChatKind
+import social.hotmess.core.ChatMutes
 import social.hotmess.core.ChatPrompts
 import social.hotmess.core.ChatRoom
 import social.hotmess.core.FriendDirectory
+import social.hotmess.core.FriendState
+import social.hotmess.core.PingPick
+import social.hotmess.core.PromptJump
 import social.hotmess.core.RecordId
 import social.hotmess.core.ReportSubject
 import social.hotmess.core.ReportTarget
 import social.hotmess.core.RoomPeople
 import social.hotmess.core.VenueChatConnection
+import social.hotmess.core.Venue
 import social.hotmess.core.VenueMessage
+import social.hotmess.core.opensProfile
 import java.time.Instant
 
 /**
@@ -100,6 +108,36 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
      */
     private val _clearMark = MutableStateFlow<ChatClearMark?>(null)
     val clearMark: StateFlow<ChatClearMark?> = _clearMark.asStateFlow()
+
+    /**
+     * Friend requests sent from this room's profile sheet, by lowercase user id. The room's roster doesn't
+     * carry requests, so this is what "Requested" knows; it lasts while the room's model does.
+     */
+    private val _friendRequests = MutableStateFlow<Map<String, FriendState>>(emptyMap())
+    val friendRequests: StateFlow<Map<String, FriendState>> = _friendRequests.asStateFlow()
+
+    /** The request on its way, by lowercase user id. */
+    private val _addingFriend = MutableStateFlow<String?>(null)
+    val addingFriend: StateFlow<String?> = _addingFriend.asStateFlow()
+
+    /** Asks [userId] to be friends (`sendFriendRequest`); [onError] gets what went wrong, in words for people. */
+    fun addFriend(userId: String, onError: (String) -> Unit) {
+        val id = userId.lowercase()
+        if (_addingFriend.value != null || _friendRequests.value[id] != null) return
+        _addingFriend.value = id
+        viewModelScope.launch {
+            try {
+                val status = graph.api.sendFriendRequest(userId)
+                _friendRequests.value = _friendRequests.value + (id to FriendState.afterRequest(status))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onError(ApiError.of(e).message ?: "That didn't go through. Try again in a moment.")
+            } finally {
+                _addingFriend.value = null
+            }
+        }
+    }
 
     /** A line on its way to the room; the composer waits for it. */
     private val _sending = MutableStateFlow(false)
@@ -322,6 +360,16 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
     var reporting by remember { mutableStateOf<ReportSubject?>(null) }
     var blocking by remember { mutableStateOf<BlockedUser?>(null) }
     var askingTerms by remember { mutableStateOf(false) }
+    // The profile sheet tapping someone opens, and the Ping sheet it can open.
+    var profile by remember { mutableStateOf<ChatProfile?>(null) }
+    var friendError by remember { mutableStateOf<String?>(null) }
+    var pinging by remember { mutableStateOf(false) }
+    val friendRequests by model.friendRequests.collectAsStateWithLifecycle()
+    val addingFriend by model.addingFriend.collectAsStateWithLifecycle()
+    // Who this reader muted in this room, on this device.
+    val allMuted by graph.chatMutes.state.collectAsStateWithLifecycle()
+    LaunchedEffect(room) { graph.chatMutes.muted(room) }
+    val muted = allMuted[ChatMutes.key(room)].orEmpty()
     // The prompt being answered (its id), and the quiet-room cards this reader said "Not now" to.
     var answering by rememberSaveable { mutableStateOf<String?>(null) }
     var dismissedPrompts by rememberSaveable { mutableStateOf(emptyList<String>()) }
@@ -380,10 +428,25 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
                 RoomPeople.hereNow(people.byId.values, userId) { friends.fullName(it) }
                     .filterNot { safety?.isBlocked(it.userId) == true }
             }
-            HereNowStrip(hereNow, reachable, viewerId = userId)
+            HereNowStrip(
+                hereNow,
+                reachable,
+                viewerId = userId,
+                onOpenPerson = { person ->
+                    friendError = null
+                    profile = ChatProfile(
+                        person.userId,
+                        person.name?.takeIf { it.isNotBlank() } ?: "Someone",
+                        person.avatarUrl,
+                        friend = person.friend || friends.fullName(person.userId) != null,
+                    )
+                },
+            )
             // Blocked people's lines leave the room at once; the API stops sending new ones.
             val shown = remember(messages, safety) { messages.filterNot { !it.isFromListing && safety?.isBlocked(it.userId) == true } }
-            val notDismissed = remember(shown, dismissedPrompts) { shown.filterNot { it.kind == ChatKind.PROMPT && it.id in dismissedPrompts } }
+            // Muted people's lines leave this room only, for this reader; answer counts still include them.
+            val unmuted = remember(shown, muted) { ChatMutes.visible(shown, muted) }
+            val notDismissed = remember(unmuted, dismissedPrompts) { unmuted.filterNot { it.kind == ChatKind.PROMPT && it.id in dismissedPrompts } }
             val thread = remember(notDismissed, userId, people) {
                 notDismissed.map { it.threadMessage(userId, friends, notDismissed, people) }
             }
@@ -405,8 +468,20 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
                 isLocale = isLocale,
                 onOpenEvent = { id -> navigator.open(AppRoute.EventDetail(RecordId.normalize(id) ?: id.lowercase())) },
                 onMessageActions = { line -> acting = shown.firstOrNull { it.id == line.id } },
+                onOpenProfile = { line ->
+                    shown.firstOrNull { it.id == line.id }?.let { sent ->
+                        friendError = null
+                        profile = ChatProfile(
+                            sent.userId.lowercase(),
+                            line.senderName?.takeIf { it.isNotBlank() } ?: "Someone",
+                            sent.avatarUrl,
+                            friend = line.friend,
+                        )
+                    }
+                },
+                onOpenPrompt = { promptId -> PromptJump.to(promptId, shown) },
                 promptBar = pinnedPrompt?.let { prompt ->
-                    @Composable { collapsed: Boolean ->
+                    @Composable { bar: PromptBarState ->
                         val answers = remember(shown, prompt.id) { ChatPrompts.answerCount(shown, prompt.id) }
                         val clock by produceState(Instant.now(), prompt.nextAt) {
                             while (true) {
@@ -418,8 +493,10 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
                             prompt,
                             footer = ChatPrompts.footer(prompt, answers, at = clock),
                             onAnswer = { answering = prompt.id },
-                            collapsed = collapsed,
+                            collapsed = bar.collapsed,
                             answerCount = answers,
+                            highlighted = bar.highlighted,
+                            onExpand = bar.onExpand,
                         )
                     }
                 },
@@ -457,6 +534,47 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
                 blocking = it
             },
             onDismiss = { acting = null },
+        )
+    }
+    profile?.let { person ->
+        val id = person.userId.lowercase()
+        val presence = if (id in people.online) Presence.ONLINE else null
+        ChatProfileSheet(
+            profile = person,
+            presence = presence,
+            friendState = if (person.friend) FriendState.FRIENDS else friendRequests[id] ?: FriendState.NONE,
+            addingFriend = addingFriend == id,
+            friendError = friendError,
+            muted = id in muted,
+            onPing = {
+                profile = null
+                pinging = true
+            },
+            onAddFriend = {
+                friendError = null
+                model.addFriend(person.userId) { friendError = it }
+            },
+            onToggleMute = { graph.chatMutes.setMuted(room, id, id !in muted) },
+            onReport = {
+                profile = null
+                reporting = ReportSubject(ReportTarget.PERSON, person.userId, BlockedUser(person.userId, person.name, person.avatarUrl))
+            },
+            onBlock = {
+                profile = null
+                blocking = BlockedUser(person.userId, person.name, person.avatarUrl)
+            },
+            onDismiss = { profile = null },
+        )
+    }
+    if (pinging) {
+        // A Ping to friends about this venue (its room's), or with no pick in a locale's room.
+        PingSheet(
+            preselect = if (room.kind == ChatRoom.Kind.VENUE) PingPick.VenuePick(Venue(room.id, venueName)) else null,
+            onDismiss = { pinging = false },
+            onSent = {
+                pinging = false
+                graph.pingUpdated(it.id)
+            },
         )
     }
     reporting?.let { ReportDialog(it) { reporting = null } }
@@ -508,4 +626,6 @@ private fun VenueMessage.threadMessage(viewerId: String?, friends: FriendDirecto
     friend = !isFromListing && (people.byId[userId.lowercase()]?.friend == true || friends.fullName(userId) != null),
     promptLabel = if (kind == ChatKind.TEXT) ChatPrompts.label(promptId, lines) else null,
     prompt = if (kind == ChatKind.PROMPT) prompt else null,
+    promptId = if (kind == ChatKind.TEXT) promptId else null,
+    opensProfile = opensProfile(viewerId),
 )
