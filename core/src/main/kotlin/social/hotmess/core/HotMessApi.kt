@@ -566,6 +566,28 @@ class HotMessApi(val client: AudienceKitClient) {
 
     // endregion
 
+    // region Tribes
+
+    /**
+     * The audience's tribes for the picker, how many anyone may pick, and the user's picks. Throws on an API without
+     * the tribe catalog (the app then hides tribes).
+     */
+    suspend fun tribes(): TribeChoices {
+        val response = query(Documents.TRIBES, TribesResponse.serializer())
+        return TribeChoices(
+            categories = response.tribeCatalog,
+            cap = response.tribeCap.coerceAtLeast(1),
+            picked = response.me?.self?.tribes.orEmpty().map { it.tag.id }.toSet(),
+        )
+    }
+
+    /** Replaces the user's tribes with [ids]; the API refuses more than the cap. Returns the picks after the change. */
+    suspend fun setTribes(ids: Set<String>): Set<String> =
+        mutate(Documents.SET_TRIBES, SetTribesResponse.serializer(), graphQLVariables("ids" to ids.sorted()))
+            .setTribes.tribes.map { it.tag.id }.toSet()
+
+    // endregion
+
     // region Safety
 
     /** When the user agreed to the terms (null if they haven't) and who they block, or null signed out. */
@@ -897,6 +919,22 @@ private data class RecentChatPushResponse(val me: Me? = null) {
 @Serializable
 private data class SetRecentChatPushResponse(val setRecentChatPush: Payload) {
     @Serializable data class Payload(val recentChatPush: Boolean = false)
+}
+
+@Serializable
+private data class TribesResponse(val tribeCap: Int = 1, val tribeCatalog: List<TribeCategory> = emptyList(), val me: Me? = null) {
+    @Serializable data class Me(val self: Self? = null)
+
+    @Serializable data class Self(val tribes: List<Pick> = emptyList())
+
+    @Serializable data class Pick(val tag: Tag)
+
+    @Serializable data class Tag(val id: String)
+}
+
+@Serializable
+private data class SetTribesResponse(val setTribes: Payload) {
+    @Serializable data class Payload(val tribes: List<TribesResponse.Pick> = emptyList())
 }
 
 @Serializable

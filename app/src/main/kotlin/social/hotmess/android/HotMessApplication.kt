@@ -27,6 +27,7 @@ import social.hotmess.android.session.BrandStore
 import social.hotmess.android.session.FacebookAppSignIn
 import social.hotmess.android.session.SafetyStore
 import social.hotmess.android.session.SessionStore
+import social.hotmess.android.session.TribeStore
 import social.hotmess.android.support.ErrorReporter
 import social.hotmess.android.ui.screens.CardSettings
 import social.hotmess.core.AppRoute
@@ -52,6 +53,9 @@ class AppGraph(context: Context, val configuration: AppConfiguration = AppConfig
 
     /** Which promoted cards the user turned off (on this device only), and the reports of the ones they saw. */
     val cards = CardSettings(context.applicationContext, audienceKit, scope)
+
+    /** The user's tribes and whether the API has them; chat shows who shares one only when it does. */
+    val tribes = TribeStore(api)
 
     /** Who the user muted in each chat room, kept on this device only (the app's preferences). */
     val chatMutes = ChatMutes(PreferenceStringSets(context.applicationContext))
@@ -103,6 +107,7 @@ class AppGraph(context: Context, val configuration: AppConfiguration = AppConfig
                         api.friends.clear()
                         notifications.clear()
                         safety.clear()
+                        tribes.clear()
                         cable.disconnect()
                     }
                     AuthState.SignedIn -> {
