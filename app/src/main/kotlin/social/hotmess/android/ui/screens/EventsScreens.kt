@@ -251,6 +251,7 @@ fun EventScreen(id: String, navigator: Navigator) {
                     }
                 }
                 postsSection("From the venue and hosts", postsSubject, posts, postActions)
+                item(key = "photos") { PhotosSection(postsSubject, navigator) }
                 item {
                     DetailSection("When") {
                         InfoRow("Starts", Formatting.dateTime(loaded.startAt))

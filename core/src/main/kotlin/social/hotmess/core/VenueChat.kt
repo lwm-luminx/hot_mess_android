@@ -11,6 +11,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import java.time.Instant
+import java.time.ZoneId
 import java.util.UUID
 
 /**
@@ -253,6 +254,11 @@ data class ChatRoom(val kind: Kind, val id: String) {
  *
  * Saying something is the `sendMyChatMessage` mutation (see [SEND_MESSAGE]); the room delivers the line
  * to everyone following it, the sender included.
+ *
+ * Presence for the night's lineup (ChatRoster `lineup { personId presence }`, and ChatLineupChanged, the whole
+ * list again whenever any of it changes) is read when the server sends it, but [ROOM_EVENT_FIELDS] doesn't ask
+ * for it yet: the API doesn't have it, and a field or type it doesn't know fails the whole subscription (and the
+ * schema check). Ask for both here once it ships; until then the room has no lineup presence (null).
  */
 object ChatProtocol {
     /** How long a room lists someone after they leave, when the event doesn't say (the server's ChatVisit::RECENT). */
@@ -283,12 +289,13 @@ object ChatProtocol {
           }
           history { senderPresence message { $MESSAGE_FIELDS } }
           pinnedMessage { senderPresence message { $MESSAGE_FIELDS } }
+          expiresBefore
         }
         ... on ChatMessagePosted { senderPresence message { $MESSAGE_FIELDS } }
         ... on ChatMessageUpdated { message { $MESSAGE_FIELDS } }
         ... on ChatMessageRemoved { messageId }
         ... on ChatPinChanged { messageId pinned announcement { $MESSAGE_FIELDS } }
-        ... on ChatRoomCleared { clearedAt }
+        ... on ChatRoomCleared { clearedAt expired }
         ... on ChatPresenceChanged { userId presence name avatarUrl recentUntil }
         ... on ChatRangeChanged { outOfRange }
         ... on ChatLeft { reason }
@@ -360,7 +367,12 @@ object ChatProtocol {
             val people: List<RoomPerson> = emptyList(),
             val friends: List<Friend> = emptyList(),
             val recent: List<RoomPerson> = emptyList(),
+            /** Presence for each person on tonight's lineup, by lowercase person id; null when the roster doesn't say. */
+            val lineup: Map<String, LineupPresence>? = null,
         ) : Frame
+
+        /** A lineup person's presence changed: the whole lineup's again, by lowercase person id (ChatLineupChanged). */
+        data class LineupChanged(val lineup: Map<String, LineupPresence>) : Frame
 
         /**
          * Someone (by lowercase user id) came into the room or left it; a newcomer with their [name] and
@@ -376,8 +388,11 @@ object ChatProtocol {
             val recentUntil: Instant? = null,
         ) : Frame
 
-        /** The room's recent lines, oldest first, and its pinned announcement, sent on joining. */
-        data class History(val messages: List<VenueMessage>, val pinned: VenueMessage? = null) : Frame
+        /**
+         * The room's recent lines, oldest first, and its pinned announcement, sent on joining, with when the room
+         * stops showing lines to everyone but its admins ([expiresBefore]; null from an API that doesn't say).
+         */
+        data class History(val messages: List<VenueMessage>, val pinned: VenueMessage? = null, val expiresBefore: Instant? = null) : Frame
 
         /** An announcement (by [id]) was pinned, with the [announcement], or unpinned (null). */
         data class Pin(val id: String, val announcement: VenueMessage?) : Frame
@@ -385,8 +400,11 @@ object ChatProtocol {
         /** An admin removed a line (by [id]); nobody sees it again. */
         data class Removed(val id: String) : Frame
 
-        /** An admin cleared the room: every line so far is gone. */
-        data object Cleared : Frame
+        /**
+         * An admin cleared the room, or ([expired]) its oldest lines expired: every line sent up to [at] is gone (all
+         * of them when [at] is unreadable).
+         */
+        data class Cleared(val at: Instant? = null, val expired: Boolean = false) : Frame
     }
 
     /** The channel's identifier (see [GraphQLCable.identifier]). */
@@ -435,11 +453,26 @@ object ChatProtocol {
         "ChatMessageUpdated" -> listOfNotNull(message(event["message"])?.let(Frame::Message))
         "ChatMessageRemoved" -> listOfNotNull(event.string("messageId")?.let(Frame::Removed))
         "ChatPinChanged" -> listOfNotNull(pin(event))
-        "ChatRoomCleared" -> listOf(Frame.Cleared)
+        "ChatRoomCleared" -> listOf(Frame.Cleared(event.instant("clearedAt"), event.boolean("expired")))
         "ChatPresenceChanged" -> listOfNotNull(presence(event))
         "ChatRangeChanged" -> listOf(Frame.Range(event.boolean("outOfRange")))
+        "ChatLineupChanged" -> listOfNotNull(lineupPresence(event["lineup"])?.let(Frame::LineupChanged))
         "ChatLeft" -> listOf(Frame.Left)
         else -> emptyList()
+    }
+
+    /**
+     * `[{ personId, presence }]`, by lowercase person id, or null when it isn't a list (an API without it). A
+     * malformed entry, or a presence this build doesn't know, drops only itself.
+     */
+    fun lineupPresence(element: JsonElement?): Map<String, LineupPresence>? {
+        val entries = element as? JsonArray ?: return null
+        return entries.mapNotNull { entry ->
+            val item = entry as? JsonObject ?: return@mapNotNull null
+            val id = item.string("personId") ?: item.string("person_id") ?: return@mapNotNull null
+            val presence = LineupPresence.of(item.string("presence")) ?: return@mapNotNull null
+            id.lowercase() to presence
+        }.toMap()
     }
 
     private fun joined(event: JsonObject): List<Frame> {
@@ -479,8 +512,8 @@ object ChatProtocol {
         return listOf(
             Frame.Connected,
             Frame.Range(event.boolean("outOfRange")),
-            Frame.Roster(people.map { it.userId }.toSet(), people, friends, recent),
-            Frame.History(history, posted((event["pinnedMessage"] ?: event["pinned"]) as? JsonObject)),
+            Frame.Roster(people.map { it.userId }.toSet(), people, friends, recent, lineupPresence(roster?.get("lineup"))),
+            Frame.History(history, posted((event["pinnedMessage"] ?: event["pinned"]) as? JsonObject), event.instant("expiresBefore")),
         )
     }
 
@@ -630,13 +663,20 @@ class VenueChatConnection(
         data object Ended : Event
         data class Range(val outOfRange: Boolean) : Event
 
-        /** Everyone in the room now, by lowercase user id, and who they are, the viewer's friends and who left lately. */
+        /**
+         * Everyone in the room now, by lowercase user id, and who they are, the viewer's friends and who left lately;
+         * and the lineup's presence by person id, null when the room doesn't send it.
+         */
         data class Roster(
             val online: Set<String>,
             val people: List<RoomPerson> = emptyList(),
             val friends: List<Friend> = emptyList(),
             val recent: List<RoomPerson> = emptyList(),
+            val lineup: Map<String, LineupPresence>? = null,
         ) : Event
+
+        /** The lineup's presence again, by lowercase person id. */
+        data class LineupChanged(val lineup: Map<String, LineupPresence>) : Event
 
         data class PresenceChanged(
             val userId: String,
@@ -647,10 +687,10 @@ class VenueChatConnection(
             val recentUntil: Instant? = null,
         ) : Event
 
-        data class History(val messages: List<VenueMessage>, val pinned: VenueMessage?) : Event
+        data class History(val messages: List<VenueMessage>, val pinned: VenueMessage?, val expiresBefore: Instant? = null) : Event
         data class Pin(val id: String, val announcement: VenueMessage?) : Event
         data class Removed(val id: String) : Event
-        data object Cleared : Event
+        data class Cleared(val at: Instant?, val expired: Boolean) : Event
     }
 
     /**
@@ -678,15 +718,47 @@ class VenueChatConnection(
                     ChatProtocol.Frame.Ended -> emit(Event.Ended)
                     is ChatProtocol.Frame.Message -> emit(Event.Received(frame.message))
                     is ChatProtocol.Frame.Range -> emit(Event.Range(frame.outOfRange))
-                    is ChatProtocol.Frame.Roster -> emit(Event.Roster(frame.online, frame.people, frame.friends, frame.recent))
+                    is ChatProtocol.Frame.Roster -> emit(Event.Roster(frame.online, frame.people, frame.friends, frame.recent, frame.lineup))
+                    is ChatProtocol.Frame.LineupChanged -> emit(Event.LineupChanged(frame.lineup))
                     is ChatProtocol.Frame.PresenceChanged ->
                         emit(Event.PresenceChanged(frame.userId, frame.online, frame.name, frame.avatarUrl, frame.reachable, frame.recentUntil))
-                    is ChatProtocol.Frame.History -> emit(Event.History(frame.messages, frame.pinned))
+                    is ChatProtocol.Frame.History -> emit(Event.History(frame.messages, frame.pinned, frame.expiresBefore))
                     is ChatProtocol.Frame.Pin -> emit(Event.Pin(frame.id, frame.announcement))
                     is ChatProtocol.Frame.Removed -> emit(Event.Removed(frame.id))
-                    ChatProtocol.Frame.Cleared -> emit(Event.Cleared)
+                    is ChatProtocol.Frame.Cleared -> emit(Event.Cleared(frame.at, frame.expired))
                 }
             }
+        }
+    }
+}
+
+/**
+ * Where a chat transcript divides what has cleared from what is current: an admin clearing the room at [at], or
+ * ([expired]) the line before which only the room's admins still see messages.
+ */
+data class ChatClearMark(val at: Instant, val expired: Boolean) {
+    /** What the divider says. */
+    fun label(zone: ZoneId = ZoneId.systemDefault()): String =
+        if (expired) "Cleared for everyone but admins above" else "Chat cleared at ${Formatting.clock(at, zone)}"
+
+    companion object {
+        /** The mark a room's history gets: only admins are sent lines older than [expiresBefore], and they get it. */
+        fun forHistory(history: List<VenueMessage>, expiresBefore: Instant?): ChatClearMark? =
+            expiresBefore?.takeIf { cutoff -> history.any { line -> line.sentAt?.isBefore(cutoff) == true } }
+                ?.let { ChatClearMark(it, expired = true) }
+
+        /** What's left of [lines] once the room clears everything sent up to [at] (everything, without one). */
+        fun remaining(lines: List<VenueMessage>, at: Instant?): List<VenueMessage> =
+            if (at == null) emptyList() else lines.filterNot { line -> line.sentAt?.isAfter(at) == false }
+
+        /**
+         * The mark after the room clears up to [at]: an admin's clearing leaves one where it happened; lines expiring
+         * keep [current] while lines it divides remain in [lines].
+         */
+        fun afterClear(current: ChatClearMark?, lines: List<VenueMessage>, at: Instant?, expired: Boolean, now: Instant = Instant.now()): ChatClearMark? {
+            if (!expired) return ChatClearMark(at ?: now, expired = false)
+            val mark = current ?: return null
+            return mark.takeIf { lines.any { line -> line.sentAt?.isBefore(mark.at) == true } }
         }
     }
 }

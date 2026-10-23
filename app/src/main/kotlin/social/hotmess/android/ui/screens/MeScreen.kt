@@ -10,6 +10,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.NotificationsActive
+import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.ConfirmationNumber
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Description
@@ -290,6 +293,16 @@ fun MeScreen(navigator: Navigator) {
                     }
                 }
             }
+            // "Need support?" is here whether or not the user is out; a venue's Get help only on the venue they're at.
+            item {
+                DetailSection("Help and safety") {
+                    InfoRow("Need support?", icon = Icons.Rounded.Favorite, onClick = { navigator.openSupport(null) }, trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight)
+                    RowDivider()
+                    InfoRow("Getting help at a venue", icon = Icons.Rounded.Shield, onClick = navigator::openGettingHelp, trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight)
+                    RowDivider()
+                    InfoRow("Your safety alerts", icon = Icons.Rounded.NotificationsActive, onClick = navigator::openSafetyAlerts, trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight)
+                }
+            }
             safety?.blockedUsers?.takeIf { it.isNotEmpty() }?.let { blocked ->
                 item {
                     DetailSection("Blocked") {
@@ -452,7 +465,7 @@ private fun ChatPhotoSample(name: String, avatarUrl: String?) {
         Avatar(avatarUrl, name.ifBlank { "You" }, size = TinyAvatarSize)
         Column {
             Text(shown, style = HotMessType.caption, color = tokens.inkMuted, modifier = Modifier.padding(start = Space.s1, bottom = 2.dp))
-            ChatBubble("anyone want to split a pitcher?", own = false, last = true)
+            ChatBubble("anyone know who's on next?", own = false, last = true)
         }
     }
 }

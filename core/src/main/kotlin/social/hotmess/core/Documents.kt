@@ -54,6 +54,10 @@ object Documents {
     /** Who's on at a venue right now, in its people mixin. */
     const val ON_NOW_FIELDS: String = "people { onNow { nodes { id role startsAt endsAt person { id name avatarUrl } } } }"
 
+    /** A lineup entry as a chat room shows it: who, as what, where it is in the night, and its set when it has a hard start. */
+    const val LINEUP_ENTRY_FIELDS: String =
+        "id kind role state startTiming startsAt endsAt title person { id name avatarUrl } people { nodes { id name avatarUrl } }"
+
     const val FRIEND_FIELDS: String = "id name facebookId avatarUrl"
 
     /** Friends out now, with whether they can be reached (in chat, or by push). */
@@ -140,6 +144,7 @@ object Documents {
           venues {
             venue(id: ${'$'}id) {
               $VENUE_FIELDS
+              bannerPhotos { url }
               chat { open $RECENT_MESSAGES }
               tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } viewerAdmission { ${Queries.ADMISSION_FIELDS} } } }
               $ON_NOW_FIELDS
@@ -147,6 +152,21 @@ object Documents {
               $PROFILE_SOCIAL_LINKS
               friends { list { nodes { $FRIEND_OUT_FIELDS } } }
               ping { friendPings { $PING_FIELDS } }
+            }
+          }
+        }
+    """.trimIndent()
+
+    /**
+     * A venue's night for its chat room: its name and photo (the room's venue face), tonight's running order (acts,
+     * intermissions and entries with no set time) and what's up next.
+     */
+    val VENUE_LINEUP: String = """
+        query VenueLineup(${'$'}id: ID!) {
+          venues {
+            venue(id: ${'$'}id) {
+              id name photoUrl
+              people { runningOrder { nodes { $LINEUP_ENTRY_FIELDS } } upNext { id } }
             }
           }
         }
@@ -213,9 +233,20 @@ object Documents {
         }
     """.trimIndent()
 
+    /** [invitationToken] is a texted link's `e`, which lets someone who isn't the sender's friend join. */
     val JOIN_PING: String = """
-        mutation JoinPing(${'$'}pingId: ID!, ${'$'}targetId: ID) {
-          joinPing(input: { pingId: ${'$'}pingId, targetId: ${'$'}targetId }) { ping { $PING_FIELDS } }
+        mutation JoinPing(${'$'}pingId: ID!, ${'$'}targetId: ID, ${'$'}invitationToken: String) {
+          joinPing(input: { pingId: ${'$'}pingId, targetId: ${'$'}targetId, invitationToken: ${'$'}invitationToken }) { ping { $PING_FIELDS } }
+        }
+    """.trimIndent()
+
+    /**
+     * A signed link to [path] that names the signed-in user as its sender, for texting a Ping to contacts. The API
+     * ends it with the Ping (5am) at the latest.
+     */
+    val SHARE_LINK: String = """
+        query ShareLink(${'$'}path: String!) {
+          shareLink(path: ${'$'}path, lifetime: DAY) { url expiresAt }
         }
     """.trimIndent()
 
@@ -318,6 +349,16 @@ object Documents {
         }
     """.trimIndent()
 
+    /**
+     * Asks someone to be friends (`sendFriendRequest`), from a chat room's profile sheet; returns where the request
+     * stands (PENDING until they answer, ACCEPTED when they'd already asked the viewer).
+     */
+    val SEND_FRIEND_REQUEST: String = """
+        mutation SendFriendRequest(${'$'}userId: ID!) {
+          sendFriendRequest(input: { userId: ${'$'}userId }) { friendRequest { id status } }
+        }
+    """.trimIndent()
+
     /** Files a report with the audience's admins, and blocks the person behind it when [block] is true and there is one. */
     val REPORT_CONTENT: String = """
         mutation ReportContent(${'$'}targetType: ReportTarget!, ${'$'}targetId: ID!, ${'$'}reason: String, ${'$'}block: Boolean) {
@@ -392,6 +433,44 @@ object Documents {
     val REMOVE_POST_COMMENT: String = """
         mutation RemovePostComment(${'$'}id: ID!) {
           removePostComment(input: { id: ${'$'}id }) { comment { id } }
+        }
+    """.trimIndent()
+
+    /** A photo's fields: who took it, a photographer's or a member's, who's on stage in it, and its event. */
+    const val PHOTO_FIELDS: String =
+        "id url altText caption source takenBy takenAt viewUrl viewerCanRemove people { id name } event { id name }"
+
+    /** A venue's photos, newest first: photographers' and members'. */
+    val VENUE_PHOTOS: String = """
+        query VenuePhotos(${'$'}id: ID!, ${'$'}first: Int!) {
+          venues { venue(id: ${'$'}id) { posts { photos(first: ${'$'}first) { nodes { $PHOTO_FIELDS } } } } }
+        }
+    """.trimIndent()
+
+    /** An event's photos, newest first. */
+    val EVENT_PHOTOS: String = """
+        query EventPhotos(${'$'}id: ID!, ${'$'}first: Int!) {
+          events { event(id: ${'$'}id) { posts { photos(first: ${'$'}first) { nodes { $PHOTO_FIELDS } } } } }
+        }
+    """.trimIndent()
+
+    /** The photos a person was on stage in, newest first. */
+    val PERSON_PHOTOS: String = """
+        query PersonPhotos(${'$'}id: ID!, ${'$'}first: Int!) {
+          people { person(id: ${'$'}id) { posts { photos(first: ${'$'}first) { nodes { $PHOTO_FIELDS } } } } }
+        }
+    """.trimIndent()
+
+    /** A photo just taken with the camera at the venue you're at; the API tags whoever is on stage. */
+    val ADD_EVENT_PHOTO: String = """
+        mutation AddEventPhoto(${'$'}venueId: ID!, ${'$'}photo: String!, ${'$'}altText: String) {
+          addEventPhoto(input: { venueId: ${'$'}venueId, photo: ${'$'}photo, altText: ${'$'}altText }) { photo { $PHOTO_FIELDS } }
+        }
+    """.trimIndent()
+
+    val REMOVE_EVENT_PHOTO: String = """
+        mutation RemoveEventPhoto(${'$'}id: ID!) {
+          removeEventPhoto(input: { id: ${'$'}id }) { id }
         }
     """.trimIndent()
 

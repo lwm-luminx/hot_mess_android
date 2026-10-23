@@ -180,6 +180,7 @@ fun PersonScreen(id: String, navigator: Navigator) {
                     }
                 }
                 postsSection("Posts", postsSubject, posts, postActions)
+                item(key = "photos") { PhotosSection(postsSubject, navigator, title = "On stage") }
                 if (detail.tracks.isNotEmpty()) {
                     item {
                         DetailSection(
