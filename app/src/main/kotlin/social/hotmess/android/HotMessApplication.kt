@@ -52,7 +52,7 @@ class AppGraph(context: Context, val configuration: AppConfiguration = AppConfig
     /** Terms of use, blocking and reporting, as the API keeps them for the signed-in user. */
     val safety = SafetyStore(api)
 
-    /** The venues and talent the signed-in user manages, for writing and managing their posts. */
+    /** The venues and talent the signed-in user manages, so Me offers Velvet or Backstage. */
     val listings = ListingsStore(api)
 
     /** Which promoted cards the user turned off (on this device only), and the reports of the ones they saw. */

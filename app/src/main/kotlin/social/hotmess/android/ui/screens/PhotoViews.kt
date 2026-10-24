@@ -426,7 +426,7 @@ private fun ImageProxy.toUprightBitmap(): Bitmap {
 }
 
 /** A JPEG at most [longEdge] pixels on its longer side, for uploading over a venue's weak signal. */
-internal fun Bitmap.uploadJpeg(longEdge: Int = 2048, quality: Int = 80): ByteArray {
+private fun Bitmap.uploadJpeg(longEdge: Int = 2048, quality: Int = 80): ByteArray {
     val scale = minOf(1f, longEdge.toFloat() / maxOf(width, height))
     val scaled = if (scale < 1f) Bitmap.createScaledBitmap(this, (width * scale).toInt(), (height * scale).toInt(), true) else this
     return ByteArrayOutputStream().use { out ->

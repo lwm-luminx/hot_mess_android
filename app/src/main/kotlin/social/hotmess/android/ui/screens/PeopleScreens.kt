@@ -65,9 +65,7 @@ import social.hotmess.android.ui.openUrl
 import social.hotmess.android.ui.rememberLoader
 import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.Space
-import social.hotmess.core.PostChange
 import social.hotmess.core.PostsSubject
-import social.hotmess.core.applying
 import social.hotmess.core.AppRoute
 import social.hotmess.core.Event
 import social.hotmess.core.Person
@@ -134,12 +132,7 @@ fun PersonScreen(id: String, navigator: Navigator) {
     val postsSubject = remember(id) { PostsSubject.Person(id) }
     val postsLoader = rememberPosts(postsSubject)
     val posts by postsLoader.state.collectAsStateWithLifecycle()
-    val postActions = rememberPostActions(
-        navigator,
-        onHidden = { poster -> postsLoader.update { list -> list.filterNot { it.poster == poster } } },
-        onChange = { change -> postsLoader.update { list -> list.applying(change) } },
-    )
-    val postWriter = rememberPostWriter(postsSubject) { post -> postsLoader.update { list -> list.applying(PostChange.Updated(post)) } }
+    val postActions = rememberPostActions(navigator) { poster -> postsLoader.update { list -> list.filterNot { it.poster == poster } } }
 
     val current = state.valueOrNull
     val listState = rememberLazyListState()
@@ -203,7 +196,7 @@ fun PersonScreen(id: String, navigator: Navigator) {
                         )
                     }
                 }
-                postsSection("Posts", postsSubject, posts, postActions, postWriter)
+                postsSection("Posts", postsSubject, posts, postActions)
                 item(key = "photos") { PhotosSection(postsSubject, navigator, title = "On stage") }
                 if (detail.tracks.isNotEmpty()) {
                     item {

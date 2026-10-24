@@ -61,10 +61,8 @@ import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.AppRoute
 import social.hotmess.core.Formatting
-import social.hotmess.core.ManagedListings
 import social.hotmess.core.Post
 import social.hotmess.core.PostEvent
-import social.hotmess.core.PostManageAction
 import social.hotmess.core.PostPhoto
 import social.hotmess.core.PostPoster
 import social.hotmess.core.PostVisibility
@@ -76,10 +74,6 @@ class PostActions(
     val hidePoster: (PostPoster) -> Unit = {},
     /** Whether to offer hiding and reporting: only someone signed in can. */
     val signedIn: Boolean = true,
-    /** The venues and talent the user manages, whose posts' menus offer the manager's options. */
-    val listings: ManagedListings = ManagedListings.NONE,
-    /** A manager's option from the menu. */
-    val manage: (Post, PostManageAction) -> Unit = { _, _ -> },
 )
 
 /** The rounded square a place's face is drawn in, so places never look like people. */
@@ -175,54 +169,34 @@ private fun FooterAction(title: String, icon: androidx.compose.ui.graphics.vecto
     }
 }
 
-/**
- * Guests get Share, Hide posts from {name} and Report; Share alone signed out. Whoever manages the poster also gets
- * Edit, Pin, comments, Public or Community and Delete, and the event's venue Hide from this event on talent posts.
- */
+/** Guests get Share, Hide posts from {name} and Report; Share alone signed out. */
 @Composable
 private fun PostOptions(post: Post, actions: PostActions) {
     val context = LocalContext.current
     var open by remember { mutableStateOf(false) }
-    val manages = actions.listings.canManage(post)
-    val hidesFromEvent = actions.listings.canHideFromEvent(post)
-    val pick: (() -> Unit) -> Unit = { action ->
-        open = false
-        action()
-    }
     Box {
         IconButton(onClick = { open = true }, modifier = Modifier.size(32.dp)) {
             Icon(Icons.Rounded.MoreHoriz, contentDescription = "Post options", tint = tokens.inkMuted)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            if (manages) {
-                MenuItem("Edit post") { pick { actions.manage(post, PostManageAction.EDIT) } }
-                MenuItem(if (post.pinned) "Unpin" else "Pin to top") { pick { actions.manage(post, PostManageAction.TOGGLE_PIN) } }
-                MenuItem(if (post.commentsOpen) "Turn off comments" else "Turn on comments") {
-                    pick { actions.manage(post, PostManageAction.TOGGLE_COMMENTS) }
+            DropdownMenuItem(text = { Text("Share post") }, onClick = {
+                open = false
+                context.share(post.shareUrl, post.body.take(SHARE_TITLE))
+            })
+            if (actions.signedIn) {
+                post.poster?.let { poster ->
+                    DropdownMenuItem(text = { Text("Hide posts from ${poster.name}") }, onClick = {
+                        open = false
+                        actions.hidePoster(poster)
+                    })
                 }
-                MenuItem(if (post.visibility == PostVisibility.PUBLIC) "Make Community" else "Make Public") {
-                    pick { actions.manage(post, PostManageAction.TOGGLE_VISIBILITY) }
-                }
-            }
-            if (hidesFromEvent) {
-                MenuItem(if (post.hiddenFromEvent) "Show on this event" else "Hide from this event") {
-                    pick { actions.manage(post, PostManageAction.TOGGLE_HIDDEN_FROM_EVENT) }
-                }
-            }
-            MenuItem("Share post") { pick { context.share(post.shareUrl, post.body.take(SHARE_TITLE)) } }
-            if (manages) {
-                MenuItem("Delete post") { pick { actions.manage(post, PostManageAction.DELETE) } }
-            } else if (actions.signedIn) {
-                post.poster?.let { poster -> MenuItem("Hide posts from ${poster.name}") { pick { actions.hidePoster(poster) } } }
-                MenuItem("Report post…") { pick { actions.report(post) } }
+                DropdownMenuItem(text = { Text("Report post…") }, onClick = {
+                    open = false
+                    actions.report(post)
+                })
             }
         }
     }
-}
-
-@Composable
-private fun MenuItem(title: String, onClick: () -> Unit) {
-    DropdownMenuItem(text = { Text(title) }, onClick = onClick)
 }
 
 /** The poster's face, name, tag, the metadata line and, on a troupe's post, who wrote it. */

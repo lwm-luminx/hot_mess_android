@@ -7,14 +7,14 @@ import social.hotmess.core.HotMessApi
 import social.hotmess.core.ManagedListings
 
 /**
- * The venues and talent the signed-in user manages, so their pages offer New post and their posts' menus the
- * manager's options. Empty for everyone else, and until loaded; cleared on sign-out.
+ * The venues and talent the signed-in user manages, so Me offers Velvet or Backstage. Empty for everyone else, and
+ * until loaded; cleared on sign-out.
  */
 class ListingsStore(private val api: HotMessApi) {
     private val _state = MutableStateFlow(ManagedListings.NONE)
     val state: StateFlow<ManagedListings> = _state.asStateFlow()
 
-    /** Loads them from the staff view. Anything that goes wrong means none. */
+    /** Loads them (consumer endpoint). Anything that goes wrong means none. */
     suspend fun refresh() {
         _state.value = api.managedListings()
     }

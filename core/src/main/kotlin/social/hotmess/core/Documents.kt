@@ -411,7 +411,7 @@ object Documents {
     /** A post card's fields: its poster, photos, the event it's on and its comment count. */
     const val POST_FIELDS: String =
         "id body posterName posterAvatarUrl roleLabel actingPersonName createdAt edited pinned commentsOpen commentCount " +
-            "photos { url altText } event { id name startAt } person { id } venue { id } hiddenFromEvent visibility"
+            "photos { url altText } event { id name startAt } person { id } venue { id } visibility"
 
     const val POST_COMMENT_FIELDS: String = "id authorId authorName authorAvatarUrl body createdAt viewerCanRemove"
 
@@ -509,41 +509,12 @@ object Documents {
 
     // endregion
 
-    // region Managing posts (the staff endpoint: the consumer one has no listings and no post writes)
+    // region Listings
 
-    /** The venues and talent listings the signed-in user manages, troupes included. */
+    /** The venues and talent the signed-in user manages, on the consumer endpoint (it grants nothing there). */
     val MANAGED_LISTINGS: String = """
-        # endpoint: staff
         query ManagedListings {
           me { listings { venues { id name } people { id name } troupes { id name } } }
-        }
-    """.trimIndent()
-
-    val CREATE_POST: String = """
-        # endpoint: staff
-        mutation CreatePost(${'$'}input: PostCreateInput!) {
-          createPost(input: ${'$'}input) { post { $POST_FIELDS } }
-        }
-    """.trimIndent()
-
-    val UPDATE_POST: String = """
-        # endpoint: staff
-        mutation UpdatePost(${'$'}input: PostUpdateInput!) {
-          updatePost(input: ${'$'}input) { post { $POST_FIELDS } }
-        }
-    """.trimIndent()
-
-    val DELETE_POST: String = """
-        # endpoint: staff
-        mutation DeletePost(${'$'}input: PostDeleteInput!) {
-          deletePost(input: ${'$'}input) { deletedId }
-        }
-    """.trimIndent()
-
-    val HIDE_POST_FROM_EVENT: String = """
-        # endpoint: staff
-        mutation HidePostFromEvent(${'$'}input: PostHideFromEventInput!) {
-          hidePostFromEvent(input: ${'$'}input) { post { $POST_FIELDS } }
         }
     """.trimIndent()
 

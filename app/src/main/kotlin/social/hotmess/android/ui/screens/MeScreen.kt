@@ -54,6 +54,8 @@ import social.hotmess.android.session.LocalGoogleAccounts
 import social.hotmess.android.ui.LocalAppGraph
 import social.hotmess.android.ui.Navigator
 import social.hotmess.android.ui.ScreenScaffold
+import social.hotmess.android.ui.StaffApp
+import social.hotmess.android.ui.openStaffApp
 import social.hotmess.android.ui.components.Avatar
 import social.hotmess.android.ui.components.ChatBubble
 import social.hotmess.android.ui.components.DangerRow
@@ -70,6 +72,7 @@ import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.Radius
 import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
+import social.hotmess.core.ManagedListings
 import social.hotmess.core.LegalLinks
 import social.hotmess.core.initialsForDisplay
 
@@ -103,6 +106,7 @@ fun MeScreen(navigator: Navigator) {
     var chatInitials by remember { mutableStateOf<Boolean?>(null) }
     // Connect Google, offered while the account has no Google sign-in (me.self.signedInWithGoogle is false).
     val googleAccounts = LocalGoogleAccounts.current
+    val listings by graph.listings.state.collectAsStateWithLifecycle()
     var connectingGoogle by remember { mutableStateOf(false) }
     var googleProblem by remember { mutableStateOf<String?>(null) }
 
@@ -251,6 +255,30 @@ fun MeScreen(navigator: Navigator) {
                                 }
                             },
                         )
+                    }
+                }
+            }
+            // Managers write and manage posts in the staff apps, not here: Velvet for venues, Backstage for talent.
+            if (!listings.isEmpty) {
+                item {
+                    DetailSection("Your pages") {
+                        if (listings.venues.isNotEmpty()) {
+                            InfoRow(
+                                "Open ${StaffApp.VELVET.title}",
+                                value = listingNames(listings.venues),
+                                onClick = { context.openStaffApp(StaffApp.VELVET) },
+                                trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                            )
+                        }
+                        if (listings.venues.isNotEmpty() && listings.people.isNotEmpty()) RowDivider()
+                        if (listings.people.isNotEmpty()) {
+                            InfoRow(
+                                "Open ${StaffApp.BACKSTAGE.title}",
+                                value = listingNames(listings.people),
+                                onClick = { context.openStaffApp(StaffApp.BACKSTAGE) },
+                                trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                            )
+                        }
                     }
                 }
             }
@@ -530,4 +558,10 @@ private fun SwitchRow(title: String, detail: String, checked: Boolean, icon: Ima
             colors = SwitchDefaults.colors(checkedTrackColor = tokens.accent, checkedThumbColor = tokens.onAccent),
         )
     }
+}
+
+/** "The Wildrose", or "The Wildrose +2" for someone managing more than one. */
+private fun listingNames(listings: List<ManagedListings.Listing>): String {
+    val first = listings.firstOrNull()?.name.orEmpty()
+    return if (listings.size > 1) "$first +${listings.size - 1}" else first
 }
