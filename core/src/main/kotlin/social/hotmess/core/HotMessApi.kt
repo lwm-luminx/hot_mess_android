@@ -6,7 +6,6 @@ import com.audiencekit.AudienceKitClient
 import com.audiencekit.AudienceKitException
 import com.audiencekit.Coordinates
 import com.audiencekit.CoverPurchase
-import com.audiencekit.GraphQLEndpoint
 import com.audiencekit.GraphQLError
 import com.audiencekit.RSVPState
 import com.audiencekit.graphQLVariables
@@ -260,101 +259,28 @@ class HotMessApi(val client: AudienceKitClient) {
             ),
         ).mutePostAuthor.muted
 
+    // endregion
+
+    // region Listings
+
     /**
-     * The venues and talent the signed-in user manages, from the staff view: the consumer one has none. Anything that
-     * goes wrong (signed out, a guest the staff view turns away) means none.
+     * The venues and talent the signed-in user manages, so Me can send them to Velvet or Backstage. Read on the
+     * consumer endpoint, like everything Hot Mess does: it never calls the staff one. Anything that goes wrong
+     * (signed out, offline) means none.
      */
     suspend fun managedListings(): ManagedListings {
         val listings = try {
-            client.graphQL(Documents.MANAGED_LISTINGS, ListingsResponse.serializer(), json = json, endpoint = GraphQLEndpoint.STAFF)
-                .me?.listings
+            client.graphQL(Documents.MANAGED_LISTINGS, ListingsResponse.serializer(), json = json).me?.listings
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
             null
         } ?: return ManagedListings.NONE
-        val people = (listings.people + listings.troupes).distinctBy { it.id.lowercase() }
         return ManagedListings(
-            venues = listings.venues.map { PostAuthor(PostAuthor.Kind.VENUE, it.id, it.name) },
-            people = people.map { PostAuthor(PostAuthor.Kind.PERSON, it.id, it.name) },
+            venues = listings.venues.map { ManagedListings.Listing(it.id, it.name) },
+            people = (listings.people + listings.troupes).distinctBy { it.id.lowercase() }.map { ManagedListings.Listing(it.id, it.name) },
         )
     }
-
-    /** Posts as [author] on their page or an event, with up to [ManagedListings.MAX_PHOTOS] photos. */
-    suspend fun createPost(
-        author: PostAuthor,
-        target: PostTarget,
-        body: String,
-        photos: List<PostPhotoUpload> = emptyList(),
-        pinned: Boolean = false,
-        commentsOpen: Boolean = true,
-        visibility: PostVisibility = PostVisibility.COMMUNITY,
-    ): Post {
-        val input = buildMap<String, Any?> {
-            put("body", body.trim())
-            put("pinned", pinned)
-            put("commentsOpen", commentsOpen)
-            put("visibility", visibility)
-            if (author.kind == PostAuthor.Kind.PERSON) put("asPersonId", author.id)
-            when (target) {
-                PostTarget.Page -> put(if (author.isVenue) "venueId" else "personId", author.id)
-                is PostTarget.Event -> put("eventId", target.id)
-            }
-            if (photos.isNotEmpty()) {
-                put(
-                    "photos",
-                    photos.take(ManagedListings.MAX_PHOTOS).map { photo ->
-                        buildMap {
-                            put("photo", "data:image/jpeg;base64," + java.util.Base64.getEncoder().encodeToString(photo.jpeg))
-                            photo.altText.trim().takeIf { it.isNotEmpty() }?.let { put("altText", it) }
-                        }
-                    },
-                )
-            }
-        }
-        return staffMutate(Documents.CREATE_POST, CreatePostResponse.serializer(), input).createPost.post
-            ?: throw failed(ApiError.Decoding("createPost"), operationName(Documents.CREATE_POST))
-    }
-
-    /** Changes what's given and leaves the rest. */
-    suspend fun updatePost(
-        id: String,
-        body: String? = null,
-        pinned: Boolean? = null,
-        commentsOpen: Boolean? = null,
-        visibility: PostVisibility? = null,
-    ): Post {
-        val input = buildMap<String, Any?> {
-            put("id", id)
-            body?.let { put("body", it.trim()) }
-            pinned?.let { put("pinned", it) }
-            commentsOpen?.let { put("commentsOpen", it) }
-            visibility?.let { put("visibility", it) }
-        }
-        return staffMutate(Documents.UPDATE_POST, UpdatePostResponse.serializer(), input).updatePost.post
-            ?: throw failed(ApiError.Decoding("updatePost"), operationName(Documents.UPDATE_POST))
-    }
-
-    suspend fun deletePost(id: String) {
-        staffMutate(Documents.DELETE_POST, JsonObject.serializer(), mapOf("id" to id))
-    }
-
-    /** Hides a talent post from the event at the venue (it stays on their page), or shows it again. */
-    suspend fun hidePostFromEvent(id: String, hidden: Boolean = true): Post =
-        staffMutate(Documents.HIDE_POST_FROM_EVENT, HidePostFromEventResponse.serializer(), mapOf("id" to id, "hidden" to hidden))
-            .hidePostFromEvent.post
-
-    /** A post mutation on the staff endpoint, its refusals shown as written as [mutate] does. */
-    private suspend fun <T> staffMutate(document: String, serializer: KSerializer<T>, input: Map<String, Any?>): T =
-        try {
-            client.graphQL(document, serializer, graphQLVariables("input" to input), json = json, endpoint = GraphQLEndpoint.STAFF)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: AudienceKitException.GraphQL) {
-            throw rejection(e.errors) ?: failed(ApiError.from(e), operationName(document))
-        } catch (e: AudienceKitException) {
-            throw failed(ApiError.from(e), operationName(document))
-        }
 
     // endregion
 
@@ -1358,12 +1284,6 @@ private data class CreatePostCommentResponse(val createPostComment: Payload) {
 private data class RemovePostCommentResponse(val removePostComment: JsonObject? = null)
 
 @Serializable
-private data class MutePostAuthorResponse(val mutePostAuthor: Payload) {
-    @Serializable
-    data class Payload(val muted: Boolean = true)
-}
-
-@Serializable
 private data class ListingsResponse(val me: Me? = null) {
     @Serializable
     data class Me(val listings: Listings? = null)
@@ -1380,16 +1300,7 @@ private data class ListingsResponse(val me: Me? = null) {
 }
 
 @Serializable
-private data class PostPayload(val post: Post? = null)
-
-@Serializable
-private data class CreatePostResponse(val createPost: PostPayload)
-
-@Serializable
-private data class UpdatePostResponse(val updatePost: PostPayload)
-
-@Serializable
-private data class HidePostFromEventResponse(val hidePostFromEvent: Payload) {
+private data class MutePostAuthorResponse(val mutePostAuthor: Payload) {
     @Serializable
-    data class Payload(val post: Post)
+    data class Payload(val muted: Boolean = true)
 }

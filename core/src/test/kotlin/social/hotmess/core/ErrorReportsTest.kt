@@ -66,6 +66,5 @@ class ErrorReportsTest {
     fun `GraphQL failures are named by their operation`() {
         assertEquals("graphql query Venue", operationName("\n  query Venue(\$id: ID!) {\n venue { id } }"))
         assertEquals("graphql", operationName("{ me { id } }"))
-        assertEquals("graphql mutation CreatePost", operationName("# endpoint: staff\nmutation CreatePost(\$input: PostCreateInput!) { x }"))
     }
 }

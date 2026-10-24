@@ -30,6 +30,14 @@ jobs:
       - name: Build Staging with R8
         run: ./gradlew assembleStaging
 
+      # Hot Mess talks only to the consumer endpoint (/graphql), never /staffql: managers use Velvet and Backstage.
+      - name: No staff endpoint in Hot Mess
+        run: |
+          if grep -rnE 'GraphQLEndpoint\.STAFF|# endpoint: staff|/staffql' core/src/main app/src/main; then
+            echo "::error::Hot Mess must not call the staff endpoint (staffql)."
+            exit 1
+          fi
+
       # The app's GraphQL documents (core/ and app/, with the SDK's fragments they interpolate) against the
       # consumer schema. The dumps and the checker publish from audience-kit's main (see
       # developer.audiencekit.com/api/validate-documents), so while this app tracks the API's `next` branch a field
@@ -43,6 +51,3 @@ jobs:
           npm install --silent --no-save --no-package-lock graphql@16
           node check.mjs --schema schema.graphql --endpoint consumer \
             ../core/src/main ../app/src/main ../audience-kit-sdk/android/audiencekit/src/main
-          # Managers' post writes (`# endpoint: staff`) against the staff schema.
-          curl -fsSLO https://developer.audiencekit.com/graphql/staff_schema.graphql
-          node check.mjs --schema staff_schema.graphql --only-endpoint staff ../core/src/main ../app/src/main

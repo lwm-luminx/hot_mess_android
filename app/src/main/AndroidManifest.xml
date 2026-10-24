@@ -134,6 +134,9 @@
         </intent>
         <!-- Messenger, for opening a friend's thread. -->
         <package android:name="com.facebook.orca" />
+        <!-- Velvet and Backstage, which Me opens for venue and talent managers. -->
+        <package android:name="com.audiencekit.Velvet" />
+        <package android:name="com.audiencekit.Backstage" />
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="geo" />
