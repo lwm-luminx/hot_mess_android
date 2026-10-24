@@ -20,6 +20,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.nullable
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -1239,9 +1240,11 @@ private data class VenuePairUpResponse(val venues: Venues? = null) {
 @Serializable
 private data class PairUpPayload(val pairUp: PairUpState? = null)
 
-private val PAIR_UP_PAYLOADS = MapSerializer(String.serializer(), PairUpPayload.serializer())
+// Nullable: a refused mutation comes back as `{"errors":[…],"data":{"joinPairUp":null}}`, and decoding a null payload
+// would hide the refusal ("Agree to the community terms…") behind a decoding failure.
+private val PAIR_UP_PAYLOADS = MapSerializer(String.serializer(), PairUpPayload.serializer().nullable)
 
-private val SAFETY_ALERT_PAYLOADS = MapSerializer(String.serializer(), SafetyAlertPayload.serializer())
+private val SAFETY_ALERT_PAYLOADS = MapSerializer(String.serializer(), SafetyAlertPayload.serializer().nullable)
 
 @Serializable
 private data class ShowPairUpCodeResponse(val showPairUpCode: Payload) {
