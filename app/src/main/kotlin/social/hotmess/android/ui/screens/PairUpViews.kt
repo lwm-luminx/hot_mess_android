@@ -64,6 +64,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import social.hotmess.android.ui.LocalAppGraph
 import social.hotmess.android.ui.components.Avatar
 import social.hotmess.android.ui.components.Card
 import social.hotmess.android.ui.components.DetailSection
@@ -273,6 +274,14 @@ fun PairUpRow(pairUp: VenuePairUp, onOpen: () -> Unit, onGoAgain: (() -> Unit)? 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PairUpSheet(controller: PairUpController, venueName: String, onDismiss: () -> Unit) {
+    // Your hint and the topic are seen by someone else, so the terms come first, once (the API refuses otherwise).
+    val graph = LocalAppGraph.current
+    var agreed by remember { mutableStateOf(!graph.safety.needsTerms) }
+    if (!agreed) {
+        TermsDialog(onAgreed = { agreed = true }, onDismiss = onDismiss)
+        return
+    }
+
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val haptics = LocalHapticFeedback.current
     var scanning by remember { mutableStateOf(false) }
