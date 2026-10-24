@@ -1399,3 +1399,41 @@ private object Fixtures {
         "members":[{"id":"p-4","name":"Anita Cocktail","avatarUrl":"https://img/anita"},{"id":"p-5","name":"Ella Vator","avatarUrl":null}],
         "groups":[{"id":"p-2","name":"House of Glitter","avatarUrl":null}]}"""
 }
+
+class ShortLinkTest {
+    @Test
+    fun readsAVenuesShortLink() {
+        assertEquals("https://hotmess.social/v/aB3dE5gH", ShortLink.url("https://hotmess.social/v/aB3dE5gH"))
+        assertEquals("https://hotmess.social/v/aB3dE5gH", ShortLink.url("hotmess://v/aB3dE5gH"))
+        assertEquals(null, ShortLink.url("https://hotmess.social/v/aB3dE5g"))
+        assertEquals(null, ShortLink.url("https://example.com/v/aB3dE5gH"))
+        assertEquals(null, DeepLink.route("https://hotmess.social/v/aB3dE5gH"), "not a route until followed")
+    }
+
+    @Test
+    fun followsTheSitesRedirectWithoutLoadingIt() {
+        val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/v/") { exchange ->
+            if (exchange.requestURI.path == "/v/aB3dE5gH") {
+                exchange.responseHeaders.add("Location", "/venues/b0f8b66a-e636-495d-9475-0f5317ea08e0/chat")
+                exchange.sendResponseHeaders(302, -1)
+            } else {
+                exchange.sendResponseHeaders(404, -1)
+            }
+            exchange.close()
+        }
+        server.start()
+        try {
+            val base = "http://127.0.0.1:${server.address.port}"
+            val target = ShortLink.target("$base/v/aB3dE5gH")
+            assertEquals("$base/venues/b0f8b66a-e636-495d-9475-0f5317ea08e0/chat", target)
+            assertEquals(
+                AppRoute.Chat(ChatRoom.venue("b0f8b66a-e636-495d-9475-0f5317ea08e0")),
+                DeepLink.route(target!!),
+            )
+            assertEquals(null, ShortLink.target("$base/v/unknown1"))
+        } finally {
+            server.stop(0)
+        }
+    }
+}

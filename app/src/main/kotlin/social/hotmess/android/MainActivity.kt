@@ -50,6 +50,9 @@ import social.hotmess.android.ui.components.NotificationBanner
 import social.hotmess.android.ui.theme.HotMessTheme
 import social.hotmess.core.AppRoute
 import social.hotmess.core.DeepLink
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import social.hotmess.core.ShortLink
 import social.hotmess.core.PingPush
 
 class MainActivity : ComponentActivity(), GoogleAccounts {
@@ -280,6 +283,18 @@ class MainActivity : ComponentActivity(), GoogleAccounts {
         }
         val url = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.dataString ?: return
         if (graph.session.handleRedirect(url)) return
+        // A venue's short link (a TV's QR code): the site redirects it to the venue's chat, which opens here.
+        ShortLink.url(url)?.let { short ->
+            lifecycleScope.launch {
+                withContext(Dispatchers.IO) { ShortLink.target(short) }?.let(::openLink)
+            }
+            return
+        }
+        openLink(url)
+    }
+
+    /** Opens a link the app knows (DeepLink), checking a share link's signed expiry first. */
+    private fun openLink(url: String) {
         val link = DeepLink.link(url) ?: return
         val route = link.route
         // A texted Ping link: Now shows its invitation.
