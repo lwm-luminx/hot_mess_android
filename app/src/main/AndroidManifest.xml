@@ -70,6 +70,8 @@
                 <data android:pathPrefix="/posts/" />
                 <!-- A Ping, from a push or a link texted from the send sheet (with its invitation in `e`). -->
                 <data android:pathPrefix="/pings/" />
+                <!-- A venue's short link (a TV's QR code), followed through the site's redirect (ShortLink). -->
+                <data android:pathPrefix="/v/" />
                 <!-- A locale's chat room (a venue's, /venues/<id>/chat, is under /venues/). -->
                 <data android:pathPattern="/locales/.*/chat" />
             </intent-filter>
