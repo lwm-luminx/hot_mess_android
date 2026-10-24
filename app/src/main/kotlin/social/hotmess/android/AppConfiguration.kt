@@ -1,5 +1,6 @@
 package social.hotmess.android
 
+import android.content.Context
 import com.audiencekit.AudienceKitConfiguration
 import com.audiencekit.AudienceKitEnvironment
 
@@ -30,6 +31,27 @@ data class AppConfiguration(
     /** Staging and debug builds, which get testing aids such as pretending to be at a venue. */
     val isTestBuild: Boolean = BuildConfig.DEBUG || environment != AudienceKitEnvironment.PRODUCTION,
 ) {
+    /** The two APIs a Next build can talk to: it starts on [NEXT], and testers switch to [PRODUCTION] in Me. */
+    enum class ApiServer(val title: String, val baseUrl: String, val audienceHost: String) {
+        NEXT("Next", "https://api.next.audiencekit.com", "hotmess.admin.next.audiencekit.com"),
+        PRODUCTION("Production", "https://api.audiencekit.com", "hotmess.admin.audiencekit.com"),
+    }
+
+    /**
+     * Staging (Next) builds can switch API. Release is locked to production, and Debug keeps its local API. The
+     * environment (and so the Facebook app) stays the build's: both APIs share one database, so the audience's
+     * staging app answers on either.
+     */
+    val canSwitchApiServer: Boolean
+        get() = environment != AudienceKitEnvironment.PRODUCTION
+
+    /** Which of the two APIs [baseUrl] is, or null for another (a local API). */
+    val apiServer: ApiServer?
+        get() = ApiServer.entries.firstOrNull { it.baseUrl == baseUrl }
+
+    /** This build pointed at [server]. */
+    fun with(server: ApiServer): AppConfiguration = copy(baseUrl = server.baseUrl, audienceHost = server.audienceHost)
+
     /** How the AudienceKit SDK reaches the Hot Mess audience. */
     val audienceKit: AudienceKitConfiguration
         get() = AudienceKitConfiguration(
@@ -49,4 +71,26 @@ data class AppConfiguration(
             "842337999153841" -> "development"
             else -> facebookAppId
         }
+
+    companion object {
+        private const val PREFERENCES = "hotmess_api_server"
+        private const val KEY = "server"
+
+        /** The build's configuration, on the API picked in Me when the build can switch. */
+        fun load(context: Context): AppConfiguration {
+            val base = AppConfiguration()
+            if (!base.canSwitchApiServer) return base
+            val stored = preferences(context).getString(KEY, null)
+            val server = ApiServer.entries.firstOrNull { it.name == stored } ?: return base
+            return base.with(server)
+        }
+
+        /** Keeps [server] for the next launch. Its own preferences file, so "Reset all data" leaves it be. */
+        fun store(context: Context, server: ApiServer) {
+            preferences(context).edit().putString(KEY, server.name).commit()
+        }
+
+        private fun preferences(context: Context) =
+            context.applicationContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+    }
 }
