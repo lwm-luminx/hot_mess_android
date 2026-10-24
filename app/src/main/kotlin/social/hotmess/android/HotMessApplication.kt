@@ -155,7 +155,7 @@ class HotMessApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         MapLibre.getInstance(this)
-        graph = AppGraph(this)
+        graph = AppGraph(this, AppConfiguration.load(this))
         graph.configuration.newRelicToken?.let { NewRelic.withApplicationToken(it).start(this) }
         graph.errors.start()
         FacebookAppSignIn.initialize(this, graph.configuration)
