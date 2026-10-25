@@ -27,6 +27,7 @@ import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Forum
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Schedule
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -81,6 +82,7 @@ import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.ApiError
 import social.hotmess.core.HelpVenue
 import social.hotmess.core.HotMessApi
+import social.hotmess.core.RidePickup
 import social.hotmess.core.SafetyAlert
 import social.hotmess.core.SafetyAlertDraft
 import social.hotmess.core.SafetyAlertState
@@ -88,6 +90,7 @@ import social.hotmess.core.SafetyConcern
 import social.hotmess.core.SafetyPlace
 import social.hotmess.core.SupportLine
 import social.hotmess.core.SupportResources
+import social.hotmess.core.SupportRide
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -125,7 +128,22 @@ class SafetyAlertController(private val api: HotMessApi, private val scope: Coro
     var pickedUp by mutableStateOf(0)
         private set
 
+    /** "Get a ride": the ride apps for where the user is. */
+    var rides by mutableStateOf<List<SupportRide>>(emptyList())
+        private set
+
+    /** Where a ride picks them up: the venue, else where the phone is. */
+    var pickup by mutableStateOf<RidePickup?>(null)
+        private set
+
     private var pendingId: String? = alertId
+
+    /** The ride apps for where the user is, with the pickup at the venue when the app knows where it is. */
+    suspend fun loadRides(context: Context, latitude: Double?, longitude: Double?) {
+        pickup = venue?.ridePickup ?: if (latitude != null && longitude != null) RidePickup(latitude, longitude) else null
+        val region = supportRegion(context, pickup?.latitude, pickup?.longitude)
+        rides = quietly { api.supportResources(region) }?.rides.orEmpty()
+    }
 
     suspend fun load() {
         val id = pendingId ?: alert?.id
@@ -234,7 +252,12 @@ fun GetHelpScreen(venue: HelpVenue?, alertId: String?, navigator: Navigator) {
     var addingMore by remember { mutableStateOf(false) }
     val haptics = LocalHapticFeedback.current
 
+    val context = LocalContext.current
     LaunchedEffect(controller) { controller.load() }
+    LaunchedEffect(controller) {
+        val position = graph.location.coordinates.value
+        controller.loadRides(context, position?.latitude, position?.longitude)
+    }
     LaunchedEffect(controller) { controller.keepFresh() }
     LaunchedEffect(controller.pickedUp) {
         if (controller.pickedUp > 0) haptics.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -271,7 +294,7 @@ fun GetHelpScreen(venue: HelpVenue?, alertId: String?, navigator: Navigator) {
                             }
                             RowDivider()
                         }
-                        EscapeRows(controller.venue) { navigator.openSupport(null) }
+                        EscapeRows(controller) { navigator.openSupport(null) }
                     }
                 }
                 item { EmergencySection() }
@@ -301,17 +324,44 @@ private fun HelpRow(title: String, subtitle: String?, icon: ImageVector, enabled
 
 /** "Message a friend", "Get a ride" and "Need support?". */
 @Composable
-private fun EscapeRows(venue: HelpVenue?, onSupport: () -> Unit) {
+private fun EscapeRows(controller: SafetyAlertController, onSupport: () -> Unit) {
     val context = LocalContext.current
+    val venue = controller.venue
     HelpRow("Message a friend", "Send them where you are.", Icons.Rounded.Forum) {
         context.shareText("${venue?.whereIAm.orEmpty()} Can you come find me?".trim())
     }
     RowDivider()
-    HelpRow("Get a ride", "Share where to pick you up with a ride app.", Icons.Rounded.DirectionsCar) {
-        context.shareText(venue?.pickup ?: "Pick me up here.")
-    }
+    RideRows(controller.rides, controller.pickup, venue?.pickup ?: "Pick me up here.")
     RowDivider()
     HelpRow("Need support?", "Free, confidential lines, any time.", Icons.Rounded.Favorite, onClick = onSupport)
+}
+
+/**
+ * "Get a ride": a row for each ride app the API lists for the region, with the pickup at the venue or where the
+ * phone is, then sharing the pickup for any other app or a friend who can drive. Plain links: the app opens if
+ * it's installed, its site if not.
+ */
+@Composable
+private fun RideRows(rides: List<SupportRide>, pickup: RidePickup?, shareMessage: String) {
+    val context = LocalContext.current
+    val pickupLine = when {
+        pickup == null -> "Opens the app to set your pickup."
+        pickup.name != null -> "Pickup at ${pickup.name}."
+        else -> "Pickup where you are now."
+    }
+    rides.forEach { ride ->
+        HelpRow("Get a ride with ${ride.name}", pickupLine, Icons.Rounded.DirectionsCar) { context.openUrl(ride.link(pickup)) }
+        RowDivider()
+    }
+    if (rides.isEmpty()) {
+        HelpRow("Get a ride", "Share where to pick you up with a ride app.", Icons.Rounded.DirectionsCar) {
+            context.shareText(shareMessage)
+        }
+    } else {
+        HelpRow("Share where to pick me up", "For another ride app, or a friend who can drive.", Icons.Rounded.Share) {
+            context.shareText(shareMessage)
+        }
+    }
 }
 
 private fun Context.shareText(text: String) {
@@ -438,7 +488,7 @@ private fun AlertStatus(controller: SafetyAlertController, alert: SafetyAlert, o
                 DetailSection("Nobody's picked it up yet", footer = { Footnote("Stay where you feel safest. These can help while you wait.") }) {
                     HelpRow("Tell staff again", "It goes to the managers too.", Icons.Rounded.Refresh, enabled = !controller.busy) { controller.remind() }
                     RowDivider()
-                    EscapeRows(controller.venue, onSupport)
+                    EscapeRows(controller, onSupport)
                     RowDivider()
                     InfoRow("Keep waiting for staff", onClick = { controller.keepsWaiting = true })
                 }
@@ -580,7 +630,7 @@ private fun Step(title: String, note: String?, state: StepState) {
 
 /**
  * "Need support?": free, confidential crisis and support lines for where the user is, with Call and Text and
- * the numbers written out. 911 comes last. When staff shared it from an alert, their note comes first.
+ * the numbers written out, then ride apps to get home. 911 comes last. When staff shared it from an alert, their note comes first.
  */
 @Composable
 fun SupportScreen(sharedNote: String?, navigator: Navigator) {
@@ -588,9 +638,13 @@ fun SupportScreen(sharedNote: String?, navigator: Navigator) {
     val context = LocalContext.current
     var resources by remember { mutableStateOf<SupportResources?>(null) }
     var failed by remember { mutableStateOf(false) }
+    val position = graph.location.coordinates.value
+    val pickup = position?.let { RidePickup(it.latitude, it.longitude) }
+    val pickupMessage = position
+        ?.let { "Can you pick me up? I'm here: https://maps.google.com/?q=%.6f,%.6f".format(Locale.US, it.latitude, it.longitude) }
+        ?: "Can you pick me up?"
 
     LaunchedEffect(Unit) {
-        val position = graph.location.coordinates.value
         val region = supportRegion(context, position?.latitude, position?.longitude)
         try {
             resources = graph.api.supportResources(region)
@@ -625,6 +679,9 @@ fun SupportScreen(sharedNote: String?, navigator: Navigator) {
                                 SupportLineRow(line, first = index == 0)
                             }
                         }
+                    }
+                    if (loaded.rides.isNotEmpty()) {
+                        item { DetailSection("Get home safe") { RideRows(loaded.rides, pickup, pickupMessage) } }
                     }
                     item { EmergencySection(loaded.emergency) }
                 }

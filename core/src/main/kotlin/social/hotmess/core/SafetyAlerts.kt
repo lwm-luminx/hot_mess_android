@@ -1,9 +1,11 @@
 package social.hotmess.core
 
 import kotlinx.serialization.Serializable
+import java.net.URLEncoder
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
+import java.util.Locale
 
 /**
  * "I feel unsafe": an alert the user sent to the staff on shift at the venue they're at (`sendSafetyAlert`,
@@ -113,9 +115,30 @@ data class SupportResources(
     /** When someone last checked every line ("2026-10-23"); null until they have, and no date shows. */
     val checkedAt: String? = null,
     val lines: List<SupportLine> = emptyList(),
+    /** "Get a ride": the ride apps to offer here, as plain links. */
+    val rides: List<SupportRide> = emptyList(),
 ) {
     val checkedDate: LocalDate? get() = checkedAt?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
 }
+
+/**
+ * "Get a ride": a ride app (Uber, Lyft) as a plain link. [url] opens the app, or its site when it isn't installed;
+ * [pickupUrl] does the same with the pickup set once `{latitude}`, `{longitude}` and `{name}` are filled in.
+ */
+@Serializable
+data class SupportRide(val id: String, val name: String, val url: String, val pickupUrl: String? = null) {
+    /** The link for a pickup at [pickup], or the plain one when there's no pickup or the app takes none. */
+    fun link(pickup: RidePickup?): String {
+        if (pickup == null || pickupUrl == null) return url
+        return pickupUrl
+            .replace("{latitude}", "%.6f".format(Locale.US, pickup.latitude))
+            .replace("{longitude}", "%.6f".format(Locale.US, pickup.longitude))
+            .replace("{name}", URLEncoder.encode(pickup.name.orEmpty(), Charsets.UTF_8).replace("+", "%20"))
+    }
+}
+
+/** Where "Get a ride" sets the pickup: the venue (with its [name]), or where the phone is. */
+data class RidePickup(val latitude: Double, val longitude: Double, val name: String? = null)
 
 @Serializable
 data class SupportLine(
@@ -151,11 +174,22 @@ data class SupportLine(
 }
 
 /** The venue "Get help" is about, with what "Message a friend" and "Get a ride" say. */
-data class HelpVenue(val id: String, val name: String, val address: String? = null) {
+data class HelpVenue(
+    val id: String,
+    val name: String,
+    val address: String? = null,
+    /** Where it is, for a ride's pickup. */
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+) {
     /** "I'm at The Wildrose, 1001 E Pike St." */
     val whereIAm: String get() = if (address.isNullOrBlank()) "I'm at $name." else "I'm at $name, $address."
 
     val pickup: String get() = if (address.isNullOrBlank()) name else "$name, $address"
+
+    /** Where a ride picks the user up here, when the app knows where it is. */
+    val ridePickup: RidePickup?
+        get() = if (latitude != null && longitude != null) RidePickup(latitude, longitude, name) else null
 }
 
 internal object SafetyAlertDocuments {
@@ -220,6 +254,7 @@ internal object SafetyAlertDocuments {
           supportResources(region: ${'$'}region) {
             region name emergency checkedAt
             lines { id name description phone textNumber textBody url }
+            rides { id name url pickupUrl }
           }
         }
     """.trimIndent()

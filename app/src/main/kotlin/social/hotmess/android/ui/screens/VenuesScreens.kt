@@ -378,7 +378,8 @@ fun VenueScreen(id: String, navigator: Navigator) {
                         // Only while the app places the user here: staff can only help people who are there.
                         if (canGetHelp) {
                             item(key = "get-help") {
-                                GetHelpRow { navigator.openHelp(HelpVenue(loaded.id, loaded.name, loaded.address)) }
+                                GetHelpRow { val at = loaded.coordinate
+                                navigator.openHelp(HelpVenue(loaded.id, loaded.name, loaded.address, at?.latitude, at?.longitude)) }
                             }
                         }
                         if (overview.onNow.isNotEmpty()) {
