@@ -892,6 +892,9 @@ data class SignInMethods(val methods: List<String> = emptyList(), val warnings: 
     val google: Boolean get() = "google" in methods
     val apple: Boolean get() = "apple" in methods
 
+    /** Whether App Review codes sign in now (only while the audience is in App Review). */
+    val reviewCode: Boolean get() = "review_code" in methods
+
     /** What to say before signing in with [method], such as "Facebook login is only for testers"; null for nothing. */
     fun warning(method: String): String? = warnings[method]?.takeIf { it.isNotBlank() }
 }
