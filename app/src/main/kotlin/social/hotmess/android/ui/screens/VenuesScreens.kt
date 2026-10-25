@@ -32,6 +32,7 @@ import androidx.compose.material3.Button
 import com.audiencekit.Coordinates
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -72,6 +73,7 @@ import social.hotmess.android.ui.components.HeroHeader
 import social.hotmess.android.ui.components.HeroScaffold
 import social.hotmess.android.ui.components.InfoRow
 import social.hotmess.android.ui.components.LoadStateView
+import social.hotmess.android.ui.components.LocalFeedFillsWidth
 import social.hotmess.android.ui.components.OnNowSection
 import social.hotmess.android.ui.components.RowDivider
 import social.hotmess.android.ui.components.SocialLinkRow
@@ -298,6 +300,7 @@ fun VenueScreen(id: String, navigator: Navigator) {
         val docked = state.valueOrNull?.chatOpen == true && AdaptiveLayout.docksChat(maxWidth.value)
         Row(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f).fillMaxHeight()) {
+            CompositionLocalProvider(LocalFeedFillsWidth provides docked) {
             HeroScaffold(
                 title = venue?.name ?: "Venue",
                 tone = heroTone,
@@ -465,6 +468,7 @@ fun VenueScreen(id: String, navigator: Navigator) {
                         }
                     }
                 }
+            }
             }
             }
             val loaded = state.valueOrNull?.venue
