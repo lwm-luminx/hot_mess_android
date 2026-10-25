@@ -15,7 +15,7 @@ import social.hotmess.core.HotMessApi
  * Registers the device for push with Firebase Cloud Messaging and hands the token to the API
  * (`registerDevice`) with the app's package name, as the iOS app does with its APNs token and bundle ID.
  *
- * Push needs a Firebase app; without its settings in local.properties (see app/build.gradle.kts)
+ * Push needs a Firebase app; without its settings (app/build.gradle.kts commits them)
  * this does nothing and the rest of the app works as usual.
  */
 class PushRegistrar(private val context: Context, private val api: HotMessApi, private val scope: CoroutineScope) {

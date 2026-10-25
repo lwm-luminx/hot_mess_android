@@ -12,13 +12,28 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
-// Secrets that must not be committed (Firebase's app settings) come from local.properties or Gradle
-// properties, e.g. `hotmess.firebase.apiKey=…`.
+// Secrets that must not be committed (the upload key) come from local.properties or Gradle properties, e.g.
+// `hotmess.upload.storePassword=…`. Those also replace the public settings below.
 val localProperties = Properties().apply {
     rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use(::load)
 }
 fun secret(name: String): String =
     providers.gradleProperty("hotmess.$name").orNull ?: localProperties.getProperty("hotmess.$name") ?: ""
+
+// Settings that ship in every APK, so they aren't secrets: the Google Web OAuth client sign-in names as its
+// serverClientId, and the Firebase project the API pushes with (hot-mess-production), with each build type's own
+// Firebase app (its package). Staging and Development push from the same project as Release.
+fun setting(name: String, default: String): String = secret(name).ifEmpty { default }
+val firebaseProjectId = setting("firebase.projectId", "hot-mess-production")
+val firebaseSenderId = setting("firebase.senderId", "689253921795")
+// The project's Android API key ("Android key (auto created by Firebase)"), shared by every Android app in it.
+val firebaseApiKey = setting("firebase.apiKey", "AIzaSyDnfb9_wMO-fNpMcApif4hMRFwS6Gq9kAU")
+val firebaseAppIds = mapOf(
+    "release" to "1:689253921795:android:19fecb6b88869898feca36",
+    "staging" to "1:689253921795:android:5c14b37209ce4501feca36",
+    "debug" to "1:689253921795:android:54720ceed1d2673efeca36",
+)
+val googleServerClientId = setting("google.serverClientId", "689253921795-pt1trs3ss1fk61jmnoce5425m5t8pt7d.apps.googleusercontent.com")
 
 // A ValueSource makes Gradle recheck the clock even when configuration caching is enabled.
 // Seconds since 2026-01-01 UTC keep local and CI builds ordered without modifying tracked files.
@@ -119,11 +134,10 @@ android {
 
         // Venues' iBeacons; their major value names a locale.
         buildConfigField("String", "BEACON_UUID", "\"1422F585-E729-49E3-9E1F-B943DE12BAA9\"")
-        // Push needs a Firebase app. Leave these empty and the app runs without push.
-        buildConfigField("String", "FIREBASE_PROJECT_ID", "\"${secret("firebase.projectId")}\"")
-        buildConfigField("String", "FIREBASE_APPLICATION_ID", "\"${secret("firebase.applicationId")}\"")
-        buildConfigField("String", "FIREBASE_API_KEY", "\"${secret("firebase.apiKey")}\"")
-        buildConfigField("String", "FIREBASE_SENDER_ID", "\"${secret("firebase.senderId")}\"")
+        // Push: the Firebase project (above); each build type's app ID is set below.
+        buildConfigField("String", "FIREBASE_PROJECT_ID", "\"$firebaseProjectId\"")
+        buildConfigField("String", "FIREBASE_API_KEY", "\"$firebaseApiKey\"")
+        buildConfigField("String", "FIREBASE_SENDER_ID", "\"$firebaseSenderId\"")
     }
 
     // Release builds are signed with the Play upload key, kept outside the repository: `hotmess.upload.storeFile`,
@@ -191,7 +205,11 @@ android {
         buildConfigField("String", "FACEBOOK_APP_ID", "\"${environment.facebookAppId}\"")
         buildConfigField("String", "FACEBOOK_CLIENT_TOKEN", "\"${environment.facebookClientToken}\"")
         buildConfigField("String", "FACEBOOK_LOGIN_CONFIG_ID", "\"${environment.facebookLoginConfigId}\"")
-        buildConfigField("String", "GOOGLE_SERVER_CLIENT_ID", "\"${environment.googleServerClientId.ifEmpty { secret("google.serverClientId") }}\"")
+        buildConfigField("String", "GOOGLE_SERVER_CLIENT_ID", "\"${environment.googleServerClientId.ifEmpty { googleServerClientId }}\"")
+        // Its Firebase app; `hotmess.firebase.applicationId` replaces Release's. The sign-in test build goes without push.
+        val firebaseAppId = if (name == "release") setting("firebase.applicationId", firebaseAppIds.getValue(name))
+            else firebaseAppIds[name].orEmpty()
+        buildConfigField("String", "FIREBASE_APPLICATION_ID", "\"$firebaseAppId\"")
         buildConfigField("String", "APPLE_SERVICES_ID", "\"${secret("apple.servicesId").takeIf { name == "release" && it.isNotEmpty() } ?: environment.appleServicesId}\"")
         buildConfigField("boolean", "PRIVATE_SIGN_IN", environment.privateSignIn.toString())
         buildConfigField("String", "AUDIENCEKIT_ENVIRONMENT", "\"${environment.audienceKitEnvironment}\"")
