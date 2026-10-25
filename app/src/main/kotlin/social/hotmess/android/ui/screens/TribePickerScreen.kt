@@ -257,7 +257,7 @@ private fun SearchResults(editing: TribeChoices, search: String, onToggle: (Trib
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text(result.tribe.name, style = HotMessType.label, color = tokens.ink)
+                    Text(result.tribe.label, style = HotMessType.label, color = tokens.ink)
                     Text(result.category, style = HotMessType.caption, color = tokens.inkMuted)
                 }
                 TribeChip(if (on) "Picked" else "Pick", isOn = on, onClick = { onToggle(result.tribe) }, heldBack = !on && editing.isAtCap)

@@ -5,7 +5,13 @@ import kotlinx.serialization.Serializable
 
 /** One of the audience's curated tribes, as the picker lists it (a tag with `tribe` set). */
 @Serializable
-data class Tribe(val id: String, val name: String)
+data class Tribe(val id: String, val name: String) {
+    /** How a chip shows it: "drag-brunch" for Drag Brunch. */
+    val label: String get() = tagLabel(name)
+}
+
+/** A tag or tribe name as the app shows it: lowercase, with a dash for each run of spaces ("Drag Brunch" -> "drag-brunch"). */
+fun tagLabel(name: String): String = name.trim().lowercase().split(Regex("\\s+")).joinToString("-")
 
 /** A group of tribes in the picker: "Arts and culture", or "More" for the ones the audience made itself. */
 @Serializable

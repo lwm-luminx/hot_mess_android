@@ -72,4 +72,11 @@ class TribesTest {
         assertEquals(listOf("Board games"), choices.matching("bo").map { it.tribe.name })
         assertEquals(emptyList(), choices.matching("  "))
     }
+
+    @Test
+    fun `tags and tribes show lowercase with dashes for spaces`() {
+        assertEquals("board-games", Tribe("t2", "Board games").label)
+        assertEquals("resident-dj", tagLabel("  Resident   DJ "))
+        assertEquals("bear", tagLabel("Bear"))
+    }
 }
