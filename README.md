@@ -38,14 +38,9 @@ says (`userId`, `audienceId`, `role`, `endpoint`); nothing decodes the JWT. API 
    (`../audience-kit-sdk`); its root Gradle build is included as a composite build. In the AudienceKit
    monorepo, where this app is `apps/hot_mess/android`, its `sdk/audience-kit-sdk` submodule is used.
    To keep it somewhere else, set `audiencekit.dir` in `local.properties` or `AUDIENCEKIT_DIR`.
-2. Optionally, add Firebase's settings to `local.properties` for push (never commit them):
-
-   ```properties
-   hotmess.firebase.projectId=...
-   hotmess.firebase.applicationId=...
-   hotmess.firebase.apiKey=...
-   hotmess.firebase.senderId=...
-   ```
+2. Push needs nothing local: `app/build.gradle.kts` carries the Firebase settings for hot-mess-production
+   (project ID, API key, sender ID and each build type's app ID). They ship in every APK, so they aren't
+   secrets. `hotmess.firebase.*` in `local.properties` replaces them (`projectId`, `apiKey`, `senderId`).
 
 3. To sign Release for Google Play, point `local.properties` at the upload keystore (kept outside the
    repository, never committed). Google Play manages the app signing key and re-signs what it ships.
