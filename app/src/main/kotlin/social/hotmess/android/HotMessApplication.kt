@@ -20,6 +20,7 @@ import kotlinx.coroutines.launch
 import org.maplibre.android.MapLibre
 import social.hotmess.android.location.LocationProvider
 import social.hotmess.android.payments.SquareCardEntry
+import social.hotmess.android.push.HotMessMessagingService
 import social.hotmess.android.push.InAppNotifications
 import social.hotmess.android.push.PushRegistrar
 import social.hotmess.android.session.AuthState
@@ -159,6 +160,8 @@ class HotMessApplication : Application() {
         graph.configuration.newRelicToken?.let { NewRelic.withApplicationToken(it).start(this) }
         graph.errors.start()
         FacebookAppSignIn.initialize(this, graph.configuration)
+        graph.push.start()
+        HotMessMessagingService.createChannels(this)
 
         graph.brand.load()
         graph.scope.launch { graph.session.start() }
