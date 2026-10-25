@@ -35,6 +35,14 @@ class PushRegistrar(private val context: Context, private val api: HotMessApi, p
         return runCatching { FirebaseApp.initializeApp(context, options) }.getOrNull()
     }
 
+    /**
+     * Starts Firebase with the process, so a push that wakes the app (Android posting it, or a tap) finds it
+     * ready, before anyone has signed in.
+     */
+    fun start() {
+        firebase()
+    }
+
     /** Fetches the current token and registers it. Best-effort: a failure never blocks the UI. */
     fun register() {
         firebase() ?: return
