@@ -136,7 +136,7 @@ fun TribeChip(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(tagLabel(name), style = HotMessType.label, color = if (isOn) tokens.accentInk else tokens.ink, maxLines = 1)
+        Text(name, style = HotMessType.label, color = if (isOn) tokens.accentInk else tokens.ink, maxLines = 1)
         if (showsRemove) Icon(Icons.Rounded.Close, contentDescription = null, tint = tokens.accentInk, modifier = Modifier.size(14.dp))
     }
 }
@@ -179,9 +179,9 @@ private fun TribesPreview() = HotMessTheme {
         BothLine(tribes)
         BothLine(tribes.take(1))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.s2), verticalArrangement = Arrangement.spacedBy(Space.s2)) {
-            TribeChip("Bear", isOn = true, onClick = {}, showsRemove = true)
-            TribeChip("Karaoke regular", isOn = false, onClick = {})
-            TribeChip("Board games", isOn = false, onClick = {}, heldBack = true)
+            TribeChip(tagLabel("Bear"), isOn = true, onClick = {}, showsRemove = true)
+            TribeChip(tagLabel("Karaoke regular"), isOn = false, onClick = {})
+            TribeChip(tagLabel("Board games"), isOn = false, onClick = {}, heldBack = true)
         }
         PickCounter(7, 31)
     }
