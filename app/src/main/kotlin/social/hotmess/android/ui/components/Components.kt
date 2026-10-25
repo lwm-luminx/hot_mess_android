@@ -135,12 +135,13 @@ class FeedScope(private val scope: LazyListScope, val columns: Int) : LazyListSc
     fun wideItems(count: Int, key: (index: Int) -> Any, itemContent: @Composable LazyItemScope.(index: Int) -> Unit) {
         scope.items(count, key, itemContent = itemContent)
     }
+}
 
-    @Composable
-    private fun Readable(content: @Composable () -> Unit) {
-        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
-            Box(Modifier.widthIn(max = ContentMaxWidth)) { content() }
-        }
+/** A wide [Feed]'s item in the readable centered column. */
+@Composable
+private fun Readable(content: @Composable () -> Unit) {
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+        Box(Modifier.widthIn(max = ContentMaxWidth)) { content() }
     }
 }
 

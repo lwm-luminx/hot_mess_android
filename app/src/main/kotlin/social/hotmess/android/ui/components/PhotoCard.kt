@@ -413,6 +413,7 @@ fun <T> LazyListScope.cardSection(
 ) {
     // A wide feed lays the cards out in rows, the title over the first.
     if (this is FeedScope) {
+        val columns = columns
         val rows = items.chunked(columns)
         wideItems(rows.size, key = { "$section/${key(rows[it].first())}" }) { index ->
             Column(verticalArrangement = Arrangement.spacedBy(Space.s2)) {
