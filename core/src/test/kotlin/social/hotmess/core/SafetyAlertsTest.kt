@@ -45,6 +45,25 @@ class SafetyAlertsTest {
     }
 
     @Test
+    fun setsARidesPickupAtTheVenue() {
+        val ride = SupportRide(
+            id = "uber",
+            name = "Uber",
+            url = "https://m.uber.com/ul/",
+            pickupUrl = "https://m.uber.com/ul/?action=setPickup&pickup%5Blatitude%5D={latitude}" +
+                "&pickup%5Blongitude%5D={longitude}&pickup%5Bnickname%5D={name}",
+        )
+        val venue = HelpVenue("v1", "The Wildrose & Co", latitude = 47.6137, longitude = -122.3197)
+
+        assertEquals(
+            "https://m.uber.com/ul/?action=setPickup&pickup%5Blatitude%5D=47.613700" +
+                "&pickup%5Blongitude%5D=-122.319700&pickup%5Bnickname%5D=The%20Wildrose%20%26%20Co",
+            ride.link(venue.ridePickup),
+        )
+        assertEquals("https://m.uber.com/ul/", ride.link(null))
+    }
+
+    @Test
     fun writesSupportNumbersOut() {
         val trevor = SupportLine("trevor", "The Trevor Project", phone = "18664887386", textNumber = "678678", textBody = "START")
         assertEquals("Call 1-866-488-7386 · Text START to 678678", trevor.numbers)
