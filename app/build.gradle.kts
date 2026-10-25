@@ -26,8 +26,8 @@ fun secret(name: String): String =
 fun setting(name: String, default: String): String = secret(name).ifEmpty { default }
 val firebaseProjectId = setting("firebase.projectId", "hot-mess-production")
 val firebaseSenderId = setting("firebase.senderId", "689253921795")
-// The API key comes from local.properties (hotmess.firebase.apiKey) until it is committed here too.
-val firebaseApiKey = setting("firebase.apiKey", "")
+// The project's Android API key ("Android key (auto created by Firebase)"), shared by every Android app in it.
+val firebaseApiKey = setting("firebase.apiKey", "AIzaSyDnfb9_wMO-fNpMcApif4hMRFwS6Gq9kAU")
 val firebaseAppIds = mapOf(
     "release" to "1:689253921795:android:19fecb6b88869898feca36",
     "staging" to "1:689253921795:android:5c14b37209ce4501feca36",
