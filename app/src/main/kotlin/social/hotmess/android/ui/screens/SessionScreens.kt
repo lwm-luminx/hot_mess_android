@@ -14,10 +14,13 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -28,9 +31,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -83,6 +91,7 @@ fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}, onAppleSi
     val others = listOfNotNull("Google".takeIf { offersGoogle }, "Apple".takeIf { offersApple }).joinToString(" or ")
     // A sign-in waiting on Cancel or Continue: the warning and what Continue does.
     var warned by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
+    var enteringReviewCode by remember { mutableStateOf(false) }
     fun begin(method: String, signIn: () -> Unit) {
         val warning = signInMethods?.warning(method)
         if (warning == null) signIn() else warned = warning to signIn
@@ -163,6 +172,11 @@ fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}, onAppleSi
                         color = Color.White.copy(alpha = 0.8f),
                         textAlign = TextAlign.Center,
                     )
+                    if (signInMethods?.reviewCode == true && !signingIn) {
+                        TextButton(onClick = { enteringReviewCode = true }, enabled = asked) {
+                            Text("Have an App Review code?", style = HotMessType.bodySmall, color = Color.White.copy(alpha = 0.85f))
+                        }
+                    }
                     val context = androidx.compose.ui.platform.LocalContext.current
                     Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                         TextButton(onClick = { context.openUrl(LegalLinks.TERMS) }) {
@@ -191,6 +205,16 @@ fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}, onAppleSi
                 )
             }
 
+            if (enteringReviewCode) {
+                ReviewCodeDialog(
+                    onSubmit = { code ->
+                        enteringReviewCode = false
+                        graph.session.signInWithReviewCode(code)
+                    },
+                    onDismiss = { enteringReviewCode = false },
+                )
+            }
+
             var reportingProblem by remember { mutableStateOf(false) }
             val failure = state as? AuthState.Failed
             if (failure != null) {
@@ -212,6 +236,46 @@ fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}, onAppleSi
             if (reportingProblem) ReportProblemDialog(screen = "Sign in") { reportingProblem = false }
         }
     }
+}
+
+/**
+ * "Have an App Review code?": where a store's review team enters the code from the review notes, which signs in the
+ * designated reviewer account (hot_mess_ios ReviewCodeSheet).
+ */
+@Composable
+private fun ReviewCodeDialog(onSubmit: (String) -> Unit, onDismiss: () -> Unit) {
+    var code by remember { mutableStateOf("") }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    val submit = { if (code.isNotBlank()) onSubmit(code.trim()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = submit, enabled = code.isNotBlank()) { Text("Sign in") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        title = { Text("App Review", style = HotMessType.heading) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(Space.s3)) {
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { code = it },
+                    label = { Text("Review code") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.None,
+                        keyboardType = KeyboardType.Ascii,
+                        imeAction = ImeAction.Go,
+                    ),
+                    keyboardActions = KeyboardActions(onGo = { submit() }),
+                    modifier = Modifier.fillMaxWidth().focusRequester(focus),
+                )
+                Text(
+                    "For the store's app review team. Enter the code from the review notes.",
+                    style = HotMessType.bodySmall,
+                )
+            }
+        },
+        containerColor = tokens.surfaceRaised,
+    )
 }
 
 /** When the API no longer serves this build (`GET /v1/status` says a newer minimum than this version). */

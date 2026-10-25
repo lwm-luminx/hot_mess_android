@@ -949,6 +949,14 @@ class HotMessApiTest {
         assertEquals(listOf("apple", "google"), methods?.methods)
         assertFalse(methods!!.facebook)
         assertTrue(methods.google)
+        assertFalse(methods.reviewCode)
+    }
+
+    @Test
+    fun offersAppReviewCodesOnlyWhileTheAPIListsThem() = runTest {
+        val (api, _) = api("/v1/token/methods?host=hotmess.social" to """{"methods":["facebook","review_code"]}""")
+
+        assertTrue(api.signInMethods("hotmess.social")!!.reviewCode)
     }
 
     @Test
