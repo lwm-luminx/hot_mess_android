@@ -15,6 +15,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.LocationOff
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -206,9 +208,11 @@ fun NowScreen(navigator: Navigator) {
         tone = heroTone,
         collapsed = state.valueOrNull == null || scrolled,
         actions = {
-            TextButton(onClick = { sheetOpen = true }) {
-                Icon(Icons.Rounded.Campaign, contentDescription = null, tint = tokens.accentInk, modifier = Modifier.size(20.dp))
-                Text("Ping", style = HotMessType.label, color = tokens.accentInk, modifier = Modifier.padding(start = Space.s1))
+            // In the bar's own colour (the photo's, until it turns solid), like the icons beside it: accent pink
+            // disappeared on some photos and on the bar's gradient.
+            TextButton(onClick = { sheetOpen = true }, colors = ButtonDefaults.textButtonColors(contentColor = LocalContentColor.current)) {
+                Icon(Icons.Rounded.Campaign, contentDescription = null, modifier = Modifier.size(20.dp))
+                Text("Ping", style = HotMessType.label, modifier = Modifier.padding(start = Space.s1))
             }
         },
     ) { topInset ->
