@@ -30,6 +30,25 @@ fun Context.openUrl(url: String) {
     }
 }
 
+/** The staff apps Me sends managers to: Velvet for a venue's, Backstage for talent's. Hot Mess doesn't manage posts. */
+enum class StaffApp(val title: String, val packageName: String) {
+    VELVET("Velvet", "com.audiencekit.Velvet"),
+    BACKSTAGE("Backstage", "com.audiencekit.Backstage"),
+}
+
+/** Opens [app] when it's installed (the manifest's `<queries>` lists them), its Play listing otherwise. */
+fun Context.openStaffApp(app: StaffApp) {
+    val launch = packageManager.getLaunchIntentForPackage(app.packageName)
+    if (launch == null) {
+        openUrl("https://play.google.com/store/apps/details?id=${app.packageName}")
+        return
+    }
+    try {
+        startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    } catch (_: ActivityNotFoundException) {
+    }
+}
+
 fun Context.share(url: String, title: String) {
     val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, url).putExtra(Intent.EXTRA_SUBJECT, title)
     startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))

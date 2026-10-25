@@ -60,18 +60,20 @@ class HotMessMessagingService : FirebaseMessagingService() {
          */
         const val VENUE_CHANNEL = "venue_updates"
 
+        /**
+         * Where Android posts a push that names no channel the app has (the manifest's default), such as a friend
+         * request's. The API names the others (Push::Fcm.channel).
+         */
+        const val GENERAL_CHANNEL = "general"
+
         private fun channelName(channel: String): String = when (channel) {
             CHAT_CHANNEL -> "Chat rooms"
             VENUE_CHANNEL -> "Venue updates"
+            GENERAL_CHANNEL -> "Other notifications"
             else -> "Pings"
         }
 
-        private fun show(context: Context, title: String?, body: String?, data: Map<String, String>, channel: String) {
-            val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
-                PackageManager.PERMISSION_GRANTED || android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU
-            if (!granted) return
-
-            val manager = context.getSystemService(NotificationManager::class.java)
+        private fun createChannel(manager: NotificationManager, channel: String) {
             manager.createNotificationChannel(
                 NotificationChannel(channel, channelName(channel), NotificationManager.IMPORTANCE_HIGH).apply {
                     if (channel == VENUE_CHANNEL) {
@@ -80,6 +82,23 @@ class HotMessMessagingService : FirebaseMessagingService() {
                     }
                 },
             )
+        }
+
+        /**
+         * Creates every channel at launch, so a push Android posts itself while the app is in the background lands
+         * in the channel the API names instead of Firebase's "Miscellaneous".
+         */
+        fun createChannels(context: Context) {
+            val manager = context.getSystemService(NotificationManager::class.java)
+            listOf(PING_CHANNEL, CHAT_CHANNEL, VENUE_CHANNEL, GENERAL_CHANNEL).forEach { createChannel(manager, it) }
+        }
+
+        private fun show(context: Context, title: String?, body: String?, data: Map<String, String>, channel: String) {
+            val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED || android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU
+            if (!granted) return
+
+            createChannel(context.getSystemService(NotificationManager::class.java), channel)
 
             val open = Intent(context, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)

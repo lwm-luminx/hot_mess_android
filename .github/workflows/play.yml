@@ -10,8 +10,9 @@ name: Google Play
 #                              Play Console (Users and permissions)
 #   PLAY_UPLOAD_KEYSTORE       the upload keystore, base64 (`base64 -i upload.jks | tr -d '\n'`)
 #   PLAY_UPLOAD_STORE_PASSWORD, PLAY_UPLOAD_KEY_ALIAS, PLAY_UPLOAD_KEY_PASSWORD
-#   HOTMESS_PROPERTIES         the other hotmess.* lines from local.properties (hotmess.firebase.*,
-#                              hotmess.google.serverClientId, hotmess.apple.servicesId); not the hotmess.upload.* ones
+#   HOTMESS_PROPERTIES         optional: other hotmess.* lines from local.properties (hotmess.apple.servicesId, or
+#                              overrides of the Firebase and Google settings app/build.gradle.kts commits); not the
+#                              hotmess.upload.* ones
 # Without them the bundle is still built and kept as a run artifact, and the upload is skipped with a warning.
 
 on:
@@ -64,11 +65,6 @@ jobs:
             echo "hotmess.upload.keyPassword=${KEY_PASSWORD:-$STORE_PASSWORD}"
             echo "hotmess.stagingSigning=upload"
           } > local.properties
-          # Without Firebase the app builds but never registers for push; don't ship that.
-          if ! grep -q '^hotmess\.firebase\.applicationId=.' local.properties; then
-            echo "::error::HOTMESS_PROPERTIES has no hotmess.firebase.applicationId; push wouldn't work in this build"
-            exit 1
-          fi
 
       - name: Build the ${{ env.VARIANT }} bundle
         run: |
