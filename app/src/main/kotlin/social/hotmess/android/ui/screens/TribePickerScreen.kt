@@ -166,7 +166,7 @@ fun TribePickerScreen(navigator: Navigator) {
                                 DetailSection("Your picks") {
                                     ChipRow {
                                         editing.pickedTribes.forEach { tribe ->
-                                            TribeChip(tribe.name, isOn = true, onClick = { toggle(tribe) }, showsRemove = true)
+                                            TribeChip(tribe.label, isOn = true, onClick = { toggle(tribe) }, showsRemove = true)
                                         }
                                     }
                                 }
@@ -225,7 +225,7 @@ private fun CategorySection(category: TribeCategory, editing: TribeChoices, expa
         ChipRow {
             shown.forEach { tribe ->
                 val on = tribe.id in editing.picked
-                TribeChip(tribe.name, isOn = on, onClick = { onToggle(tribe) }, heldBack = !on && editing.isAtCap)
+                TribeChip(tribe.label, isOn = on, onClick = { onToggle(tribe) }, heldBack = !on && editing.isAtCap)
             }
             if (hidden > 0) {
                 TextButton(onClick = onExpand, modifier = Modifier.heightIn(min = 40.dp)) {
@@ -257,7 +257,7 @@ private fun SearchResults(editing: TribeChoices, search: String, onToggle: (Trib
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text(result.tribe.name, style = HotMessType.label, color = tokens.ink)
+                    Text(result.tribe.label, style = HotMessType.label, color = tokens.ink)
                     Text(result.category, style = HotMessType.caption, color = tokens.inkMuted)
                 }
                 TribeChip(if (on) "Picked" else "Pick", isOn = on, onClick = { onToggle(result.tribe) }, heldBack = !on && editing.isAtCap)

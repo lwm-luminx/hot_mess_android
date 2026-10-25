@@ -42,6 +42,7 @@ import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.SharedTribe
 import social.hotmess.core.bothLine
+import social.hotmess.core.tagLabel
 
 // Design system "Tribes and tags" (api/doc/design-system/TribesAndTags.md): the both glyph, the BothMark on an
 // avatar, the BothLine after a name, and the picker's TribeChip and PickCounter. A match shows only between the two
@@ -178,9 +179,9 @@ private fun TribesPreview() = HotMessTheme {
         BothLine(tribes)
         BothLine(tribes.take(1))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.s2), verticalArrangement = Arrangement.spacedBy(Space.s2)) {
-            TribeChip("Bear", isOn = true, onClick = {}, showsRemove = true)
-            TribeChip("Karaoke regular", isOn = false, onClick = {})
-            TribeChip("Board games", isOn = false, onClick = {}, heldBack = true)
+            TribeChip(tagLabel("Bear"), isOn = true, onClick = {}, showsRemove = true)
+            TribeChip(tagLabel("Karaoke regular"), isOn = false, onClick = {})
+            TribeChip(tagLabel("Board games"), isOn = false, onClick = {}, heldBack = true)
         }
         PickCounter(7, 31)
     }
