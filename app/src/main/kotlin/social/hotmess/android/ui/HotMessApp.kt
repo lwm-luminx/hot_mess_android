@@ -6,9 +6,13 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -24,6 +28,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -37,6 +44,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -74,11 +82,13 @@ import social.hotmess.android.ui.screens.VenueChatScreen
 import social.hotmess.android.ui.screens.VenueScreen
 import social.hotmess.android.ui.screens.VenuesScreen
 import social.hotmess.android.ui.theme.HotMessType
+import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.AppRoute
 import social.hotmess.core.AppTab
 import social.hotmess.core.ChatRoom
 import social.hotmess.core.HelpVenue
+import social.hotmess.core.WindowWidth
 import social.hotmess.core.postsSubject
 
 // Routes. Each tab's root, and the detail screens any tab can push.
@@ -316,55 +326,70 @@ private fun MainShell(links: Flow<AppRoute>) {
     // Chat and a pass take the whole screen.
     val fullScreen = destination?.let { it.hasRoute(ChatRoute::class) || it.hasRoute(PassRoute::class) } == true
 
+    // A wide window (a tablet, a foldable, a phone on its side) puts the tabs in a rail down the side.
+    val rail = rememberWindowWidth().usesRail
+
     Scaffold(
         containerColor = tokens.surface,
         contentWindowInsets = WindowInsets(0),
         bottomBar = {
-            if (!fullScreen) {
+            if (!fullScreen && !rail) {
                 NavigationBar(containerColor = tokens.surfaceRaised, tonalElevation = 0.dp) {
                     AppTab.entries.forEach { tab -> TabItem(tab, selected = tab == selectedTab) { selectTab(tab) } }
                 }
             }
         },
     ) { padding ->
-        NavHost(navController, startDestination = NowRoute, modifier = Modifier.fillMaxSize().padding(padding)) {
-            composable<NowRoute> { NowScreen(navigator) }
-            composable<EventsRoute> { EventsScreen(navigator) }
-            composable<VenuesRoute> { VenuesScreen(navigator) }
-            composable<PeopleRoute> { PeopleScreen(navigator) }
-            composable<MeRoute> { MeScreen(navigator) }
-            composable<VenueRoute> { VenueScreen(it.toRoute<VenueRoute>().id, navigator) }
-            composable<EventRoute> { EventScreen(it.toRoute<EventRoute>().id, navigator) }
-            composable<PersonRoute> { PersonScreen(it.toRoute<PersonRoute>().id, navigator) }
-            composable<ChatRoute> {
-                val route = it.toRoute<ChatRoute>()
-                val room = if (route.locale) ChatRoom.locale(route.id) else ChatRoom.venue(route.id)
-                VenueChatScreen(room, route.name, navigator)
+        Row(Modifier.fillMaxSize().padding(padding)) {
+            if (!fullScreen && rail) {
+                NavigationRail(containerColor = tokens.surfaceRaised) {
+                    Spacer(Modifier.height(Space.s4))
+                    AppTab.entries.forEach { tab -> RailItem(tab, selected = tab == selectedTab) { selectTab(tab) } }
+                }
             }
-            composable<PassRoute> { PassScreen(it.toRoute<PassRoute>().id, navigator) }
-            composable<PassesRoute> { PassesScreen(navigator) }
-            composable<PostRoute> { PostScreen(it.toRoute<PostRoute>().id, navigator) }
-            composable<PostsRoute> {
-                val route = it.toRoute<PostsRoute>()
-                PostsScreen(postsSubject(route.kind, route.id), route.title, navigator)
-            }
-            composable<HelpRoute> {
-                val route = it.toRoute<HelpRoute>()
-                GetHelpScreen(HelpVenue(route.venueId, route.venueName, route.address.ifBlank { null }), null, navigator)
-            }
-            composable<SafetyAlertRoute> { GetHelpScreen(null, it.toRoute<SafetyAlertRoute>().id, navigator) }
-            composable<SupportRoute> { SupportScreen(it.toRoute<SupportRoute>().note.ifBlank { null }, navigator) }
-            composable<SafetyAlertsRoute> { SafetyAlertsScreen(navigator) }
-            composable<GettingHelpRoute> { GettingHelpScreen(navigator) }
-            composable<CardsYouSeeRoute> { CardsYouSeeScreen(navigator) }
-            composable<TribesRoute> { TribePickerScreen(navigator) }
-            composable<UpdatesRoute> {
-                val route = it.toRoute<UpdatesRoute>()
-                UpdatesScreen(route.localeId, route.localeName, navigator)
+            NavHost(navController, startDestination = NowRoute, modifier = Modifier.weight(1f).fillMaxHeight()) {
+                composable<NowRoute> { NowScreen(navigator) }
+                composable<EventsRoute> { EventsScreen(navigator) }
+                composable<VenuesRoute> { VenuesScreen(navigator) }
+                composable<PeopleRoute> { PeopleScreen(navigator) }
+                composable<MeRoute> { MeScreen(navigator) }
+                composable<VenueRoute> { VenueScreen(it.toRoute<VenueRoute>().id, navigator) }
+                composable<EventRoute> { EventScreen(it.toRoute<EventRoute>().id, navigator) }
+                composable<PersonRoute> { PersonScreen(it.toRoute<PersonRoute>().id, navigator) }
+                composable<ChatRoute> {
+                    val route = it.toRoute<ChatRoute>()
+                    val room = if (route.locale) ChatRoom.locale(route.id) else ChatRoom.venue(route.id)
+                    VenueChatScreen(room, route.name, navigator)
+                }
+                composable<PassRoute> { PassScreen(it.toRoute<PassRoute>().id, navigator) }
+                composable<PassesRoute> { PassesScreen(navigator) }
+                composable<PostRoute> { PostScreen(it.toRoute<PostRoute>().id, navigator) }
+                composable<PostsRoute> {
+                    val route = it.toRoute<PostsRoute>()
+                    PostsScreen(postsSubject(route.kind, route.id), route.title, navigator)
+                }
+                composable<HelpRoute> {
+                    val route = it.toRoute<HelpRoute>()
+                    GetHelpScreen(HelpVenue(route.venueId, route.venueName, route.address.ifBlank { null }), null, navigator)
+                }
+                composable<SafetyAlertRoute> { GetHelpScreen(null, it.toRoute<SafetyAlertRoute>().id, navigator) }
+                composable<SupportRoute> { SupportScreen(it.toRoute<SupportRoute>().note.ifBlank { null }, navigator) }
+                composable<SafetyAlertsRoute> { SafetyAlertsScreen(navigator) }
+                composable<GettingHelpRoute> { GettingHelpScreen(navigator) }
+                composable<CardsYouSeeRoute> { CardsYouSeeScreen(navigator) }
+                composable<TribesRoute> { TribePickerScreen(navigator) }
+                composable<UpdatesRoute> {
+                    val route = it.toRoute<UpdatesRoute>()
+                    UpdatesScreen(route.localeId, route.localeName, navigator)
+                }
             }
         }
     }
 }
+
+/** The window's width class, from the window's own size: a split screen or a free-form window counts, not the device. */
+@Composable
+fun rememberWindowWidth(): WindowWidth = WindowWidth.of(LocalConfiguration.current.screenWidthDp.toFloat())
 
 @Composable
 private fun RowScope.TabItem(tab: AppTab, selected: Boolean, onClick: () -> Unit) {
@@ -374,6 +399,23 @@ private fun RowScope.TabItem(tab: AppTab, selected: Boolean, onClick: () -> Unit
         icon = { Icon(tab.icon, contentDescription = null) },
         label = { Text(tab.title, style = HotMessType.bodySmall) },
         colors = NavigationBarItemDefaults.colors(
+            selectedIconColor = tokens.accentInk,
+            selectedTextColor = tokens.accentInk,
+            indicatorColor = tokens.accentSoft,
+            unselectedIconColor = tokens.inkMuted,
+            unselectedTextColor = tokens.inkMuted,
+        ),
+    )
+}
+
+@Composable
+private fun RailItem(tab: AppTab, selected: Boolean, onClick: () -> Unit) {
+    NavigationRailItem(
+        selected = selected,
+        onClick = onClick,
+        icon = { Icon(tab.icon, contentDescription = null) },
+        label = { Text(tab.title, style = HotMessType.bodySmall) },
+        colors = NavigationRailItemDefaults.colors(
             selectedIconColor = tokens.accentInk,
             selectedTextColor = tokens.accentInk,
             indicatorColor = tokens.accentSoft,

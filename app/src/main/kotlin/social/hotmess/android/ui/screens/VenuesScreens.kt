@@ -2,10 +2,14 @@ package social.hotmess.android.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -23,6 +27,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.Button
 import com.audiencekit.Coordinates
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -88,7 +93,9 @@ import social.hotmess.android.ui.theme.tokens
 import kotlinx.coroutines.CancellationException
 import social.hotmess.core.HelpVenue
 import social.hotmess.core.PostsSubject
+import social.hotmess.core.AdaptiveLayout
 import social.hotmess.core.AppRoute
+import social.hotmess.core.ChatRoom
 import social.hotmess.core.CoverOffer
 import social.hotmess.core.Event
 import social.hotmess.core.Formatting
@@ -285,170 +292,186 @@ fun VenueScreen(id: String, navigator: Navigator) {
     var heroTone by remember { mutableStateOf(PhotoTone.PLACEHOLDER) }
     var reporting by remember { mutableStateOf<ReportSubject?>(null) }
     reporting?.let { ReportDialog(it) { reporting = null } }
-    HeroScaffold(
-        title = venue?.name ?: "Venue",
-        tone = heroTone,
-        collapsed = venue == null || scrolled,
-        onBack = navigator::back,
-        actions = {
-            if (venue != null) {
-                IconButton(onClick = { shareLinks.share(venue.sharePath, venue.name) }) {
-                    Icon(Icons.Rounded.Share, contentDescription = "Share")
-                }
-                IconButton(onClick = { reporting = ReportSubject(ReportTarget.VENUE, venue.id) }) {
-                    Icon(Icons.Rounded.Flag, contentDescription = "Report venue")
-                }
-            }
-        },
-    ) { topInset ->
-        LoadStateView(state, onRetry = { loader.load(id) { graph.api.venueOverview(id) } }) { overview ->
-            val loaded = overview.venue
-            HeroFeed(
-                listState,
-                hero = {
-                    // Its photos in turn, over a firmer scrim than a still hero so the name reads the same on each.
-                    HeroHeader(loaded.heroPhotos, topInset, onTone = { heroTone = it }, minimum = VenueHeroContrast) {
-                        Text(
-                            loaded.name,
-                            style = HotMessType.title,
-                            maxLines = 3,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.semantics { heading() },
-                        )
-                        val details = listOfNotNull(loaded.address?.takeIf { it.isNotBlank() }, loaded.distance?.let { Formatting.distance(it) })
-                        if (details.isNotEmpty()) {
-                            Text(details.joinToString(" · "), style = HotMessType.subheading, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    // In a wide window the room docks beside the page while it's open to the user, as on iPad: one less screen to
+    // switch to, and the peek gives way to it.
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val docked = state.valueOrNull?.chatOpen == true && AdaptiveLayout.docksChat(maxWidth.value)
+        Row(Modifier.fillMaxSize()) {
+            Box(Modifier.weight(1f).fillMaxHeight()) {
+            HeroScaffold(
+                title = venue?.name ?: "Venue",
+                tone = heroTone,
+                collapsed = venue == null || scrolled,
+                onBack = navigator::back,
+                actions = {
+                    if (venue != null) {
+                        IconButton(onClick = { shareLinks.share(venue.sharePath, venue.name) }) {
+                            Icon(Icons.Rounded.Share, contentDescription = "Share")
+                        }
+                        IconButton(onClick = { reporting = ReportSubject(ReportTarget.VENUE, venue.id) }) {
+                            Icon(Icons.Rounded.Flag, contentDescription = "Report venue")
                         }
                     }
                 },
-            ) {
-                val offer = CoverOffer.of(loaded)
-                if (offer != null) {
-                    item {
-                        DetailSection("Cover") {
-                            CoverRow(
-                                offer,
-                                paying = checkoutState == CoverCheckout.State.Working,
-                                onPay = { checkout.pay(loaded.id, loaded.name) },
-                                onShowPass = { pass ->
-                                    graph.passes.put(pass)
-                                    navigator.openPass(pass.id)
-                                },
+            ) { topInset ->
+                LoadStateView(state, onRetry = { loader.load(id) { graph.api.venueOverview(id) } }) { overview ->
+                    val loaded = overview.venue
+                    HeroFeed(
+                        listState,
+                        hero = {
+                            // Its photos in turn, over a firmer scrim than a still hero so the name reads the same on each.
+                            HeroHeader(loaded.heroPhotos, topInset, onTone = { heroTone = it }, minimum = VenueHeroContrast) {
+                                Text(
+                                    loaded.name,
+                                    style = HotMessType.title,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.semantics { heading() },
+                                )
+                                val details = listOfNotNull(loaded.address?.takeIf { it.isNotBlank() }, loaded.distance?.let { Formatting.distance(it) })
+                                if (details.isNotEmpty()) {
+                                    Text(details.joinToString(" · "), style = HotMessType.subheading, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        },
+                    ) {
+                        val offer = CoverOffer.of(loaded)
+                        if (offer != null) {
+                            item {
+                                DetailSection("Cover") {
+                                    CoverRow(
+                                        offer,
+                                        paying = checkoutState == CoverCheckout.State.Working,
+                                        onPay = { checkout.pay(loaded.id, loaded.name) },
+                                        onShowPass = { pass ->
+                                            graph.passes.put(pass)
+                                            navigator.openPass(pass.id)
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                        // The next two events sit up top, above the fold; the rest wait at the bottom.
+                        if (overview.comingUp.isNotEmpty()) {
+                            cardSection("coming-up", "Coming up", overview.comingUp, key = { it.id }) { event ->
+                                EventCard(
+                                    event,
+                                    onClick = { navigator.open(AppRoute.EventDetail(event.id)) },
+                                    photoUrl = event.photoUrl(Event.PhotoPriority.PERSON_FIRST, venueFallback = venue),
+                                )
+                            }
+                        }
+                        if (overview.chatOpen && !docked) {
+                            item {
+                                ChatPeek(
+                                    rememberPeekMessages(loaded.recentMessages),
+                                    title = "Chat",
+                                    room = loaded.name,
+                                    onOpen = { navigator.openChat(loaded.id, loaded.name) },
+                                    presence = remember(loaded.recentMessages) { peekPresence(loaded.recentMessages) },
+                                )
+                            }
+                        }
+                        // Only while the app places the user here: staff can only help people who are there.
+                        if (canGetHelp) {
+                            item(key = "get-help") {
+                                GetHelpRow { navigator.openHelp(HelpVenue(loaded.id, loaded.name, loaded.address)) }
+                            }
+                        }
+                        if (overview.onNow.isNotEmpty()) {
+                            item(key = "on-now") {
+                                OnNowSection(overview.onNow) { navigator.open(AppRoute.PersonDetail(it.person.id)) }
+                            }
+                        }
+                        // Photos of the venue, and the camera once you're here: what you take goes on the stage's pages too.
+                        item(key = "photos") {
+                            PhotosSection(postsSubject, navigator, cameraVenueId = loaded.id.takeIf { overview.chatOpen })
+                        }
+                        item {
+                            PingStripSection(
+                                pings = overview.friendPings,
+                                pickOf = { it.pickForVenue(loaded.id) },
+                                userId = userId,
+                                actions = actions,
+                                onPingHere = { pingHere = true },
                             )
                         }
-                    }
-                }
-                // The next two events sit up top, above the fold; the rest wait at the bottom.
-                if (overview.comingUp.isNotEmpty()) {
-                    cardSection("coming-up", "Coming up", overview.comingUp, key = { it.id }) { event ->
-                        EventCard(
-                            event,
-                            onClick = { navigator.open(AppRoute.EventDetail(event.id)) },
-                            photoUrl = event.photoUrl(Event.PhotoPriority.PERSON_FIRST, venueFallback = venue),
-                        )
-                    }
-                }
-                if (overview.chatOpen) {
-                    item {
-                        ChatPeek(
-                            rememberPeekMessages(loaded.recentMessages),
-                            title = "Chat",
-                            room = loaded.name,
-                            onOpen = { navigator.openChat(loaded.id, loaded.name) },
-                            presence = remember(loaded.recentMessages) { peekPresence(loaded.recentMessages) },
-                        )
-                    }
-                }
-                // Only while the app places the user here: staff can only help people who are there.
-                if (canGetHelp) {
-                    item(key = "get-help") {
-                        GetHelpRow { navigator.openHelp(HelpVenue(loaded.id, loaded.name, loaded.address)) }
-                    }
-                }
-                if (overview.onNow.isNotEmpty()) {
-                    item(key = "on-now") {
-                        OnNowSection(overview.onNow) { navigator.open(AppRoute.PersonDetail(it.person.id)) }
-                    }
-                }
-                // Photos of the venue, and the camera once you're here: what you take goes on the stage's pages too.
-                item(key = "photos") {
-                    PhotosSection(postsSubject, navigator, cameraVenueId = loaded.id.takeIf { overview.chatOpen })
-                }
-                item {
-                    PingStripSection(
-                        pings = overview.friendPings,
-                        pickOf = { it.pickForVenue(loaded.id) },
-                        userId = userId,
-                        actions = actions,
-                        onPingHere = { pingHere = true },
-                    )
-                }
-                // Pair me up, where the venue has it: once you're here, or while you're in it tonight.
-                pairUp.pairUp?.takeIf { it.here || it.mine != null }?.let { offer ->
-                    item(key = "pair-up") {
-                        PairUpRow(offer, onOpen = { pairingUp = true }, onGoAgain = {
-                            pairUp.join(null)
-                            pairingUp = true
-                        })
-                    }
-                }
-                if (overview.friends.isNotEmpty()) {
-                    item { FriendsHere(overview.friends) }
-                }
-                postsSection("Posts", postsSubject, posts, postActions)
-                item {
-                    DetailSection("About") {
-                        loaded.description?.takeIf { it.isNotBlank() }?.let {
-                            TextRow(it)
-                            RowDivider()
+                        // Pair me up, where the venue has it: once you're here, or while you're in it tonight.
+                        pairUp.pairUp?.takeIf { it.here || it.mine != null }?.let { offer ->
+                            item(key = "pair-up") {
+                                PairUpRow(offer, onOpen = { pairingUp = true }, onGoAgain = {
+                                    pairUp.join(null)
+                                    pairingUp = true
+                                })
+                            }
                         }
-                        loaded.address?.takeIf { it.isNotBlank() }?.let { address ->
-                            val coordinate = loaded.coordinate
-                            InfoRow(
-                                address,
-                                icon = Icons.Rounded.Place,
-                                onClick = coordinate?.let { { context.openMap(it.latitude, it.longitude, loaded.name) } },
-                                trailing = coordinate?.let { Icons.AutoMirrored.Rounded.KeyboardArrowRight },
-                            )
-                            RowDivider()
+                        if (overview.friends.isNotEmpty()) {
+                            item { FriendsHere(overview.friends) }
                         }
-                        loaded.phone?.takeIf { it.isNotBlank() }?.let { phone ->
-                            InfoRow(phone, icon = Icons.Rounded.Phone, onClick = { context.dial(phone) })
-                            RowDivider()
+                        postsSection("Posts", postsSubject, posts, postActions)
+                        item {
+                            DetailSection("About") {
+                                loaded.description?.takeIf { it.isNotBlank() }?.let {
+                                    TextRow(it)
+                                    RowDivider()
+                                }
+                                loaded.address?.takeIf { it.isNotBlank() }?.let { address ->
+                                    val coordinate = loaded.coordinate
+                                    InfoRow(
+                                        address,
+                                        icon = Icons.Rounded.Place,
+                                        onClick = coordinate?.let { { context.openMap(it.latitude, it.longitude, loaded.name) } },
+                                        trailing = coordinate?.let { Icons.AutoMirrored.Rounded.KeyboardArrowRight },
+                                    )
+                                    RowDivider()
+                                }
+                                loaded.phone?.takeIf { it.isNotBlank() }?.let { phone ->
+                                    InfoRow(phone, icon = Icons.Rounded.Phone, onClick = { context.dial(phone) })
+                                    RowDivider()
+                                }
+                                loaded.distance?.let {
+                                    InfoRow("Distance", Formatting.distance(it), icon = Icons.Rounded.NearMe)
+                                    RowDivider()
+                                }
+                                // Its links in one order, each naming where it goes; Share when it has none.
+                                val links = SocialLink.aboutLinks(loaded.socialLinks, loaded.facebookUrl)
+                                if (links.isEmpty()) {
+                                    InfoRow("Share", icon = Icons.Rounded.Share, onClick = { shareLinks.share(loaded.sharePath, loaded.name) })
+                                }
+                                links.forEachIndexed { index, link ->
+                                    if (index > 0) RowDivider()
+                                    SocialLinkRow(link, onClick = { link.url?.let(context::openUrl) }, namesService = true)
+                                }
+                            }
                         }
-                        loaded.distance?.let {
-                            InfoRow("Distance", Formatting.distance(it), icon = Icons.Rounded.NearMe)
-                            RowDivider()
+                        loaded.coordinate?.takeIf { graph.configuration.isTestBuild }?.let { coordinate ->
+                            item {
+                                PretendHere(loaded.name, coordinate.latitude, coordinate.longitude) {
+                                    loader.load(id, refresh = true) { graph.api.venueOverview(id) }
+                                    pairUpScope.launch { pairUp.load() }
+                                }
+                            }
                         }
-                        // Its links in one order, each naming where it goes; Share when it has none.
-                        val links = SocialLink.aboutLinks(loaded.socialLinks, loaded.facebookUrl)
-                        if (links.isEmpty()) {
-                            InfoRow("Share", icon = Icons.Rounded.Share, onClick = { shareLinks.share(loaded.sharePath, loaded.name) })
-                        }
-                        links.forEachIndexed { index, link ->
-                            if (index > 0) RowDivider()
-                            SocialLinkRow(link, onClick = { link.url?.let(context::openUrl) }, namesService = true)
+                        if (overview.events.isEmpty()) {
+                            item { DetailSection("Events") { EmptyRow("There's nothing coming up here yet.") } }
+                        } else if (overview.laterEvents.isNotEmpty()) {
+                            cardSection("events", "More events", overview.laterEvents, key = { it.id }) { event ->
+                                EventCard(
+                                    event,
+                                    onClick = { navigator.open(AppRoute.EventDetail(event.id)) },
+                                    photoUrl = event.photoUrl(Event.PhotoPriority.PERSON_FIRST, venueFallback = venue),
+                                )
+                            }
                         }
                     }
                 }
-                loaded.coordinate?.takeIf { graph.configuration.isTestBuild }?.let { coordinate ->
-                    item {
-                        PretendHere(loaded.name, coordinate.latitude, coordinate.longitude) {
-                            loader.load(id, refresh = true) { graph.api.venueOverview(id) }
-                            pairUpScope.launch { pairUp.load() }
-                        }
-                    }
-                }
-                if (overview.events.isEmpty()) {
-                    item { DetailSection("Events") { EmptyRow("There's nothing coming up here yet.") } }
-                } else if (overview.laterEvents.isNotEmpty()) {
-                    cardSection("events", "More events", overview.laterEvents, key = { it.id }) { event ->
-                        EventCard(
-                            event,
-                            onClick = { navigator.open(AppRoute.EventDetail(event.id)) },
-                            photoUrl = event.photoUrl(Event.PhotoPriority.PERSON_FIRST, venueFallback = venue),
-                        )
-                    }
+            }
+            }
+            val loaded = state.valueOrNull?.venue
+            if (docked && loaded != null) {
+                VerticalDivider(color = tokens.border)
+                Box(Modifier.width(AdaptiveLayout.DOCKED_CHAT_DP.dp).fillMaxHeight()) {
+                    VenueChatScreen(ChatRoom.venue(loaded.id), loaded.name, navigator, docked = true)
                 }
             }
         }
