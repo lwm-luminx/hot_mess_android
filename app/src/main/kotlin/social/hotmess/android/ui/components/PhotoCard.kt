@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -410,6 +411,20 @@ fun <T> LazyListScope.cardSection(
     key: (T) -> Any,
     card: @Composable (T) -> Unit,
 ) {
+    // A wide feed lays the cards out in rows, the title over the first.
+    if (this is FeedScope) {
+        val rows = items.chunked(columns)
+        wideItems(rows.size, key = { "$section/${key(rows[it].first())}" }) { index ->
+            Column(verticalArrangement = Arrangement.spacedBy(Space.s2)) {
+                if (index == 0 && title != null) SectionTitle(title)
+                Row(horizontalArrangement = Arrangement.spacedBy(Space.s4)) {
+                    rows[index].forEach { item -> Box(Modifier.weight(1f)) { card(item) } }
+                    repeat(columns - rows[index].size) { Spacer(Modifier.weight(1f)) }
+                }
+            }
+        }
+        return
+    }
     itemsIndexed(items, key = { _, item -> "$section/${key(item)}" }) { index, item ->
         if (index == 0 && title != null) {
             Column(verticalArrangement = Arrangement.spacedBy(Space.s2)) {

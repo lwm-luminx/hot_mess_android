@@ -8,6 +8,9 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Chat
+import androidx.compose.material.icons.rounded.OpenInFull
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -399,7 +402,7 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
 }
 
 @Composable
-fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
+fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator, docked: Boolean = false) {
     val graph = LocalAppGraph.current
     // A room opened from a link or a push comes without its name: the venue's, or the locale's when it's the app's.
     val venueName by produceState(name.ifBlank { roomNameFallback(room, graph) }, room, name) {
@@ -497,7 +500,18 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator) {
         }
     }
 
-    ScreenScaffold(title = venueName, onBack = navigator::back) {
+    // Docked beside the venue's page (a wide window), it has no Back of its own, and can open full screen.
+    ScreenScaffold(
+        title = venueName,
+        onBack = if (docked) null else navigator::back,
+        actions = {
+            if (docked) {
+                IconButton(onClick = { navigator.openChat(room.id, venueName) }) {
+                    Icon(Icons.Rounded.OpenInFull, contentDescription = "Open chat full screen")
+                }
+            }
+        },
+    ) {
         Column(Modifier.fillMaxSize().imePadding().navigationBarsPadding()) {
             if (status == VenueChatModel.Status.AWAY) {
                 Box(Modifier.weight(1f).fillMaxWidth()) {

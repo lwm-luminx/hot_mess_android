@@ -4,7 +4,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -21,6 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -64,6 +67,7 @@ import social.hotmess.android.ui.theme.Opacity
 import social.hotmess.android.ui.theme.Radius
 import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
+import social.hotmess.core.AdaptiveLayout
 import social.hotmess.core.Event
 import social.hotmess.core.Formatting
 import social.hotmess.core.LoadState
@@ -77,7 +81,9 @@ import kotlin.math.absoluteValue
 
 /**
  * A feed on the wash: one column up to 680dp with `space-4` gutters, sections `space-4` apart.
- * [top] is the space above the first item.
+ * [top] is the space above the first item. In a wide window (a tablet, a foldable, a phone in
+ * landscape) the feed grows to [AdaptiveLayout.WIDE_FEED_MAX_DP] so a [cardSection] can lay its
+ * cards side by side, while every other item keeps the readable 680dp column.
  */
 @Composable
 fun Feed(
@@ -86,14 +92,55 @@ fun Feed(
     top: Dp = Space.s4,
     content: LazyListScope.() -> Unit,
 ) {
-    Box(modifier.fillMaxSize().background(tokens.surface), contentAlignment = Alignment.TopCenter) {
+    BoxWithConstraints(modifier.fillMaxSize().background(tokens.surface), contentAlignment = Alignment.TopCenter) {
+        val width = minOf(maxWidth, AdaptiveLayout.WIDE_FEED_MAX_DP.dp) - Space.s4 * 2
+        val columns = AdaptiveLayout.feedColumns(width.value)
         LazyColumn(
-            modifier = Modifier.widthIn(max = ContentMaxWidth).fillMaxSize(),
+            modifier = Modifier.widthIn(max = if (columns > 1) AdaptiveLayout.WIDE_FEED_MAX_DP.dp else ContentMaxWidth).fillMaxSize(),
             state = state,
             contentPadding = PaddingValues(start = Space.s4, end = Space.s4, top = top, bottom = Space.s4),
             verticalArrangement = Arrangement.spacedBy(Space.s4),
-            content = content,
-        )
+        ) {
+            if (columns > 1) FeedScope(this, columns).content() else content()
+        }
+    }
+}
+
+/**
+ * A wide [Feed]'s items: each stays in the readable centered column, but for a [cardSection]'s
+ * rows ([wideItems]), which take the whole width for [columns] cards.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+class FeedScope(private val scope: LazyListScope, val columns: Int) : LazyListScope by scope {
+    override fun item(key: Any?, contentType: Any?, content: @Composable LazyItemScope.() -> Unit) {
+        scope.item(key, contentType) {
+            val item = this
+            Readable { item.content() }
+        }
+    }
+
+    override fun items(
+        count: Int,
+        key: ((index: Int) -> Any)?,
+        contentType: (index: Int) -> Any?,
+        itemContent: @Composable LazyItemScope.(index: Int) -> Unit,
+    ) {
+        scope.items(count, key, contentType) { index ->
+            val item = this
+            Readable { item.itemContent(index) }
+        }
+    }
+
+    /** Items across the feed's whole width. */
+    fun wideItems(count: Int, key: (index: Int) -> Any, itemContent: @Composable LazyItemScope.(index: Int) -> Unit) {
+        scope.items(count, key, itemContent = itemContent)
+    }
+
+    @Composable
+    private fun Readable(content: @Composable () -> Unit) {
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+            Box(Modifier.widthIn(max = ContentMaxWidth)) { content() }
+        }
     }
 }
 
@@ -106,7 +153,9 @@ fun HeroFeed(
     content: LazyListScope.() -> Unit,
 ) {
     Feed(modifier, state = state, top = 0.dp) {
-        item(key = "hero") { Box(Modifier.fullBleed(Space.s4)) { hero() } }
+        val heroItem: @Composable LazyItemScope.(Int) -> Unit = { Box(Modifier.fullBleed(Space.s4)) { hero() } }
+        // A wide feed's hero runs its whole width, like the cards below it.
+        if (this is FeedScope) wideItems(1, key = { "hero" }, itemContent = heroItem) else items(1, key = { "hero" }, itemContent = heroItem)
         content()
     }
 }
