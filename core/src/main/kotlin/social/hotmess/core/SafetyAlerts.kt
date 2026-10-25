@@ -115,8 +115,6 @@ data class SupportResources(
     /** When someone last checked every line ("2026-10-23"); null until they have, and no date shows. */
     val checkedAt: String? = null,
     val lines: List<SupportLine> = emptyList(),
-    /** "Get a ride": the ride apps to offer here, as plain links. */
-    val rides: List<SupportRide> = emptyList(),
 ) {
     val checkedDate: LocalDate? get() = checkedAt?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
 }
@@ -254,8 +252,14 @@ internal object SafetyAlertDocuments {
           supportResources(region: ${'$'}region) {
             region name emergency checkedAt
             lines { id name description phone textNumber textBody url }
-            rides { id name url pickupUrl }
           }
+        }
+    """.trimIndent()
+
+    /** Its own request, so an API older than ride links still shows the lines. */
+    val RIDES: String = """
+        query SupportRides(${'$'}region: String) {
+          supportResources(region: ${'$'}region) { rides { id name url pickupUrl } }
         }
     """.trimIndent()
 }
@@ -283,3 +287,9 @@ internal data class MySafetyAlertsResponse(val me: Me? = null) {
 
 @Serializable
 internal data class SupportResourcesResponse(val supportResources: SupportResources)
+
+@Serializable
+internal data class SupportRidesResponse(val supportResources: Resources) {
+    @Serializable
+    data class Resources(val rides: List<SupportRide> = emptyList())
+}

@@ -701,6 +701,11 @@ class HotMessApi(val client: AudienceKitClient) {
         query(SafetyAlertDocuments.SUPPORT, SupportResourcesResponse.serializer(), graphQLVariables("region" to region))
             .supportResources
 
+    /** "Get a ride": the ride apps for a region, as plain links. */
+    suspend fun supportRides(region: String?): List<SupportRide> =
+        query(SafetyAlertDocuments.RIDES, SupportRidesResponse.serializer(), graphQLVariables("region" to region))
+            .supportResources.rides
+
     /** Each safety alert mutation answers with `{ safetyAlert }` under its own name. */
     private suspend fun safetyAlertMutation(document: String, variables: Map<String, JsonElement>): SafetyAlert =
         mutate(document, SAFETY_ALERT_PAYLOADS, variables).values.firstOrNull()?.safetyAlert

@@ -142,7 +142,7 @@ class SafetyAlertController(private val api: HotMessApi, private val scope: Coro
     suspend fun loadRides(context: Context, latitude: Double?, longitude: Double?) {
         pickup = venue?.ridePickup ?: if (latitude != null && longitude != null) RidePickup(latitude, longitude) else null
         val region = supportRegion(context, pickup?.latitude, pickup?.longitude)
-        rides = quietly { api.supportResources(region) }?.rides.orEmpty()
+        rides = quietly { api.supportRides(region) }.orEmpty()
     }
 
     suspend fun load() {
@@ -638,6 +638,7 @@ fun SupportScreen(sharedNote: String?, navigator: Navigator) {
     val context = LocalContext.current
     var resources by remember { mutableStateOf<SupportResources?>(null) }
     var failed by remember { mutableStateOf(false) }
+    var rides by remember { mutableStateOf<List<SupportRide>>(emptyList()) }
     val position = graph.location.coordinates.value
     val pickup = position?.let { RidePickup(it.latitude, it.longitude) }
     val pickupMessage = position
@@ -648,6 +649,13 @@ fun SupportScreen(sharedNote: String?, navigator: Navigator) {
         val region = supportRegion(context, position?.latitude, position?.longitude)
         try {
             resources = graph.api.supportResources(region)
+            rides = try {
+                graph.api.supportRides(region)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                emptyList()
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -680,8 +688,8 @@ fun SupportScreen(sharedNote: String?, navigator: Navigator) {
                             }
                         }
                     }
-                    if (loaded.rides.isNotEmpty()) {
-                        item { DetailSection("Get home safe") { RideRows(loaded.rides, pickup, pickupMessage) } }
+                    if (rides.isNotEmpty()) {
+                        item { DetailSection("Get home safe") { RideRows(rides, pickup, pickupMessage) } }
                     }
                     item { EmergencySection(loaded.emergency) }
                 }
