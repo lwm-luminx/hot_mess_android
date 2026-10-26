@@ -45,6 +45,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -113,6 +114,8 @@ class PairUpController(
     var busy by mutableStateOf(false)
         private set
     var error by mutableStateOf<String?>(null)
+    /** Set when the API refused because the terms aren't agreed yet; the sheet asks for them and clears it. */
+    var needsTerms by mutableStateOf(false)
     /** What the last scan said, when it wasn't a meeting. */
     var scanNotice by mutableStateOf<String?>(null)
     /** Set when a meeting is confirmed, for the "You met!" moment. */
@@ -210,7 +213,7 @@ class PairUpController(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                error = message(e)
+                if ((e as? ApiError.Rejected)?.reason == TERMS_NOT_ACCEPTED) needsTerms = true else error = message(e)
                 load()
             } finally {
                 busy = false
@@ -221,6 +224,9 @@ class PairUpController(
     private companion object {
         /** Well inside the API's 15-minute presence window. */
         const val REPORT_EVERY_MS = 5 * 60_000L
+
+        /** The reason on the API's FORBIDDEN refusal for someone who hasn't agreed to the terms (TermsGate). */
+        const val TERMS_NOT_ACCEPTED = "terms_not_accepted"
     }
 
     private fun message(e: Exception): String =
@@ -275,10 +281,22 @@ fun PairUpRow(pairUp: VenuePairUp, onOpen: () -> Unit, onGoAgain: (() -> Unit)? 
 @Composable
 fun PairUpSheet(controller: PairUpController, venueName: String, onDismiss: () -> Unit) {
     // Your hint and the topic are seen by someone else, so the terms come first, once (the API refuses otherwise).
+    // Asked when the API says they haven't agreed, read now if it wasn't yet, or when a join was refused for it.
     val graph = LocalAppGraph.current
-    var agreed by remember { mutableStateOf(!graph.safety.needsTerms) }
-    if (!agreed) {
-        TermsDialog(onAgreed = { agreed = true }, onDismiss = onDismiss)
+    val safety by graph.safety.state.collectAsState()
+    LaunchedEffect(Unit) { if (graph.safety.state.value == null) graph.safety.refresh() }
+    var agreed by remember { mutableStateOf(false) }
+    if (controller.needsTerms || (!agreed && safety?.termsAccepted == false)) {
+        TermsDialog(
+            onAgreed = {
+                agreed = true
+                controller.needsTerms = false
+            },
+            onDismiss = {
+                controller.needsTerms = false
+                onDismiss()
+            },
+        )
         return
     }
 
