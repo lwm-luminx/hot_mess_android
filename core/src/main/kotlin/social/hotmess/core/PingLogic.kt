@@ -194,3 +194,46 @@ object PingText {
     /** `smsto:` addressed to every one of [numbers], separated by `;` as Android's Messages apps read it. */
     fun smsUri(numbers: List<String>): String = "smsto:" + numbers.filter { it.isNotEmpty() }.joinToString(";")
 }
+
+/**
+ * When to ask "Did your plans change?": your Ping names other places and you've stayed at a venue it doesn't name
+ * long enough not to be walking past. Asking is all it does; the Ping moves only when you say so.
+ */
+data class PlanChangeCheck(
+    /** The venue Now places you at, and since when. */
+    val venueId: String? = null,
+    val since: Instant? = null,
+    /** "<ping>:<venue>" pairs you already answered, so Now doesn't ask again. */
+    val answered: Set<String> = emptySet(),
+) {
+    /** Where Now places you: the same venue keeps its arrival time, a new one starts the clock again, none clears it. */
+    fun observe(venueId: String?, at: Instant): PlanChangeCheck = when {
+        venueId == null -> copy(venueId = null, since = null)
+        RecordId.same(this.venueId, venueId) -> this
+        else -> copy(venueId = venueId, since = at)
+    }
+
+    /**
+     * The venue to ask about for [ping], or null: no running Ping of yours, an "anywhere" Ping (any venue fits it), a
+     * pick here already, not here [DWELL] yet, or already answered.
+     */
+    fun venueToAsk(ping: Ping?, at: Instant): String? {
+        val venueId = venueId ?: return null
+        val since = since ?: return null
+        if (ping == null || !ping.isMine || ping.isAnywhere) return null
+        if (ping.expiresAt?.isAfter(at) == false) return null
+        if (since.plus(DWELL).isAfter(at)) return null
+        if (ping.pickForVenue(venueId) != null || key(ping.id, venueId) in answered) return null
+        return venueId
+    }
+
+    /** Remembers that you answered for [ping] at [venueId], either way. */
+    fun answer(ping: Ping, venueId: String): PlanChangeCheck = copy(answered = answered + key(ping.id, venueId))
+
+    private fun key(pingId: String, venueId: String) = "$pingId:${RecordId.normalize(venueId) ?: venueId}"
+
+    companion object {
+        /** How long you stay at a venue before Now asks, so walking past one (or GPS drift next door) doesn't. */
+        val DWELL: java.time.Duration = java.time.Duration.ofMinutes(5)
+    }
+}
