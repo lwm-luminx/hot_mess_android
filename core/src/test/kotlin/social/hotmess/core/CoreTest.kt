@@ -197,7 +197,7 @@ class ListingTest {
 
         assertEquals(listOf("Seattle", "Austin", "Portland", "Elsewhere"), groups.map { it.city })
         assertEquals(listOf("3", "5"), groups.first().venues.map { it.id })
-        assertEquals(listOf("Austin", "Portland", "Elsewhere"), venues.byCity(null).map { it.city })
+        assertEquals(listOf("Austin", "Portland", "Seattle", "Elsewhere"), venues.byCity(null).map { it.city })
     }
 }
 
