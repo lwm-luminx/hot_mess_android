@@ -181,6 +181,24 @@ class ListingTest {
         assertEquals(listOf("2", "3"), venues.sortedForList(here).filter { it.isIn(here) }.map { it.id }.sorted())
         assertFalse(venues.first().isIn(null))
     }
+
+    @Test
+    fun everywhereGroupsVenuesByCityWithTheLocalCityFirst() {
+        val here = "11111111-1111-1111-1111-111111111111"
+        val venues = listOf(
+            Venue(id = "1", name = "Crush", locale = LocaleSummary("2", name = "Portland")),
+            Venue(id = "2", name = "Nowhere"),
+            Venue(id = "3", name = "R Place", locale = LocaleSummary(here, name = "Seattle")),
+            Venue(id = "4", name = "Club", locale = LocaleSummary("3", name = "Austin")),
+            Venue(id = "5", name = "Neighbours", locale = LocaleSummary(here, name = "Seattle")),
+        )
+
+        val groups = venues.byCity(here)
+
+        assertEquals(listOf("Seattle", "Austin", "Portland", "Elsewhere"), groups.map { it.city })
+        assertEquals(listOf("3", "5"), groups.first().venues.map { it.id })
+        assertEquals(listOf("Austin", "Portland", "Elsewhere"), venues.byCity(null).map { it.city })
+    }
 }
 
 class DeepLinkTest {
