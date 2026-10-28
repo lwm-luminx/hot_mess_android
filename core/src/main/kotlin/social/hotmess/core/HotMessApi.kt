@@ -829,6 +829,18 @@ fun List<Venue>.sortedForList(localeId: String?): List<Venue> =
     filterNot { it.hidden }
         .sortedWith(compareBy<Venue> { if (it.isIn(localeId)) 0 else 1 }.thenBy { it.order }.thenBy { it.name.lowercase() })
 
+/** One city's venues in the Everywhere list. */
+data class VenueCityGroup(val city: String, val venues: List<Venue>)
+
+/** The venues by city, keeping their order within each: [localeId]'s city first, then by name, unnamed last. */
+fun List<Venue>.byCity(localeId: String?, elsewhere: String = "Elsewhere"): List<VenueCityGroup> {
+    val groups = groupBy { it.locale?.displayName?.takeIf(String::isNotBlank) ?: elsewhere }
+    val localCity = firstOrNull { it.isIn(localeId) }?.locale?.displayName
+    return groups.entries
+        .sortedWith(compareBy<Map.Entry<String, List<Venue>>> { if (it.key == localCity) 0 else if (it.key == elsewhere) 2 else 1 }.thenBy { it.key.lowercase() })
+        .map { VenueCityGroup(it.key, it.value) }
+}
+
 /** Whether the venue is in the locale [localeId]; false when there's no locale. */
 fun Venue.isIn(localeId: String?): Boolean {
     val local = localeId?.let(RecordId::normalize) ?: return false

@@ -25,6 +25,9 @@ import androidx.compose.material.icons.rounded.Place
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
@@ -109,6 +112,7 @@ import social.hotmess.core.ReportTarget
 import social.hotmess.core.SocialLink
 import social.hotmess.core.Venue
 import social.hotmess.core.VenueOverview
+import social.hotmess.core.byCity
 import social.hotmess.core.isIn
 import com.audiencekit.CardKind
 import com.audiencekit.CardLayout
@@ -119,7 +123,10 @@ private val VENUES_FALLBACK_CARDS = listOf(CardKind.VENUES_ALL)
 private val VENUES_CARD_KINDS =
     listOf(CardKind.VENUES_TONIGHT, CardKind.VENUES_NEARBY, CardKind.VENUES_ALL, CardKind.WEB, CardKind.PROMO_SLOT)
 
-/** Every venue on a map, then as a list: the ones in your city, then everywhere else. */
+/**
+ * The venues on a map, then as a list. Once the device's city is known it opens on that city's venues; a segmented
+ * control switches to Everywhere, every venue grouped by city with this one first.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VenuesScreen(navigator: Navigator) {
@@ -132,6 +139,8 @@ fun VenuesScreen(navigator: Navigator) {
     val refreshing by loader.isRefreshing.collectAsStateWithLifecycle()
     val localeId = locale?.id
     var mapExpanded by rememberSaveable { mutableStateOf(false) }
+    // Opens on the device's city each time; Everywhere is every venue, by city.
+    var everywhere by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(localeId) { loader.load(localeId) { graph.api.venues(localeId) } }
     val cardLayout = rememberScreenCards(LayoutScreen.VENUES, VENUES_CARD_KINDS, VENUES_FALLBACK_CARDS)
@@ -139,12 +148,21 @@ fun VenuesScreen(navigator: Navigator) {
     ScreenScaffold(title = branding?.audience?.name?.let { "$it venues" } ?: "Venues") {
         LoadStateView(state, onRetry = { loader.load(localeId) { graph.api.venues(localeId) } }) { venues ->
             PullToRefreshBox(refreshing, onRefresh = { loader.load(localeId, refresh = true) { graph.api.venues(localeId) } }) {
+                val name = locale?.name
+                val here = venues.filter { it.isIn(localeId) }
+                // Until the city is known there's only the one list: every venue.
+                val shown = if (name == null || everywhere) venues else here
                 Feed {
-                    if (venues.any { it.coordinate != null }) {
+                    if (name != null) {
+                        item(key = "scope") {
+                            VenueScopePicker(city = name, everywhere = everywhere, onChange = { everywhere = it })
+                        }
+                    }
+                    if (shown.any { it.coordinate != null }) {
                         item(key = "map") {
                             Box(Modifier.fillMaxWidth().height(Sizes.mapInline).clip(Radius.photo)) {
                                 VenueMap(
-                                    venues = venues,
+                                    venues = shown,
                                     location = coordinates,
                                     onVenue = { navigator.open(AppRoute.VenueDetail(it)) },
                                     onMapTap = { mapExpanded = true },
@@ -159,36 +177,40 @@ fun VenuesScreen(navigator: Navigator) {
                             }
                         }
                     }
-                    val (here, elsewhere) = venues.partition { it.isIn(localeId) }
-                    val name = locale?.name
                     val open = { venue: Venue -> navigator.open(AppRoute.VenueDetail(venue.id)) }
                     if (venues.isEmpty()) {
                         item { DetailSection("All venues") { EmptyRow("There are no venues here yet.") } }
-                    }
-                    // The city's cards in the server's order when it sent the city's list, else the built-in one.
-                    val cards = cardLayout.takeIf { it.card(CardKind.VENUES_ALL) != null } ?: CardLayout.fallback(VENUES_FALLBACK_CARDS)
-                    cards.cards.forEach { card ->
-                        when (card.kind) {
-                            CardKind.VENUES_ALL -> if (name != null) {
-                                val title = card.title.takeUnless { card.isFallback } ?: name
-                                cardSection("here", title, here.rankedBy(card) { it.id }, key = { it.id }) { venue -> VenueCard(venue, onClick = { open(venue) }) }
+                    } else if (name == null || everywhere) {
+                        venues.byCity(localeId).forEach { group ->
+                            cardSection("city-${group.city}", group.city, group.venues, key = { it.id }) { venue ->
+                                VenueCard(venue, onClick = { open(venue) })
                             }
-                            // Only the server sends these, with their own headings.
-                            CardKind.VENUES_TONIGHT, CardKind.VENUES_NEARBY ->
-                                cardSection(card.id, card.title, venues.pickedBy(card) { it.id }, key = { it.id }) { venue -> VenueCard(venue, onClick = { open(venue) }) }
-                            CardKind.WEB -> card.web?.let { content -> item(key = card.id) { WebCardView(content) } }
-                            CardKind.PROMO_SLOT -> item(key = card.id) { PromoSlotView(card, cards.id, navigator) }
                         }
-                    }
-                    val elsewhereTitle = if (here.isEmpty() || name == null) "All venues" else "Elsewhere"
-                    cardSection("elsewhere", elsewhereTitle, if (name == null) here + elsewhere else elsewhere, key = { it.id }) { venue ->
-                        VenueCard(venue, onClick = { open(venue) })
+                    } else {
+                        if (here.isEmpty()) {
+                            item(key = "empty") { DetailSection(name) { EmptyRow("No venues in $name yet.") } }
+                        }
+                        // The city's cards in the server's order when it sent the city's list, else the built-in one.
+                        val cards = cardLayout.takeIf { it.card(CardKind.VENUES_ALL) != null } ?: CardLayout.fallback(VENUES_FALLBACK_CARDS)
+                        cards.cards.forEach { card ->
+                            when (card.kind) {
+                                CardKind.VENUES_ALL -> {
+                                    val title = card.title.takeUnless { card.isFallback } ?: name
+                                    cardSection("here", title, here.rankedBy(card) { it.id }, key = { it.id }) { venue -> VenueCard(venue, onClick = { open(venue) }) }
+                                }
+                                // Only the server sends these, with their own headings.
+                                CardKind.VENUES_TONIGHT, CardKind.VENUES_NEARBY ->
+                                    cardSection(card.id, card.title, venues.pickedBy(card) { it.id }, key = { it.id }) { venue -> VenueCard(venue, onClick = { open(venue) }) }
+                                CardKind.WEB -> card.web?.let { content -> item(key = card.id) { WebCardView(content) } }
+                                CardKind.PROMO_SLOT -> item(key = card.id) { PromoSlotView(card, cards.id, navigator) }
+                            }
+                        }
                     }
                 }
             }
             if (mapExpanded) {
                 FullScreenVenueMap(
-                    venues = venues,
+                    venues = if (locale?.name == null || everywhere) venues else venues.filter { it.isIn(localeId) },
                     location = coordinates,
                     onVenue = {
                         mapExpanded = false
@@ -197,6 +219,22 @@ fun VenuesScreen(navigator: Navigator) {
                     onClose = { mapExpanded = false },
                 )
             }
+        }
+    }
+}
+
+/** Switches the venues list between [city] and Everywhere. */
+@Composable
+private fun VenueScopePicker(city: String, everywhere: Boolean, onChange: (Boolean) -> Unit) {
+    val options = listOf(city to false, "Everywhere" to true)
+    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+        options.forEachIndexed { index, (label, value) ->
+            SegmentedButton(
+                selected = everywhere == value,
+                onClick = { onChange(value) },
+                shape = SegmentedButtonDefaults.itemShape(index, options.size),
+                label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            )
         }
     }
 }
