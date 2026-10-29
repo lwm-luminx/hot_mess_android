@@ -4,6 +4,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.rounded.EditCalendar
 import androidx.compose.material.icons.rounded.LocationOff
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.AlertDialog
@@ -36,6 +37,7 @@ import social.hotmess.android.ui.LocalAppGraph
 import social.hotmess.android.ui.Navigator
 import social.hotmess.android.ui.ScreenScaffold
 import social.hotmess.android.ui.ShareLinkFailure
+import social.hotmess.android.ui.addToCalendar
 import social.hotmess.android.ui.components.CoverRow
 import social.hotmess.android.ui.components.DetailSection
 import social.hotmess.android.ui.components.EmptyRow
@@ -61,6 +63,7 @@ import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.core.PostsSubject
 import social.hotmess.core.ApiError
 import social.hotmess.core.AppRoute
+import social.hotmess.core.CalendarEntry
 import social.hotmess.core.CoverOffer
 import social.hotmess.core.Event
 import social.hotmess.core.EventListing
@@ -151,6 +154,7 @@ fun EventScreen(id: String, navigator: Navigator) {
     val loader = rememberLoader<Event>("event-$id")
     val state by loader.state.collectAsStateWithLifecycle()
     var rsvpError by remember { mutableStateOf<String?>(null) }
+    var calendarMissing by remember { mutableStateOf(false) }
     val shareLinks = rememberShareLinks()
 
     LaunchedEffect(id) { loader.load(id) { graph.api.event(id) } }
@@ -198,6 +202,9 @@ fun EventScreen(id: String, navigator: Navigator) {
         onBack = navigator::back,
         actions = {
             if (event != null) {
+                IconButton(onClick = { if (!context.addToCalendar(CalendarEntry.from(event))) calendarMissing = true }) {
+                    Icon(Icons.Rounded.EditCalendar, contentDescription = "Add to calendar")
+                }
                 IconButton(onClick = { shareLinks.share(event.sharePath, event.name) }) {
                     Icon(Icons.Rounded.Share, contentDescription = "Share")
                 }
@@ -292,6 +299,14 @@ fun EventScreen(id: String, navigator: Navigator) {
         )
     }
 
+    if (calendarMissing) {
+        AlertDialog(
+            onDismissRequest = { calendarMissing = false },
+            confirmButton = { TextButton(onClick = { calendarMissing = false }) { Text("OK") } },
+            title = { Text("No calendar app") },
+            text = { Text("Install a calendar app, such as Google Calendar, to add events to it.") },
+        )
+    }
     rsvpError?.let { message ->
         AlertDialog(
             onDismissRequest = { rsvpError = null },

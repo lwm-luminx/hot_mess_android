@@ -118,6 +118,18 @@ object Documents {
         }
     """.trimIndent()
 
+    val CALENDAR_FEED: String = """
+        query CalendarFeed {
+          me { calendarFeed { url webcalUrl googleUrl } }
+        }
+    """.trimIndent()
+
+    val CREATE_CALENDAR_FEED: String = """
+        mutation CreateCalendarFeed(${'$'}reset: Boolean) {
+          createCalendarFeed(input: { reset: ${'$'}reset }) { calendarFeed { url webcalUrl googleUrl } }
+        }
+    """.trimIndent()
+
     val SET_RECENT_CHAT_PUSH: String = """
         mutation SetRecentChatPush(${'$'}enabled: Boolean!) {
           setRecentChatPush(input: { enabled: ${'$'}enabled }) { recentChatPush }

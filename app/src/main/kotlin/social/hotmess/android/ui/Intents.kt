@@ -4,6 +4,7 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.CalendarContract
 import android.provider.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
@@ -20,6 +21,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import social.hotmess.core.ApiError
+import social.hotmess.core.CalendarEntry
 import social.hotmess.core.HotMessApi
 
 /** Opens a link in whatever app handles it (a browser, Facebook, Instagram, the dialer). */
@@ -27,6 +29,26 @@ fun Context.openUrl(url: String) {
     try {
         startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     } catch (_: ActivityNotFoundException) {
+    }
+}
+
+/**
+ * Opens the user's calendar app on a new event filled in from [entry] (`CalendarContract`'s insert intent), so they
+ * pick the calendar and save it themselves: no calendar permission. Returns false when no calendar app takes it.
+ */
+fun Context.addToCalendar(entry: CalendarEntry): Boolean {
+    val intent = Intent(Intent.ACTION_INSERT, CalendarContract.Events.CONTENT_URI)
+        .putExtra(CalendarContract.Events.TITLE, entry.title)
+        .putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, entry.start.toEpochMilli())
+        .putExtra(CalendarContract.EXTRA_EVENT_END_TIME, entry.end.toEpochMilli())
+        .putExtra(CalendarContract.Events.EVENT_LOCATION, entry.location)
+        .putExtra(CalendarContract.Events.DESCRIPTION, entry.url)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    return try {
+        startActivity(intent)
+        true
+    } catch (_: ActivityNotFoundException) {
+        false
     }
 }
 
