@@ -572,6 +572,14 @@ class HotMessApi(val client: AudienceKitClient) {
     /** Whether pushes about chat rooms the user left lately are on, or null when there's no signed-in user. */
     suspend fun recentChatPush(): Boolean? = query(Documents.RECENT_CHAT_PUSH, RecentChatPushResponse.serializer()).me?.recentChatPush
 
+    /** The user's calendar subscription link (`me.calendarFeed`), or null before they made one. */
+    suspend fun calendarFeed(): CalendarFeed? = query(Documents.CALENDAR_FEED, CalendarFeedResponse.serializer()).me?.calendarFeed
+
+    /** Makes the user's calendar subscription link on first ask; [reset] replaces it, ending the old link. */
+    suspend fun createCalendarFeed(reset: Boolean = false): CalendarFeed =
+        mutate(Documents.CREATE_CALENDAR_FEED, CreateCalendarFeedResponse.serializer(), graphQLVariables("reset" to reset))
+            .createCalendarFeed.calendarFeed
+
     /** Turns pushes about chat rooms the user left lately on or off; returns the setting as it now is. */
     suspend fun setRecentChatPush(enabled: Boolean): Boolean =
         mutate(Documents.SET_RECENT_CHAT_PUSH, SetRecentChatPushResponse.serializer(), graphQLVariables("enabled" to enabled))
@@ -955,6 +963,16 @@ private data class MeResponse(val me: UserState? = null) {
 @Serializable
 private data class RecentChatPushResponse(val me: Me? = null) {
     @Serializable data class Me(val recentChatPush: Boolean = false)
+}
+
+@Serializable
+private data class CalendarFeedResponse(val me: Me? = null) {
+    @Serializable data class Me(val calendarFeed: CalendarFeed? = null)
+}
+
+@Serializable
+private data class CreateCalendarFeedResponse(val createCalendarFeed: Payload) {
+    @Serializable data class Payload(val calendarFeed: CalendarFeed)
 }
 
 @Serializable

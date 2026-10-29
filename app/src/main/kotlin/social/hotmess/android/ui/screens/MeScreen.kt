@@ -18,6 +18,7 @@ import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.ConfirmationNumber
 import androidx.compose.material.icons.rounded.BugReport
+import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Email
 import androidx.compose.material.icons.rounded.Face
@@ -75,6 +76,8 @@ import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.Radius
 import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
+import social.hotmess.core.ApiError
+import social.hotmess.core.CalendarFeed
 import social.hotmess.core.ManagedListings
 import social.hotmess.core.LegalLinks
 import social.hotmess.core.initialsForDisplay
@@ -114,6 +117,19 @@ fun MeScreen(navigator: Navigator) {
     var googleProblem by remember { mutableStateOf<String?>(null) }
     // The API a tester asked to switch to, waiting on the confirmation (Next builds only).
     var switchingTo by remember { mutableStateOf<AppConfiguration.ApiServer?>(null) }
+
+    // Makes the user's calendar subscription link on first ask (createCalendarFeed), then opens [link] of it.
+    fun openCalendarFeed(link: (CalendarFeed) -> String) {
+        scope.launch {
+            try {
+                context.openUrl(link(graph.api.createCalendarFeed()))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failure = ApiError.of(e).message ?: "Couldn't set up calendar sync. Try again in a moment."
+            }
+        }
+    }
 
     LaunchedEffect(Unit) { graph.session.refreshUser() }
     LaunchedEffect(Unit) { graph.safety.refresh() }
@@ -350,6 +366,25 @@ fun MeScreen(navigator: Navigator) {
                             icon = Icons.Rounded.Notifications,
                             onCheckedChange = ::setRecentChatPush,
                         )
+                    }
+                }
+            }
+            if (user != null) {
+                item {
+                    DetailSection(
+                        "Calendar",
+                        footer = {
+                            Text(
+                                "Events you're going to, and ones you might go to, stay up to date in your calendar. " +
+                                    "The link is private: anyone with it sees those events.",
+                                style = HotMessType.bodySmall,
+                                color = tokens.inkMuted,
+                            )
+                        },
+                    ) {
+                        InfoRow("Add to Google Calendar", icon = Icons.Rounded.CalendarMonth, onClick = { openCalendarFeed { it.googleUrl } }, trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight)
+                        RowDivider()
+                        InfoRow("Subscribe in another calendar app", icon = Icons.Rounded.CalendarMonth, onClick = { openCalendarFeed { it.webcalUrl } }, trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight)
                     }
                 }
             }
