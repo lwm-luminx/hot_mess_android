@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.LocationOff
@@ -22,6 +23,7 @@ import androidx.compose.material.icons.rounded.NearMe
 import androidx.compose.material.icons.rounded.OpenInFull
 import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.Place
+import androidx.compose.material.icons.rounded.Restaurant
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -389,6 +391,15 @@ fun VenueScreen(id: String, navigator: Navigator) {
                                             navigator.openPass(pass.id)
                                         },
                                     )
+                                }
+                            }
+                        }
+                        // The venue's own ordering page (e.g. its Toast online ordering), opened in the browser.
+                        overview.orderingUrl?.let { url ->
+                            item(key = "order") {
+                                DetailSection(null) {
+                                    InfoRow("Order", icon = Icons.Rounded.Restaurant, onClick = { context.openUrl(url) },
+                                        trailing = Icons.AutoMirrored.Rounded.OpenInNew)
                                 }
                             }
                         }
