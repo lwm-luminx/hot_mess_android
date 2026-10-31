@@ -137,10 +137,11 @@ class PingLogicTest {
                 event("tomorrow", "2026-10-11T03:00:00Z"),
                 event("yesterday", "2026-10-09T03:00:00Z"),
             ),
+            // In the API's order, which the choices keep.
             venues = listOf(
-                Venue(id = "b", name = "Bar", locale = LocaleSummary(locale)),
-                Venue(id = "x", name = "Elsewhere", locale = LocaleSummary("22222222-2222-2222-2222-222222222222")),
                 Venue(id = "a", name = "Arc", locale = LocaleSummary(locale)),
+                Venue(id = "x", name = "Elsewhere", locale = LocaleSummary("22222222-2222-2222-2222-222222222222")),
+                Venue(id = "b", name = "Bar", locale = LocaleSummary(locale)),
                 Venue(id = "h", name = "Hidden", hidden = true, locale = LocaleSummary(locale)),
             ),
             localeId = locale,
@@ -509,4 +510,46 @@ private object PingFixtures {
 
     const val MY_PING = """{"id":"p-mine","note":null,"createdAt":"2026-10-10T04:00:00Z","expiresAt":"2026-10-10T12:00:00Z",
         "isMine":true,"joined":false,"reach":"FRIENDS","via":null,"user":{"id":"u-me","name":"Rick Mark"},"targets":[],"joins":[]}"""
+}
+
+class PlanChangeCheckTest {
+    private val json = HotMessApi.json
+    private val mine = json.decodeFromString(Ping.serializer(), PingFixtures.FRIEND_PING).copy(isMine = true)
+    private val night = Instant.parse("2026-10-10T06:00:00Z")
+    private val later = night.plus(PlanChangeCheck.DWELL)
+
+    @Test
+    fun asksOnceYouveStayedAtAVenueThePingDoesntName() {
+        val check = PlanChangeCheck().observe("v-pony", night)
+
+        assertNull(check.venueToAsk(mine, night.plusSeconds(60)))
+        // Still at Pony on the next refresh: the clock keeps running.
+        assertEquals("v-pony", check.observe("v-pony", night.plusSeconds(120)).venueToAsk(mine, later))
+    }
+
+    @Test
+    fun walkingPastDoesntCount() {
+        val check = PlanChangeCheck().observe("v-pony", night).observe(null, night.plusSeconds(60)).observe("v-pony", night.plusSeconds(120))
+
+        assertNull(check.venueToAsk(mine, later.plusSeconds(60)))
+    }
+
+    @Test
+    fun neverAsksAtAPickForAnywhereOrForAFriendsPing() {
+        // Neighbours is Drag Bingo's venue, so the event pick covers it.
+        assertNull(PlanChangeCheck().observe("v-neighbours", night).venueToAsk(mine, later))
+        assertNull(PlanChangeCheck().observe("v-wildrose", night).venueToAsk(mine, later))
+
+        val atPony = PlanChangeCheck().observe("v-pony", night)
+        assertNull(atPony.venueToAsk(json.decodeFromString(Ping.serializer(), PingFixtures.MY_PING), later))
+        assertNull(atPony.venueToAsk(mine.copy(isMine = false), later))
+        assertNull(atPony.venueToAsk(null, later))
+    }
+
+    @Test
+    fun stopsAskingOnceAnswered() {
+        val check = PlanChangeCheck().observe("v-pony", night).answer(mine, "v-pony")
+
+        assertNull(check.venueToAsk(mine, later))
+    }
 }

@@ -36,6 +36,31 @@ class RoomLineupTest {
     private fun result(event: String) = """{"identifier":"x","message":{"result":{"data":{"venueChat":$event}},"more":true}}"""
 
     @Test
+    fun listsAnActsScenesInTurnWithTheBreaksAfterThem() {
+        val order = HotMessApi.json.decodeFromString(
+            Connection.serializer(LineupEntry.serializer()),
+            """{"nodes":[
+              {"id":"act","kind":"ACT","role":"PERFORMER","state":"ON","title":"First Set",
+               "person":{"id":"p-kiki","name":"Kiki"},
+               "people":{"nodes":[{"id":"p-kiki","name":"Kiki"},{"id":"p-aurora","name":"Aurora"}]},
+               "scenes":[
+                 {"id":"sc1","performers":[{"id":"p-kiki","name":"Kiki"}],
+                  "wentOnAt":"2026-10-31T04:00:00Z","cameOffAt":"2026-10-31T04:05:00Z"},
+                 {"id":"sc2","performers":[{"id":"p-aurora","name":"Aurora"}],"wentOnAt":"2026-10-31T04:06:00Z"},
+                 {"id":"sc3","performers":[]}]},
+              {"id":"break","kind":"INTERMISSION","state":"DONE","title":"Bar break","afterScene":{"id":"sc1"}}
+            ]}""",
+        ).nodes.filterNotNull()
+
+        val turns = order.inTurn()
+        assertEquals(listOf("sc1", "break", "sc2", "sc3"), turns.map { it.id })
+        assertEquals(listOf("Kiki", "Bar break", "Aurora", "Kiki & Aurora"), turns.map { it.name })
+        assertEquals(listOf(LineupState.DONE, LineupState.DONE, LineupState.ON, LineupState.UPCOMING), turns.map { it.state })
+        assertEquals("sc3", order.turnId("act", LineupState.UPCOMING))
+        assertEquals("break", order.turnId("break", LineupState.UPCOMING))
+    }
+
+    @Test
     fun ordersTheHostFirstThenOnNowUpNextTheRestAndDoneLast() {
         val entries = listOf(
             entry("opener", state = "DONE"),

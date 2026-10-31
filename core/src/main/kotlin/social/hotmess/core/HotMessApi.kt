@@ -126,6 +126,7 @@ class HotMessApi(val client: AudienceKitClient) {
             friends = venueFriends,
             friendPings = venue.friendPings,
             onNow = venue.people?.onNow.orEmpty(),
+            orderingUrl = venue.orderingUrl,
         )
     }
 
@@ -133,12 +134,13 @@ class HotMessApi(val client: AudienceKitClient) {
     suspend fun venueLineup(id: String): VenueNight {
         val venue = query(Documents.VENUE_LINEUP, VenueLineupResponse.serializer(), graphQLVariables("id" to id)).venue
             ?: throw ApiError.NotFound
+        val order = venue.people?.runningOrder?.nodes.orEmpty().filterNotNull()
         return VenueNight(
             venueId = venue.id,
             name = venue.name,
             photoUrl = venue.photoUrl,
-            entries = venue.people?.runningOrder?.nodes.orEmpty().filterNotNull(),
-            upNextId = venue.people?.upNext?.id,
+            entries = order.inTurn(),
+            upNextId = order.turnId(venue.people?.upNext?.id, LineupState.UPCOMING),
         )
     }
 
@@ -572,6 +574,14 @@ class HotMessApi(val client: AudienceKitClient) {
     /** Whether pushes about chat rooms the user left lately are on, or null when there's no signed-in user. */
     suspend fun recentChatPush(): Boolean? = query(Documents.RECENT_CHAT_PUSH, RecentChatPushResponse.serializer()).me?.recentChatPush
 
+    /** The user's calendar subscription link (`me.calendarFeed`), or null before they made one. */
+    suspend fun calendarFeed(): CalendarFeed? = query(Documents.CALENDAR_FEED, CalendarFeedResponse.serializer()).me?.calendarFeed
+
+    /** Makes the user's calendar subscription link on first ask; [reset] replaces it, ending the old link. */
+    suspend fun createCalendarFeed(reset: Boolean = false): CalendarFeed =
+        mutate(Documents.CREATE_CALENDAR_FEED, CreateCalendarFeedResponse.serializer(), graphQLVariables("reset" to reset))
+            .createCalendarFeed.calendarFeed
+
     /** Turns pushes about chat rooms the user left lately on or off; returns the setting as it now is. */
     suspend fun setRecentChatPush(enabled: Boolean): Boolean =
         mutate(Documents.SET_RECENT_CHAT_PUSH, SetRecentChatPushResponse.serializer(), graphQLVariables("enabled" to enabled))
@@ -701,6 +711,11 @@ class HotMessApi(val client: AudienceKitClient) {
         query(SafetyAlertDocuments.SUPPORT, SupportResourcesResponse.serializer(), graphQLVariables("region" to region))
             .supportResources
 
+    /** "Get a ride": the ride apps for a region, as plain links. */
+    suspend fun supportRides(region: String?): List<SupportRide> =
+        query(SafetyAlertDocuments.RIDES, SupportRidesResponse.serializer(), graphQLVariables("region" to region))
+            .supportResources.rides
+
     /** Each safety alert mutation answers with `{ safetyAlert }` under its own name. */
     private suspend fun safetyAlertMutation(document: String, variables: Map<String, JsonElement>): SafetyAlert =
         mutate(document, SAFETY_ALERT_PAYLOADS, variables).values.firstOrNull()?.safetyAlert
@@ -811,6 +826,8 @@ data class VenueOverview(
     val friendPings: List<Ping> = emptyList(),
     /** Who's on there right now. */
     val onNow: List<Appearance> = emptyList(),
+    /** Its own ordering page (e.g. its Toast online ordering), which the Order button opens. */
+    val orderingUrl: String? = null,
 ) {
     /** The next two events, near the top of the venue screen. */
     val comingUp: List<Event> get() = events.take(2)
@@ -819,10 +836,24 @@ data class VenueOverview(
     val laterEvents: List<Event> get() = events.drop(2)
 }
 
-/** Visible venues, those in [localeId] first, then by the audience's order and name. */
+/**
+ * Visible venues, those in [localeId] first, each keeping the order the API lists them in: the audience's order, with
+ * community spaces (places that host events but aren't venues to go out to) after the rest.
+ */
 fun List<Venue>.sortedForList(localeId: String?): List<Venue> =
-    filterNot { it.hidden }
-        .sortedWith(compareBy<Venue> { if (it.isIn(localeId)) 0 else 1 }.thenBy { it.order }.thenBy { it.name.lowercase() })
+    filterNot { it.hidden }.sortedBy { if (it.isIn(localeId)) 0 else 1 }
+
+/** One city's venues in the Everywhere list. */
+data class VenueCityGroup(val city: String, val venues: List<Venue>)
+
+/** The venues by city, keeping their order within each: [localeId]'s city first, then by name, unnamed last. */
+fun List<Venue>.byCity(localeId: String?, elsewhere: String = "Elsewhere"): List<VenueCityGroup> {
+    val groups = groupBy { it.locale?.displayName?.takeIf(String::isNotBlank) ?: elsewhere }
+    val localCity = firstOrNull { it.isIn(localeId) }?.locale?.displayName
+    return groups.entries
+        .sortedWith(compareBy<Map.Entry<String, List<Venue>>> { if (it.key == localCity) 0 else if (it.key == elsewhere) 2 else 1 }.thenBy { it.key.lowercase() })
+        .map { VenueCityGroup(it.key, it.value) }
+}
 
 /** Whether the venue is in the locale [localeId]; false when there's no locale. */
 fun Venue.isIn(localeId: String?): Boolean {
@@ -941,6 +972,16 @@ private data class RecentChatPushResponse(val me: Me? = null) {
 }
 
 @Serializable
+private data class CalendarFeedResponse(val me: Me? = null) {
+    @Serializable data class Me(val calendarFeed: CalendarFeed? = null)
+}
+
+@Serializable
+private data class CreateCalendarFeedResponse(val createCalendarFeed: Payload) {
+    @Serializable data class Payload(val calendarFeed: CalendarFeed)
+}
+
+@Serializable
 private data class SetRecentChatPushResponse(val setRecentChatPush: Payload) {
     @Serializable data class Payload(val recentChatPush: Boolean = false)
 }
@@ -986,6 +1027,10 @@ private data class VenuesResponse(@SerialName("venues") val venuesMixin: VenuesM
 @Serializable
 private data class Nodes<T>(val nodes: List<T> = emptyList())
 
+/** `ordering { url }`: a venue's own ordering page. */
+@Serializable
+data class OrderingMixin(val url: String? = null)
+
 /** A venue plus its events, which GraphQL nests in one object. */
 @Serializable
 private data class VenueNode(
@@ -1004,8 +1049,12 @@ private data class VenueNode(
     val friends: FriendsMixin? = null,
     val ping: PingFeedMixin? = null,
     val people: VenuePeopleMixin? = null,
+    val ordering: OrderingMixin? = null,
 ) {
     val friendPings: List<Ping> get() = ping?.friendPings.orEmpty()
+
+    /** Its own ordering page (only https), when it has one: the ordering mixin is a facet. */
+    val orderingUrl: String? get() = ordering?.url?.takeIf { it.startsWith("https://", ignoreCase = true) }
 
     fun venue() = Venue(
         id = id,

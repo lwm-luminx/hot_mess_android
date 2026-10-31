@@ -83,6 +83,7 @@ import social.hotmess.android.ui.components.Avatar
 import social.hotmess.android.ui.components.Card
 import social.hotmess.android.ui.components.DateBadge
 import social.hotmess.android.ui.components.EmptyRow
+import social.hotmess.android.ui.components.FriendFaces
 import social.hotmess.android.ui.components.InfoRow
 import social.hotmess.android.ui.components.PrimaryButton
 import social.hotmess.android.ui.components.RemoteImage
@@ -961,4 +962,72 @@ private fun InvitationCard(invitation: PingInvitation, busy: Boolean, onJoin: (t
         }
     }
     Spacer(Modifier.height(Space.s2))
+}
+
+/** "Did your plans change?": you've been at a venue your Ping doesn't name for a while. It moves only if you say so. */
+@Composable
+fun PlanChangePrompt(venueName: String, pingPlaces: String, busy: Boolean, onMove: () -> Unit, onKeep: () -> Unit) {
+    DetailSection(modifier = Modifier.border(2.dp, tokens.accent, Radius.photo).testTag("tonight.planChange")) {
+        Column(Modifier.fillMaxWidth().padding(Space.s4), verticalArrangement = Arrangement.spacedBy(Space.s2)) {
+            Text("Did your plans change?", style = HotMessType.subheading, color = tokens.ink)
+            Text("You're at $venueName, but your ping says $pingPlaces.", style = HotMessType.bodySmall, color = tokens.inkMuted)
+            Row(horizontalArrangement = Arrangement.spacedBy(Space.s2), verticalAlignment = Alignment.CenterVertically) {
+                PrimaryButton("Move my ping here", onMove, enabled = !busy)
+                SecondaryButton("Keep it", onKeep, enabled = !busy)
+            }
+        }
+    }
+}
+
+/** No Ping running: one tap to start one where you are ([venueName]), or anywhere. */
+@Composable
+fun StartPingRow(venueName: String?, onStart: () -> Unit) {
+    DetailSection {
+        Row(
+            Modifier.fillMaxWidth().padding(Space.s4),
+            horizontalArrangement = Arrangement.spacedBy(Space.s3),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Going out tonight?", style = HotMessType.subheading, color = tokens.ink)
+                Text(
+                    venueName?.let { "Tell your friends you're at $it." } ?: "Tell your friends you want to go out.",
+                    style = HotMessType.bodySmall,
+                    color = tokens.inkMuted,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            PrimaryButton(if (venueName == null) "Ping" else "Ping here", onStart, icon = Icons.Rounded.Campaign)
+        }
+    }
+}
+
+/** Friends at the venue you're at, with a way to bring more. */
+@Composable
+fun FriendsHereRow(friends: List<Friend>, onInvite: () -> Unit) {
+    DetailSection {
+        Row(
+            Modifier.fillMaxWidth().padding(Space.s4),
+            horizontalArrangement = Arrangement.spacedBy(Space.s3),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            FriendFaces(friends)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    if (friends.size == 1) "${friends[0].firstName} is here" else "${friends.size} friends here",
+                    style = HotMessType.subheading,
+                    color = tokens.ink,
+                )
+                Text(
+                    Formatting.list(friends.map { it.firstName }, "and", limit = 3),
+                    style = HotMessType.bodySmall,
+                    color = tokens.inkMuted,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            SecondaryButton("Invite more", onInvite)
+        }
+    }
 }

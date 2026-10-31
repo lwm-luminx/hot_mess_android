@@ -110,7 +110,14 @@ import social.hotmess.core.postsSubject
 @Serializable data class UpdatesRoute(val localeId: String, val localeName: String)
 @Serializable data object PassesRoute
 /** Get help at a venue the user is at ([address] for a friend or a ride). */
-@Serializable data class HelpRoute(val venueId: String, val venueName: String, val address: String = "")
+@Serializable data class HelpRoute(
+    val venueId: String,
+    val venueName: String,
+    val address: String = "",
+    /** Where the venue is, for a ride's pickup; blank when unknown. */
+    val latitude: String = "",
+    val longitude: String = "",
+)
 /** One of the user's safety alerts, from a push or Me. */
 @Serializable data class SafetyAlertRoute(val id: String)
 /** "Need support?", with the note staff wrote when they shared it. */
@@ -266,7 +273,14 @@ private fun MainShell(links: Flow<AppRoute>) {
         }
 
         override fun openHelp(venue: HelpVenue) {
-            navController.navigate(HelpRoute(venue.id, venue.name, venue.address.orEmpty())) { launchSingleTop = true }
+            val route = HelpRoute(
+                venue.id,
+                venue.name,
+                venue.address.orEmpty(),
+                venue.latitude?.toString().orEmpty(),
+                venue.longitude?.toString().orEmpty(),
+            )
+            navController.navigate(route) { launchSingleTop = true }
         }
 
         override fun openSafetyAlert(id: String) {
@@ -370,7 +384,14 @@ private fun MainShell(links: Flow<AppRoute>) {
                 }
                 composable<HelpRoute> {
                     val route = it.toRoute<HelpRoute>()
-                    GetHelpScreen(HelpVenue(route.venueId, route.venueName, route.address.ifBlank { null }), null, navigator)
+                    val venue = HelpVenue(
+                        route.venueId,
+                        route.venueName,
+                        route.address.ifBlank { null },
+                        route.latitude.toDoubleOrNull(),
+                        route.longitude.toDoubleOrNull(),
+                    )
+                    GetHelpScreen(venue, null, navigator)
                 }
                 composable<SafetyAlertRoute> { GetHelpScreen(null, it.toRoute<SafetyAlertRoute>().id, navigator) }
                 composable<SupportRoute> { SupportScreen(it.toRoute<SupportRoute>().note.ifBlank { null }, navigator) }

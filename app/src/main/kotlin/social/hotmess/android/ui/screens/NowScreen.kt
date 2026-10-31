@@ -15,6 +15,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.LocationOff
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -33,6 +35,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import social.hotmess.core.PostsSubject
+import social.hotmess.core.RecordId
 import social.hotmess.core.ApiError
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -93,6 +96,9 @@ import social.hotmess.core.FriendVenue
 import social.hotmess.core.Now
 import social.hotmess.core.NowLocale
 import social.hotmess.core.PhotoTone
+import social.hotmess.core.Ping
+import social.hotmess.core.PingPick
+import social.hotmess.core.PlanChangeCheck
 import social.hotmess.core.RoomLineup
 import social.hotmess.core.Venue
 import java.time.Instant
@@ -160,6 +166,46 @@ fun NowScreen(navigator: Navigator) {
     var ending by rememberSaveable { mutableStateOf(false) }
     var endError by rememberSaveable { mutableStateOf<String?>(null) }
     val actions = rememberPingActions { ping -> loader.update { it.replacingPing(ping) } }
+    // What the send sheet opens with picked: "Ping here", or inviting friends to where you are without a Ping yet.
+    var sheetSeed by remember { mutableStateOf<PingPick?>(null) }
+    fun openPingSheet(seed: PingPick? = null) {
+        sheetSeed = seed
+        sheetOpen = true
+    }
+
+    // Whether to ask "Did your plans change?": where Now places you, and since when. Never moves the Ping by itself.
+    var planCheck by remember { mutableStateOf(PlanChangeCheck()) }
+    var moving by remember { mutableStateOf(false) }
+    LaunchedEffect(state.valueOrNull) {
+        val now = state.valueOrNull ?: return@LaunchedEffect
+        planCheck = planCheck.observe(if (now.venues == null) now.venue?.id else null, Instant.now())
+    }
+
+    // "Yes, I'm here now": the Ping picks this venue (tonight's event here, when one is on) instead of its old picks,
+    // keeping its note and reach. Whoever was in on an old pick stays in on the Ping as a whole.
+    fun movePing(now: Now, ping: Ping, venue: Venue) {
+        planCheck = planCheck.answer(ping, venue.id)
+        val event = now.event?.takeIf { RecordId.same(it.venue?.id, venue.id) }
+        moving = true
+        scope.launch {
+            try {
+                val moved = graph.api.sendPing(
+                    venueIds = if (event == null) listOf(venue.id) else emptyList(),
+                    eventIds = listOfNotNull(event?.id),
+                    note = ping.noteText,
+                    localeId = now.locale?.id,
+                    reach = ping.reach,
+                )
+                loader.update { it.replacingPing(moved) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                actions.error = ApiError.of(e).message ?: "Try again in a moment."
+            } finally {
+                moving = false
+            }
+        }
+    }
 
     // Pair me up at the venue you're at, or your event's: reloaded with Now, while the screen shows.
     val pairUpVenue = state.valueOrNull?.venue
@@ -206,9 +252,11 @@ fun NowScreen(navigator: Navigator) {
         tone = heroTone,
         collapsed = state.valueOrNull == null || scrolled,
         actions = {
-            TextButton(onClick = { sheetOpen = true }) {
-                Icon(Icons.Rounded.Campaign, contentDescription = null, tint = tokens.accentInk, modifier = Modifier.size(20.dp))
-                Text("Ping", style = HotMessType.label, color = tokens.accentInk, modifier = Modifier.padding(start = Space.s1))
+            // In the bar's own colour (the photo's, until it turns solid), like the icons beside it: accent pink
+            // disappeared on some photos and on the bar's gradient.
+            TextButton(onClick = { sheetOpen = true }, colors = ButtonDefaults.textButtonColors(contentColor = LocalContentColor.current)) {
+                Icon(Icons.Rounded.Campaign, contentDescription = null, modifier = Modifier.size(20.dp))
+                Text("Ping", style = HotMessType.label, modifier = Modifier.padding(start = Space.s1))
             }
         },
     ) { topInset ->
@@ -321,10 +369,29 @@ fun NowScreen(navigator: Navigator) {
                                 }
                             }
                             CardKind.VENUES_NEARBY -> nearby(now, card, coordinates != null, navigator)
-                            CardKind.VENUES_FRIENDS -> if (now.venue == null) whereFriendsAre(now.friendVenues, navigator)
+                            // Tonight lists where friends are, when it's drawn.
+                            CardKind.VENUES_FRIENDS ->
+                                if (now.venue == null && cardLayout.card(CardKind.PINGS) == null) whereFriendsAre(now.friendVenues, navigator)
                             CardKind.PINGS -> {
                                 coverCards(now, checkout, checkoutState, navigator)
-                                pings(now, userId, actions, ending, onEdit = { sheetOpen = true }, onEnd = ::endPing, navigator)
+                                val askAbout = planCheck.venueToAsk(now.myPing, Instant.now())
+                                    ?.let { id -> now.venue?.takeIf { RecordId.same(it.id, id) } }
+                                tonight(
+                                    now,
+                                    userId,
+                                    actions,
+                                    TonightHandlers(
+                                        ending = ending,
+                                        moving = moving,
+                                        planChangeVenue = askAbout,
+                                        onEdit = { openPingSheet() },
+                                        onEnd = ::endPing,
+                                        onStart = { venue -> openPingSheet(venue?.let { PingPick.VenuePick(it) }) },
+                                        onMove = { ping, venue -> movePing(now, ping, venue) },
+                                        onKeep = { ping, venue -> planCheck = planCheck.answer(ping, venue.id) },
+                                    ),
+                                    navigator,
+                                )
                             }
                             CardKind.WEB -> card.web?.let { content -> item(key = card.id) { WebCardView(content) } }
                             CardKind.PROMO_SLOT -> item(key = card.id) { PromoSlotView(card, cardLayout.id, navigator) }
@@ -346,8 +413,11 @@ fun NowScreen(navigator: Navigator) {
     }
     if (sheetOpen) {
         PingSheet(
-            preselect = null,
-            onDismiss = { sheetOpen = false },
+            preselect = sheetSeed,
+            onDismiss = {
+                sheetOpen = false
+                sheetSeed = null
+            },
             onSent = { ping -> loader.update { it.replacingPing(ping) } },
         )
     }
@@ -414,34 +484,84 @@ private fun LazyListScope.coverCards(
     }
 }
 
-/** Your own Ping, then friends' Pings. */
-private fun LazyListScope.pings(
+/** What Tonight's buttons do, and what's in flight. */
+private class TonightHandlers(
+    val ending: Boolean,
+    val moving: Boolean,
+    /** The venue to ask "Did your plans change?" about, if any. */
+    val planChangeVenue: Venue?,
+    val onEdit: () -> Unit,
+    val onEnd: () -> Unit,
+    /** Start a Ping, picking the venue you're at when there is one. */
+    val onStart: (Venue?) -> Unit,
+    val onMove: (Ping, Venue) -> Unit,
+    val onKeep: (Ping, Venue) -> Unit,
+)
+
+/**
+ * Tonight, in one card: "Did your plans change?" once you've stayed at a venue your Ping doesn't name, your Ping (or
+ * a way to start one where you are), friends here with a way to invite more, then friends out elsewhere: their Pings
+ * and, away from venues, where they are.
+ */
+private fun LazyListScope.tonight(
     now: Now,
     userId: String?,
     actions: PingActions,
-    ending: Boolean,
-    onEdit: () -> Unit,
-    onEnd: () -> Unit,
+    handlers: TonightHandlers,
     navigator: Navigator,
 ) {
-    now.myPing?.let { ping ->
-        item(key = "my-ping") { MyPingCard(ping, onEdit = onEdit, onEnd = onEnd, ending = ending) }
+    val here = now.venue?.takeIf { now.venues == null }
+    val myPing = now.myPing
+    item(key = "tonight-title") {
+        Text(
+            "Tonight",
+            style = HotMessType.heading,
+            color = tokens.ink,
+            modifier = Modifier.padding(horizontal = Space.s1).semantics { heading() },
+        )
     }
-    if (now.friendPings.isNotEmpty()) {
-        item(key = "friend-pings-title") {
-            Text(
-                "Friends going out tonight",
-                style = HotMessType.heading,
-                color = tokens.ink,
-                modifier = Modifier.padding(horizontal = Space.s1),
+    val askAbout = handlers.planChangeVenue
+    if (askAbout != null && myPing != null) {
+        item(key = "plan-change") {
+            PlanChangePrompt(
+                askAbout.name,
+                myPing.placesSummary,
+                busy = handlers.moving,
+                onMove = { handlers.onMove(myPing, askAbout) },
+                onKeep = { handlers.onKeep(myPing, askAbout) },
             )
         }
-        now.friendPings.forEach { ping ->
-            item(key = "ping-${ping.id}") {
-                FriendPingCard(ping, userId, actions) { target ->
-                    target.event?.let { navigator.open(AppRoute.EventDetail(it.id)) }
-                        ?: target.venue?.let { navigator.open(AppRoute.VenueDetail(it.id)) }
-                }
+    }
+    if (myPing != null) {
+        item(key = "my-ping") { MyPingCard(myPing, onEdit = handlers.onEdit, onEnd = handlers.onEnd, ending = handlers.ending) }
+    } else {
+        item(key = "start-ping") { StartPingRow(here?.name) { handlers.onStart(here) } }
+    }
+    val friendsHere = if (here == null) emptyList() else now.friends.filterNot { RecordId.same(it.id, userId) }
+    if (here != null && friendsHere.isNotEmpty()) {
+        // With a Ping, the sheet edits it and can text more people; without one, it starts one here.
+        item(key = "friends-here") {
+            FriendsHereRow(friendsHere) { if (myPing != null) handlers.onEdit() else handlers.onStart(here) }
+        }
+    }
+    now.friendPings.forEach { ping ->
+        item(key = "ping-${ping.id}") {
+            FriendPingCard(ping, userId, actions) { target ->
+                target.event?.let { navigator.open(AppRoute.EventDetail(it.id)) }
+                    ?: target.venue?.let { navigator.open(AppRoute.VenueDetail(it.id)) }
+            }
+        }
+    }
+    if (now.venue == null) {
+        now.friendVenues.forEach { entry ->
+            item(key = "tonight-venue-${entry.venue.id}") {
+                VenueCard(
+                    entry.venue,
+                    onClick = { navigator.open(AppRoute.VenueDetail(entry.venue.id)) },
+                    detail = friendNames(entry.friends),
+                    pill = if (entry.friendCount == 1) "1 friend" else "${entry.friendCount} friends",
+                    corner = { FriendFaces(entry.friends) },
+                )
             }
         }
     }

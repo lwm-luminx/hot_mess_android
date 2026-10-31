@@ -41,6 +41,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -80,6 +81,12 @@ import kotlin.math.absoluteValue
 // cards on it, rows inside the cards split by hairline `border` dividers, and the list rows.
 
 /**
+ * True where a [Feed] shares the window with a docked pane (a venue page beside its chat): it then runs the pane's
+ * whole width rather than leaving gutters beside its readable column.
+ */
+val LocalFeedFillsWidth = staticCompositionLocalOf { false }
+
+/**
  * A feed on the wash: one column up to 680dp with `space-4` gutters, sections `space-4` apart.
  * [top] is the space above the first item. In a wide window (a tablet, a foldable, a phone in
  * landscape) the feed grows to [AdaptiveLayout.WIDE_FEED_MAX_DP] so a [cardSection] can lay its
@@ -96,7 +103,13 @@ fun Feed(
         val width = minOf(maxWidth, AdaptiveLayout.WIDE_FEED_MAX_DP.dp) - Space.s4 * 2
         val columns = AdaptiveLayout.feedColumns(width.value)
         LazyColumn(
-            modifier = Modifier.widthIn(max = if (columns > 1) AdaptiveLayout.WIDE_FEED_MAX_DP.dp else ContentMaxWidth).fillMaxSize(),
+            modifier = Modifier.widthIn(
+                max = when {
+                    LocalFeedFillsWidth.current -> Dp.Infinity
+                    columns > 1 -> AdaptiveLayout.WIDE_FEED_MAX_DP.dp
+                    else -> ContentMaxWidth
+                },
+            ).fillMaxSize(),
             state = state,
             contentPadding = PaddingValues(start = Space.s4, end = Space.s4, top = top, bottom = Space.s4),
             verticalArrangement = Arrangement.spacedBy(Space.s4),

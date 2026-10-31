@@ -136,10 +136,19 @@ data class ChatMixin(val open: Boolean = false, private val recentMessages: Conn
     val lines: List<ChatLine> get() = recentMessages?.nodes.orEmpty().filterNotNull()
 }
 
-/** An event's people mixin (`people { lineup }`): who's hosting or playing, a connection asked for as `nodes`. */
+/**
+ * An event's people mixin (`people { lineup organizers }`): who's hosting or playing, and the organizations presenting
+ * it (never on the lineup), connections asked for as `nodes`.
+ */
 @Serializable
-data class EventPeopleMixin(private val lineup: Connection<Person>? = null) {
+data class EventPeopleMixin(
+    private val lineup: Connection<Person>? = null,
+    private val organizers: Connection<Person>? = null,
+) {
     val people: List<Person> get() = lineup?.nodes.orEmpty().filterNotNull()
+
+    /** Who presents it, like a pride center putting it on at a bar. */
+    val presenters: List<Person> get() = organizers?.nodes.orEmpty().filterNotNull()
 }
 
 /**
@@ -433,6 +442,9 @@ data class Event(
 
     /** Who's hosting or playing; only the event screen asks for it. */
     val people: List<Person> get() = peopleMixin?.people.orEmpty()
+
+    /** Who presents it ("Presented by"); only the event screen asks for it. */
+    val organizers: List<Person> get() = peopleMixin?.presenters.orEmpty()
 
     /** Friends' active Pings that pick this event; only the event screen asks for it. */
     val friendPings: List<Ping> get() = pingFeed?.friendPings.orEmpty()
@@ -891,6 +903,9 @@ data class SignInMethods(val methods: List<String> = emptyList(), val warnings: 
     val facebook: Boolean get() = "facebook" in methods
     val google: Boolean get() = "google" in methods
     val apple: Boolean get() = "apple" in methods
+
+    /** Whether App Review codes sign in now (only while the audience is in App Review). */
+    val reviewCode: Boolean get() = "review_code" in methods
 
     /** What to say before signing in with [method], such as "Facebook login is only for testers"; null for nothing. */
     fun warning(method: String): String? = warnings[method]?.takeIf { it.isNotBlank() }

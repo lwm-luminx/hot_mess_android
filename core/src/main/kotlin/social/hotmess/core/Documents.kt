@@ -54,9 +54,13 @@ object Documents {
     /** Who's on at a venue right now, in its people mixin. */
     const val ON_NOW_FIELDS: String = "people { onNow { nodes { id role startsAt endsAt person { id name avatarUrl } } } }"
 
-    /** A lineup entry as a chat room shows it: who, as what, where it is in the night, and its set when it has a hard start. */
+    /**
+     * A lineup entry as a chat room shows it: who, as what, where it is in the night, and its set when it has a hard
+     * start; an act's scenes and a break's scene before it, which the room lists in turn.
+     */
     const val LINEUP_ENTRY_FIELDS: String =
-        "id kind role state startTiming startsAt endsAt title person { id name avatarUrl } people { nodes { id name avatarUrl } }"
+        "id kind role state startTiming startsAt endsAt title person { id name avatarUrl } people { nodes { id name avatarUrl } } " +
+            "scenes { id performers { id name avatarUrl } wentOnAt cameOffAt } afterScene { id }"
 
     const val FRIEND_FIELDS: String = "id name facebookId avatarUrl"
 
@@ -115,6 +119,18 @@ object Documents {
     val RECENT_CHAT_PUSH: String = """
         query RecentChatPush {
           me { recentChatPush }
+        }
+    """.trimIndent()
+
+    val CALENDAR_FEED: String = """
+        query CalendarFeed {
+          me { calendarFeed { url webcalUrl googleUrl } }
+        }
+    """.trimIndent()
+
+    val CREATE_CALENDAR_FEED: String = """
+        mutation CreateCalendarFeed(${'$'}reset: Boolean) {
+          createCalendarFeed(input: { reset: ${'$'}reset }) { calendarFeed { url webcalUrl googleUrl } }
         }
     """.trimIndent()
 
@@ -178,6 +194,7 @@ object Documents {
               $PROFILE_SOCIAL_LINKS
               friends { list { nodes { $FRIEND_OUT_FIELDS } } }
               ping { friendPings { $PING_FIELDS } }
+              ordering { url }
             }
           }
         }
@@ -232,7 +249,7 @@ object Documents {
               $EVENT_FIELDS
               tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } } }
               venue { venue { id $VENUE_COVER_FIELDS } }
-              people { lineup { nodes { $PERSON_FIELDS } } }
+              people { lineup { nodes { $PERSON_FIELDS } } organizers { nodes { $PERSON_FIELDS } } }
               ping { friendPings { $PING_FIELDS } }
             }
           }

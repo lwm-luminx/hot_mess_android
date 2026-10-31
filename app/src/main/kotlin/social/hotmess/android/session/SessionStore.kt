@@ -234,7 +234,11 @@ class SessionStore(
      * session. The token JSON (`userId`, `audienceId`, `role`, `endpoint`) says who signed in; the SDK keeps the
      * token and the audience, and nothing here decodes the JWT. Their name and picture come from Me.
      */
-    private suspend fun exchange(displayName: String = "", signIn: suspend () -> com.audiencekit.SignInResult) {
+    private suspend fun exchange(
+        displayName: String = "",
+        failureMessage: (Exception) -> String = ::signInFailureMessage,
+        signIn: suspend () -> com.audiencekit.SignInResult,
+    ) {
         _state.value = AuthState.SigningIn
         try {
             val result = signIn()
@@ -246,7 +250,24 @@ class SessionStore(
             throw e
         } catch (e: Exception) {
             Log.e("HotMess", "Sign-in failed: ${e.message}")
-            _state.value = AuthState.Failed(signInFailureMessage(e))
+            _state.value = AuthState.Failed(failureMessage(e))
+        }
+    }
+
+    /**
+     * Signs in with the App Review code from the store's review notes, which signs in the reviewer account. The login
+     * screen offers it only while the API lists `review_code`. A wrong or expired code says so rather than blaming
+     * Facebook, since whoever typed it is a store reviewer.
+     */
+    fun signInWithReviewCode(code: String) {
+        val trimmed = code.trim()
+        if (trimmed.isEmpty()) return
+        scope.launch {
+            exchange(failureMessage = { e ->
+                if (e is com.audiencekit.AudienceKitException.SignInRejected) REVIEW_CODE_REFUSED else signInFailureMessage(e)
+            }) {
+                audienceKit.signInWithReviewCode(trimmed, DeviceDescription.current(context))
+            }
         }
     }
 
@@ -359,6 +380,9 @@ class SessionStore(
 
     companion object {
         const val ENDED_MESSAGE = "Your session has ended. Please sign in again."
+
+        const val REVIEW_CODE_REFUSED =
+            "That App Review code didn't work. Check it was typed exactly as given; it works only while App Review is open."
 
         const val CONNECT_GOOGLE_FAILED = "Google couldn't be connected. Try again."
 

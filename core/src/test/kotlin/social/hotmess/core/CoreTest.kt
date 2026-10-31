@@ -169,10 +169,11 @@ class ListingTest {
     fun venuesInTheLocaleComeFirstAndHiddenOnesAreLeftOut() {
         val here = "11111111-1111-1111-1111-111111111111"
         val there = "22222222-2222-2222-2222-222222222222"
+        // In the API's order: the audience's order, community spaces last.
         val venues = listOf(
             Venue(id = "1", name = "Zed", order = 0, locale = LocaleSummary(there)),
-            Venue(id = "2", name = "Bar", order = 1, locale = LocaleSummary(here)),
             Venue(id = "3", name = "Arc", order = 1, locale = LocaleSummary(here)),
+            Venue(id = "2", name = "Utah Pride Center", order = 0, locale = LocaleSummary(here)),
             Venue(id = "4", name = "Gone", hidden = true, locale = LocaleSummary(here)),
         )
 
@@ -180,6 +181,24 @@ class ListingTest {
         assertEquals(listOf("1", "3", "2"), venues.sortedForList(null).map { it.id })
         assertEquals(listOf("2", "3"), venues.sortedForList(here).filter { it.isIn(here) }.map { it.id }.sorted())
         assertFalse(venues.first().isIn(null))
+    }
+
+    @Test
+    fun everywhereGroupsVenuesByCityWithTheLocalCityFirst() {
+        val here = "11111111-1111-1111-1111-111111111111"
+        val venues = listOf(
+            Venue(id = "1", name = "Crush", locale = LocaleSummary("2", name = "Portland")),
+            Venue(id = "2", name = "Nowhere"),
+            Venue(id = "3", name = "R Place", locale = LocaleSummary(here, name = "Seattle")),
+            Venue(id = "4", name = "Club", locale = LocaleSummary("3", name = "Austin")),
+            Venue(id = "5", name = "Neighbours", locale = LocaleSummary(here, name = "Seattle")),
+        )
+
+        val groups = venues.byCity(here)
+
+        assertEquals(listOf("Seattle", "Austin", "Portland", "Elsewhere"), groups.map { it.city })
+        assertEquals(listOf("3", "5"), groups.first().venues.map { it.id })
+        assertEquals(listOf("Austin", "Portland", "Seattle", "Elsewhere"), venues.byCity(null).map { it.city })
     }
 }
 
@@ -949,6 +968,14 @@ class HotMessApiTest {
         assertEquals(listOf("apple", "google"), methods?.methods)
         assertFalse(methods!!.facebook)
         assertTrue(methods.google)
+        assertFalse(methods.reviewCode)
+    }
+
+    @Test
+    fun offersAppReviewCodesOnlyWhileTheAPIListsThem() = runTest {
+        val (api, _) = api("/v1/token/methods?host=hotmess.social" to """{"methods":["facebook","review_code"]}""")
+
+        assertTrue(api.signInMethods("hotmess.social")!!.reviewCode)
     }
 
     @Test
