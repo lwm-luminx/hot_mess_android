@@ -190,6 +190,7 @@ object Documents {
               $PROFILE_SOCIAL_LINKS
               friends { list { nodes { $FRIEND_OUT_FIELDS } } }
               ping { friendPings { $PING_FIELDS } }
+              ordering { url }
             }
           }
         }

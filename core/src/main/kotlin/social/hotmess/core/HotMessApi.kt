@@ -126,6 +126,7 @@ class HotMessApi(val client: AudienceKitClient) {
             friends = venueFriends,
             friendPings = venue.friendPings,
             onNow = venue.people?.onNow.orEmpty(),
+            orderingUrl = venue.orderingUrl,
         )
     }
 
@@ -824,6 +825,8 @@ data class VenueOverview(
     val friendPings: List<Ping> = emptyList(),
     /** Who's on there right now. */
     val onNow: List<Appearance> = emptyList(),
+    /** Its own ordering page (e.g. its Toast online ordering), which the Order button opens. */
+    val orderingUrl: String? = null,
 ) {
     /** The next two events, near the top of the venue screen. */
     val comingUp: List<Event> get() = events.take(2)
@@ -1021,6 +1024,10 @@ private data class VenuesResponse(@SerialName("venues") val venuesMixin: VenuesM
 @Serializable
 private data class Nodes<T>(val nodes: List<T> = emptyList())
 
+/** `ordering { url }`: a venue's own ordering page. */
+@Serializable
+data class OrderingMixin(val url: String? = null)
+
 /** A venue plus its events, which GraphQL nests in one object. */
 @Serializable
 private data class VenueNode(
@@ -1039,8 +1046,12 @@ private data class VenueNode(
     val friends: FriendsMixin? = null,
     val ping: PingFeedMixin? = null,
     val people: VenuePeopleMixin? = null,
+    val ordering: OrderingMixin? = null,
 ) {
     val friendPings: List<Ping> get() = ping?.friendPings.orEmpty()
+
+    /** Its own ordering page (only https), when it has one: the ordering mixin is a facet. */
+    val orderingUrl: String? get() = ordering?.url?.takeIf { it.startsWith("https://", ignoreCase = true) }
 
     fun venue() = Venue(
         id = id,
