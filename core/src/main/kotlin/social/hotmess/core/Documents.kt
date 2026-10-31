@@ -54,9 +54,13 @@ object Documents {
     /** Who's on at a venue right now, in its people mixin. */
     const val ON_NOW_FIELDS: String = "people { onNow { nodes { id role startsAt endsAt person { id name avatarUrl } } } }"
 
-    /** A lineup entry as a chat room shows it: who, as what, where it is in the night, and its set when it has a hard start. */
+    /**
+     * A lineup entry as a chat room shows it: who, as what, where it is in the night, and its set when it has a hard
+     * start; an act's scenes and a break's scene before it, which the room lists in turn.
+     */
     const val LINEUP_ENTRY_FIELDS: String =
-        "id kind role state startTiming startsAt endsAt title person { id name avatarUrl } people { nodes { id name avatarUrl } }"
+        "id kind role state startTiming startsAt endsAt title person { id name avatarUrl } people { nodes { id name avatarUrl } } " +
+            "scenes { id performers { id name avatarUrl } wentOnAt cameOffAt } afterScene { id }"
 
     const val FRIEND_FIELDS: String = "id name facebookId avatarUrl"
 

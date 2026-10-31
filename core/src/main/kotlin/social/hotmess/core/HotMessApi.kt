@@ -134,12 +134,13 @@ class HotMessApi(val client: AudienceKitClient) {
     suspend fun venueLineup(id: String): VenueNight {
         val venue = query(Documents.VENUE_LINEUP, VenueLineupResponse.serializer(), graphQLVariables("id" to id)).venue
             ?: throw ApiError.NotFound
+        val order = venue.people?.runningOrder?.nodes.orEmpty().filterNotNull()
         return VenueNight(
             venueId = venue.id,
             name = venue.name,
             photoUrl = venue.photoUrl,
-            entries = venue.people?.runningOrder?.nodes.orEmpty().filterNotNull(),
-            upNextId = venue.people?.upNext?.id,
+            entries = order.inTurn(),
+            upNextId = order.turnId(venue.people?.upNext?.id, LineupState.UPCOMING),
         )
     }
 
