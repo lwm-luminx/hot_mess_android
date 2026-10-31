@@ -832,10 +832,12 @@ data class VenueOverview(
     val laterEvents: List<Event> get() = events.drop(2)
 }
 
-/** Visible venues, those in [localeId] first, then by the audience's order and name. */
+/**
+ * Visible venues, those in [localeId] first, each keeping the order the API lists them in: the audience's order, with
+ * community spaces (places that host events but aren't venues to go out to) after the rest.
+ */
 fun List<Venue>.sortedForList(localeId: String?): List<Venue> =
-    filterNot { it.hidden }
-        .sortedWith(compareBy<Venue> { if (it.isIn(localeId)) 0 else 1 }.thenBy { it.order }.thenBy { it.name.lowercase() })
+    filterNot { it.hidden }.sortedBy { if (it.isIn(localeId)) 0 else 1 }
 
 /** One city's venues in the Everywhere list. */
 data class VenueCityGroup(val city: String, val venues: List<Venue>)

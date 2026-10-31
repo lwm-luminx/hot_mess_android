@@ -282,6 +282,9 @@ fun EventScreen(id: String, navigator: Navigator) {
                 } else {
                     item { DetailSection("Venue") { EmptyRow(Formatting.TO_BE_ANNOUNCED) } }
                 }
+                cardSection("presented-by", "Presented by", loaded.organizers, key = { it.id }) { organizer ->
+                    PersonCard(organizer, onClick = { navigator.open(AppRoute.PersonDetail(organizer.id)) })
+                }
                 cardSection("lineup", "Lineup", loaded.people, key = { it.id }) { person ->
                     PersonCard(person, onClick = { navigator.open(AppRoute.PersonDetail(person.id)) })
                 }
