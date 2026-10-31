@@ -244,7 +244,7 @@ object Documents {
               $EVENT_FIELDS
               tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } } }
               venue { venue { id $VENUE_COVER_FIELDS } }
-              people { lineup { nodes { $PERSON_FIELDS } } }
+              people { lineup { nodes { $PERSON_FIELDS } } organizers { nodes { $PERSON_FIELDS } } }
               ping { friendPings { $PING_FIELDS } }
             }
           }

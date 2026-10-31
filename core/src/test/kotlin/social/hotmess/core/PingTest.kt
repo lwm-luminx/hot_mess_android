@@ -137,10 +137,11 @@ class PingLogicTest {
                 event("tomorrow", "2026-10-11T03:00:00Z"),
                 event("yesterday", "2026-10-09T03:00:00Z"),
             ),
+            // In the API's order, which the choices keep.
             venues = listOf(
-                Venue(id = "b", name = "Bar", locale = LocaleSummary(locale)),
-                Venue(id = "x", name = "Elsewhere", locale = LocaleSummary("22222222-2222-2222-2222-222222222222")),
                 Venue(id = "a", name = "Arc", locale = LocaleSummary(locale)),
+                Venue(id = "x", name = "Elsewhere", locale = LocaleSummary("22222222-2222-2222-2222-222222222222")),
+                Venue(id = "b", name = "Bar", locale = LocaleSummary(locale)),
                 Venue(id = "h", name = "Hidden", hidden = true, locale = LocaleSummary(locale)),
             ),
             localeId = locale,
