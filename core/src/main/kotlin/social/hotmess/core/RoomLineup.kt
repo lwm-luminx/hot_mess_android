@@ -27,7 +27,22 @@ data class LineupEntry(
     /** Who, or the first of them; null for an intermission. */
     val person: Person? = null,
     @SerialName("people") private val peopleNodes: Connection<Person>? = null,
+    /** An act's scenes (its numbers, each with who's on) in order; empty for anything else. [inTurn] lists them. */
+    val scenes: List<Scene> = emptyList(),
+    /** A break inside an act: the scene it follows. */
+    val afterScene: Ref? = null,
 ) {
+    /** One number in an act: who's on it, and when advancing put it on and took it off. */
+    @Serializable
+    data class Scene(
+        val id: String,
+        val performers: List<Person?> = emptyList(),
+        @Serializable(with = InstantSerializer::class) val wentOnAt: Instant? = null,
+        @Serializable(with = InstantSerializer::class) val cameOffAt: Instant? = null,
+    )
+
+    @Serializable data class Ref(val id: String)
+
     /** Who's on it, in billing order; just [person] from an API that doesn't list them. */
     val people: List<Person> get() = peopleNodes?.nodes.orEmpty().filterNotNull().ifEmpty { listOfNotNull(person) }
 
@@ -47,12 +62,58 @@ data class LineupEntry(
     /** Its billing, else its people's names ("Aurora Borealis & Lady Bunny Hop"). Listing names are public, so in full. */
     val name: String get() = title?.takeIf { it.isNotBlank() } ?: people.map { it.name }.filter { it.isNotBlank() }.joinToString(" & ")
 
+    /**
+     * Its scenes in turn, each an entry of its own: the scene's ID and performers (else the act's people), no billing,
+     * and a state that's the act's and, in an act on now, as advancing marked it. In an act on now with no scene put
+     * on yet (run as one act), its first scene is on. Just itself without scenes.
+     */
+    fun turns(): List<LineupEntry> {
+        if (scenes.isEmpty() || isIntermission) return listOf(this)
+        val started = scenes.any { it.wentOnAt != null }
+        return scenes.mapIndexed { index, scene ->
+            val sceneState = when {
+                state != LineupState.ON -> state
+                scene.cameOffAt != null -> LineupState.DONE
+                scene.wentOnAt != null -> LineupState.ON
+                !started && index == 0 -> LineupState.ON
+                else -> LineupState.UPCOMING
+            }
+            val performers = scene.performers.filterNotNull().ifEmpty { people }
+            LineupEntry(
+                id = scene.id, kindName = kindName, roleName = roleName, stateName = sceneState.name,
+                startTimingName = if (index == 0) startTimingName else "NONE", startsAt = if (index == 0) startsAt else null,
+                person = performers.firstOrNull(), peopleNodes = Connection(performers),
+            )
+        }
+    }
+
     /** Its set, "9:00 PM – close" until it has an end time, for a hard start only; null otherwise. */
     fun hours(zone: ZoneId = ZoneId.systemDefault(), locale: Locale = Locale.getDefault()): String? {
         val start = startsAt?.takeIf { isHardStart } ?: return null
         val time = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).withLocale(locale).withZone(zone)
         return "${time.format(start)} – ${endsAt?.let(time::format) ?: "close"}"
     }
+}
+
+/**
+ * A running order as it runs: an act with scenes is each of its scenes in turn (who's on, not its billing like "First
+ * Set"), each followed by the breaks after it.
+ */
+fun List<LineupEntry>.inTurn(): List<LineupEntry> {
+    val sceneIds = filter { !it.isIntermission }.flatMap { act -> act.scenes.map { it.id } }.toSet()
+    val inside = { entry: LineupEntry -> entry.afterScene?.id in sceneIds }
+    val after = filter(inside).groupBy { it.afterScene?.id }
+    return filterNot(inside).flatMap { entry ->
+        if (entry.scenes.isEmpty() || entry.isIntermission) listOf(entry)
+        else entry.scenes.zip(entry.turns()).flatMap { (scene, turn) -> listOf(turn) + after[scene.id].orEmpty() }
+    }
+}
+
+/** The entry [inTurn] lists for [id] (an act's, as `upNext` gives it): its scene in [state], else its first. */
+fun List<LineupEntry>.turnId(id: String?, state: LineupState): String? {
+    val act = firstOrNull { it.id == id }?.takeIf { it.scenes.isNotEmpty() && !it.isIntermission } ?: return id
+    val turns = act.turns()
+    return (turns.firstOrNull { it.state == state } ?: turns.firstOrNull())?.id
 }
 
 /** Where a lineup entry is in its night (GraphQL's AppearanceState). */
