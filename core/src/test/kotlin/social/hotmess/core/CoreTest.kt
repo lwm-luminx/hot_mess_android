@@ -169,10 +169,11 @@ class ListingTest {
     fun venuesInTheLocaleComeFirstAndHiddenOnesAreLeftOut() {
         val here = "11111111-1111-1111-1111-111111111111"
         val there = "22222222-2222-2222-2222-222222222222"
+        // In the API's order: the audience's order, community spaces last.
         val venues = listOf(
             Venue(id = "1", name = "Zed", order = 0, locale = LocaleSummary(there)),
-            Venue(id = "2", name = "Bar", order = 1, locale = LocaleSummary(here)),
             Venue(id = "3", name = "Arc", order = 1, locale = LocaleSummary(here)),
+            Venue(id = "2", name = "Utah Pride Center", order = 0, locale = LocaleSummary(here)),
             Venue(id = "4", name = "Gone", hidden = true, locale = LocaleSummary(here)),
         )
 
