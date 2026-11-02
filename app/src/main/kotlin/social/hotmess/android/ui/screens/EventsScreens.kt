@@ -184,6 +184,7 @@ fun EventScreen(id: String, navigator: Navigator) {
         navigator.openPass(pass.id)
     }
     val checkoutState by checkout.state.collectAsStateWithLifecycle()
+    val payingCoatCheck by checkout.coatCheck.collectAsStateWithLifecycle()
     val userId = rememberUserId()
     var pingHere by rememberSaveable { mutableStateOf(false) }
     val actions = rememberPingActions { ping ->
@@ -212,6 +213,7 @@ fun EventScreen(id: String, navigator: Navigator) {
     val tonightVenueId = event?.takeIf { it.karaoke != null && PingChoices.isTonight(it) }?.venue?.id
     val tonightModel = tonightVenueId?.let { rememberTonightLineup(it) }
     val tonightLineup = tonightModel?.lineup?.collectAsStateWithLifecycle()?.value
+    val tonightLoaded = tonightModel?.loaded?.collectAsStateWithLifecycle()?.value ?: true
     val viewerName = graph.session.user.collectAsStateWithLifecycle().value?.name
     val listState = rememberLazyListState()
     val scrolled by rememberHeroCollapsed(listState)
@@ -273,7 +275,7 @@ fun EventScreen(id: String, navigator: Navigator) {
                         DetailSection("Cover") {
                             CoverRow(
                                 offer,
-                                paying = checkoutState == CoverCheckout.State.Working,
+                                paying = checkoutState == CoverCheckout.State.Working && !payingCoatCheck,
                                 onPay = { loaded.venue?.let { checkout.pay(it.id, it.name) } },
                                 onShowPass = { pass ->
                                     graph.passes.put(pass)
@@ -286,7 +288,7 @@ fun EventScreen(id: String, navigator: Navigator) {
                 val karaoke = loaded.karaoke
                 if (tonightModel != null && tonightLineup != null && tonightLineup.showsKaraoke) {
                     item(key = "karaoke-tonight") { TonightKaraoke(tonightModel, tonightLineup, viewerName) }
-                } else if (karaoke != null && (tonightModel == null || tonightLineup != null)) {
+                } else if (karaoke != null && tonightLoaded) {
                     item(key = "karaoke") {
                         EventKaraokeSection(karaoke, loaded.venue) { navigator.open(AppRoute.VenueDetail(it)) }
                     }
@@ -386,7 +388,7 @@ private fun HostedByLine(hosts: List<Person>, onOpen: (String) -> Unit) {
  * karaoke, where to sign up.
  */
 @Composable
-private fun EventKaraokeSection(karaoke: KaraokeNight, venue: Venue?, onOpenVenue: (String) -> Unit) {
+internal fun EventKaraokeSection(karaoke: KaraokeNight, venue: Venue?, onOpenVenue: (String) -> Unit) {
     val context = LocalContext.current
     var showingCode by remember { mutableStateOf(false) }
     DetailSection("Karaoke") {

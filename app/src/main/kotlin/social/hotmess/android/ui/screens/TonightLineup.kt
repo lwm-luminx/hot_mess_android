@@ -92,6 +92,10 @@ import social.hotmess.core.billing
 class TonightLineupModel(private val api: HotMessApi, val venueId: String, private val scope: CoroutineScope) {
     private val _lineup = MutableStateFlow<VenueLineup?>(null)
     val lineup: StateFlow<VenueLineup?> = _lineup.asStateFlow()
+    private val _loaded = MutableStateFlow(false)
+
+    /** Whether the first fetch has finished, lineup or not: until then a page holds back what stands in for it. */
+    val loaded: StateFlow<Boolean> = _loaded.asStateFlow()
 
     suspend fun refresh() {
         try {
@@ -101,6 +105,7 @@ class TonightLineupModel(private val api: HotMessApi, val venueId: String, priva
         } catch (_: Exception) {
             // An API without the lineup, or a dropped connection: the page keeps what it had (or its On now).
         }
+        _loaded.value = true
     }
 
     /** Signs up to sing or asks for a song; the error worded for the room, or null once it went. */

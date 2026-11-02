@@ -77,6 +77,9 @@ data class Venue(
     /** The user's cover for tonight, paid or being paid; asked for alongside [coverCharge]. */
     val viewerAdmission: Admission? get() = cover?.viewerAdmission
 
+    /** The user's coat check for tonight, paid or being paid; asked for alongside [coverCharge]. */
+    val viewerCoatCheck: Admission? get() = cover?.viewerCoatCheck
+
     val coordinate: Coordinate? get() = point?.let(Coordinate::fromWkt)
 
     /** What goes under the name in a list row. */
@@ -105,6 +108,7 @@ data class VenueTicketsMixin(val cover: VenueCoverMixin? = null)
 data class VenueCoverMixin(
     val charge: CoverCharge? = null,
     val viewerAdmission: Admission? = null,
+    val viewerCoatCheck: Admission? = null,
 )
 
 /** An event's tickets mixin (`Event.tickets`), read for the cover mixin the cover module nests in it. */
@@ -261,7 +265,28 @@ data class Person(
     val order: Int = 0,
     /** Their profile mixin, for the Facebook Page. Read through [facebookId] and [isLiked]. */
     private val profile: ListingProfile? = null,
+    /** On the People list: their home venue, the locales they're featured in and their events. */
+    @SerialName("venues") private val venuesMixin: PersonVenues? = null,
+    @SerialName("locales") private val localeRefs: List<LocaleRef>? = null,
+    @SerialName("events") private val gigsMixin: PersonGigs? = null,
 ) {
+    /** The locales they're based in: their home venue's, and every one they're featured in. */
+    val localeIds: Set<String>
+        get() = (listOfNotNull(venuesMixin?.home?.locale?.id) + localeRefs.orEmpty().map { it.id }).toSet()
+
+    /** Their gigs with a start time, soonest first. */
+    val gigs: List<Gig>
+        get() = gigsMixin?.involvements?.nodes.orEmpty().filterNotNull().mapNotNull { event ->
+            val date = event.startAt ?: return@mapNotNull null
+            Gig(date, event.venue?.venue?.locale?.id ?: event.locale?.id, event.venue?.venue?.name ?: event.venue?.name)
+        }.sortedBy { it.date }
+
+    /** Your friends at their home venue or a gig's venue right now, each once. */
+    val friendsOut: List<Friend>
+        get() = (listOfNotNull(venuesMixin?.home) + gigsMixin?.involvements?.nodes.orEmpty().mapNotNull { it?.venue?.venue })
+            .flatMap { it.friends }
+            .distinctBy { it.id }
+
     val facebookId: String? get() = profile?.facebook?.facebookId
 
     val isLiked: Boolean get() = profile?.facebook?.isLiked == true
