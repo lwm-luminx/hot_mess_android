@@ -392,7 +392,7 @@ private fun MySignupCard(lineup: VenueLineup, request: SongRequest, viewerName: 
             }
         }
     }
-    val songLine = request.singer?.takeIf { it.isNotBlank() && it != viewerName }?.let { "${request.songLine} · as $it" } ?: request.songLine
+    val songLine = request.singer?.takeIf { it.isNotBlank() && !it.equals(viewerName, ignoreCase = true) }?.let { "${request.songLine} · as $it" } ?: request.songLine
     var confirming by remember { mutableStateOf(false) }
     var removing by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<String?>(null) }

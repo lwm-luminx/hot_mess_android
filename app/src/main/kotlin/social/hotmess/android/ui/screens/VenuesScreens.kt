@@ -333,7 +333,8 @@ fun VenueScreen(id: String, navigator: Navigator) {
     val canGetHelp = rememberCanGetHelp(id)
     val tonightModel = rememberTonightLineup(id)
     val tonightLineup by tonightModel.lineup.collectAsStateWithLifecycle()
-    val viewerName = graph.session.user.collectAsStateWithLifecycle().value?.name?.takeIf { it.isNotBlank() }
+    // Non-null whenever signed in, even with no display name: it marks who may sign up, and prefills "Singing as".
+    val viewerName = graph.session.user.collectAsStateWithLifecycle().value?.name
     // Whether people say it has closed: its own request, so an API without suggestions still shows the venue.
     var reportedClosed by remember(id) { mutableStateOf(false) }
     LaunchedEffect(id) {
