@@ -144,7 +144,11 @@ data class ChatMixin(val open: Boolean = false, private val recentMessages: Conn
 data class EventPeopleMixin(
     private val lineup: Connection<Person>? = null,
     private val organizers: Connection<Person>? = null,
+    private val hosts: Connection<Person>? = null,
 ) {
+    /** Who hosts it ("Hosted by"). */
+    val hostedBy: List<Person> get() = hosts?.nodes.orEmpty().filterNotNull()
+
     val people: List<Person> get() = lineup?.nodes.orEmpty().filterNotNull()
 
     /** Who presents it, like a pride center putting it on at a bar. */
@@ -430,6 +434,8 @@ data class Event(
     private val tickets: EventTicketsMixin? = null,
     /** Its ping mixin; read through [friendPings]. Only the event screen asks for it. */
     @SerialName("ping") private val pingFeed: PingFeedMixin? = null,
+    /** A karaoke night's partner and session; null for any other event. Only the event screen asks for it. */
+    val karaoke: KaraokeNight? = null,
 ) {
     /** Whether the signed-in user is going, from the rsvp mixin; undecided when the event wasn't asked for it. */
     val rsvp: Rsvp get() = rsvpMixin?.mine ?: Rsvp.UNSURE
@@ -442,6 +448,9 @@ data class Event(
 
     /** Who's hosting or playing; only the event screen asks for it. */
     val people: List<Person> get() = peopleMixin?.people.orEmpty()
+
+    /** Who hosts it ("Hosted by"); only the event screen asks for it. */
+    val hosts: List<Person> get() = peopleMixin?.hostedBy.orEmpty()
 
     /** Who presents it ("Presented by"); only the event screen asks for it. */
     val organizers: List<Person> get() = peopleMixin?.presenters.orEmpty()

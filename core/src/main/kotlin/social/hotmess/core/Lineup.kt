@@ -96,6 +96,9 @@ data class VenueKaraoke(
 ) {
     val isAudienceKit: Boolean get() = provider == "audiencekit"
 
+    /** The join link, only when it's a web page: never an arbitrary scheme from a response. */
+    val joinLink: String? get() = Lineups.webLink(joinUrl)
+
     /** A partner's session to show tonight: the venue has one and tonight is a karaoke night. */
     val isPartnerSessionTonight: Boolean get() = provider != null && !isAudienceKit && tonight != false
 }
@@ -182,7 +185,33 @@ val LineupEntry.billing: String
         return name.takeIf { it.isNotBlank() } ?: if (isIntermission) "Intermission" else "Someone"
     }
 
+/**
+ * An event that's a karaoke night (`karaoke`, the IKaraokeNight mixin): its venue's partner and the night's session
+ * to join, or AudienceKit's own signups on the venue's page.
+ */
+@Serializable
+data class KaraokeNight(
+    val provider: String? = null,
+    val providerName: String? = null,
+    val sessionCode: String? = null,
+    val ownSessionCode: String? = null,
+    val joinUrl: String? = null,
+) {
+    /** The join link, only when it's a web page. */
+    val joinLink: String? get() = Lineups.webLink(joinUrl)
+
+    /** AudienceKit's own karaoke: people sign up on the venue's page or in its chat. */
+    val isAudienceKit: Boolean get() = provider == "audiencekit" && joinLink == null
+}
+
 object Lineups {
+    /** [url] when it's an http(s) page with a host and no credentials, else null. */
+    fun webLink(url: String?): String? {
+        val uri = url?.trim()?.takeIf { it.isNotEmpty() }?.let { runCatching { java.net.URI(it) }.getOrNull() } ?: return null
+        if (uri.scheme?.lowercase() !in setOf("http", "https") || uri.host.isNullOrEmpty() || uri.userInfo != null) return null
+        return uri.toString()
+    }
+
     /** "Ada", "Ada and Bo", "Ada, Bo and Cy". */
     fun andList(names: List<String>): String = when (names.size) {
         0 -> ""

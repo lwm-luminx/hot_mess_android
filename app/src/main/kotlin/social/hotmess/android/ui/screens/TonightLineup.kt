@@ -178,6 +178,67 @@ fun TonightLineupSection(
 
 private val LineupEntry.personId: String? get() = people.firstOrNull()?.id
 
+/**
+ * An event's karaoke on the night, as iOS's event page shows it: the venue's karaoke (or a partner's session to join)
+ * with its own "Sign up to sing", and song requests with "Request a song", since an event has no lineup strip.
+ */
+@Composable
+fun TonightKaraoke(model: TonightLineupModel, lineup: VenueLineup, viewerName: String?) {
+    var asking by remember { mutableStateOf<SongRequestKind?>(null) }
+    val ask = if (viewerName == null) null else { kind: SongRequestKind -> asking = kind }
+    Column(verticalArrangement = Arrangement.spacedBy(Space.s5)) {
+        val session = lineup.karaokeSession
+        if (session != null && session.isPartnerSessionTonight) {
+            KaraokeJoinSection(session)
+        } else if (lineup.karaoke?.permitted == true || lineup.singers.isNotEmpty()) {
+            KaraokeSection(lineup, viewerName, model, onSignUp = ask?.let { add -> { add(SongRequestKind.KARAOKE) } })
+        }
+        if (lineup.songRequests?.let { it.permitted || it.mine.any { request -> request.state.isOpen } } == true) {
+            SongRequestsSection(lineup, model, onRequest = ask?.let { add -> { add(SongRequestKind.SONG) } })
+        }
+    }
+    asking?.let { kind ->
+        val window = if (kind == SongRequestKind.KARAOKE) lineup.karaoke else lineup.songRequests
+        SongRequestSheet(
+            kind = kind,
+            venueName = lineup.venueName,
+            hostName = window?.host?.billing,
+            viewerName = viewerName,
+            submit = { draft -> model.request(kind, draft) },
+            onDismiss = { asking = null },
+        )
+    }
+}
+
+/** Whether [TonightKaraoke] has anything to show. */
+val VenueLineup.showsKaraoke: Boolean
+    get() = karaokeSession?.isPartnerSessionTonight == true || karaoke?.permitted == true || singers.isNotEmpty() ||
+        songRequests?.permitted == true
+
+/** Sign up to sing (or Request a song): the primary button while open; greyed with the venue's reason while not. */
+@Composable
+private fun RequestButton(kind: SongRequestKind, window: SongRequestWindow, label: String, onClick: () -> Unit) {
+    if (!window.permitted) return
+    val karaoke = kind == SongRequestKind.KARAOKE
+    Column(verticalArrangement = Arrangement.spacedBy(Space.s1)) {
+        PrimaryButton(
+            label,
+            onClick = onClick,
+            enabled = window.open,
+            icon = if (karaoke) Icons.Rounded.Mic else Icons.Rounded.MusicNote,
+            modifier = Modifier.fillMaxWidth().testTag(if (karaoke) "karaoke.signUp" else "songs.request"),
+        )
+        if (!window.open) {
+            val reason = when {
+                window.closed -> (if (karaoke) "Signups closed" else "Requests closed") +
+                    if (karaoke) " · The singers already on the list still sing." else ""
+                else -> window.closedReason?.takeIf { it.isNotBlank() } ?: if (karaoke) "Signups open when a host is on." else "Requests open when a DJ is on."
+            }
+            Text(reason, style = HotMessType.caption, color = tokens.inkMuted)
+        }
+    }
+}
+
 /** The host on now, a step larger than the lineup, opening their page. */
 @Composable
 private fun HostRow(host: LineupEntry, onOpen: () -> Unit) {
@@ -288,7 +349,7 @@ private fun AddCard(kind: SongRequestKind, window: SongRequestWindow, onClick: (
 
 /** Karaoke: how many are singing, the viewer's own signup, and the next few singers (all of them behind See all). */
 @Composable
-private fun KaraokeSection(lineup: VenueLineup, viewerName: String?, model: TonightLineupModel) {
+private fun KaraokeSection(lineup: VenueLineup, viewerName: String?, model: TonightLineupModel, onSignUp: (() -> Unit)? = null) {
     val window = lineup.karaoke
     val singers = lineup.singers
     var showingAll by rememberSaveable { mutableStateOf(false) }
@@ -302,6 +363,10 @@ private fun KaraokeSection(lineup: VenueLineup, viewerName: String?, model: Toni
         }
         lineup.featuredSignup?.takeIf { it.state.isOpen || it.id !in dismissed }?.let { request ->
             MySignupCard(lineup, request, viewerName, model, onDismiss = { dismissed = dismissed + request.id })
+        }
+        val mine = window?.mine.orEmpty()
+        if (window != null && onSignUp != null && mine.none { it.state.isOpen }) {
+            RequestButton(SongRequestKind.KARAOKE, window, if (mine.isEmpty()) "Sign up to sing" else "Sing another", onSignUp)
         }
         val coming = lineup.karaokeEntries.filter { it.state != LineupState.DONE }
         val sung = lineup.karaokeEntries.count { it.state == LineupState.DONE && it.isSinger }
@@ -460,7 +525,7 @@ private fun KaraokeJoinSection(session: VenueKaraoke) {
         DetailSection(null) {
             Column(Modifier.padding(Space.s4), verticalArrangement = Arrangement.spacedBy(Space.s3)) {
                 val provider = session.providerName?.takeIf { it.isNotBlank() }
-                val url = session.joinUrl?.takeIf { it.isNotBlank() }
+                val url = session.joinLink
                 val code = session.sessionCode?.takeIf { it.isNotBlank() }
                 if (url != null) {
                     PrimaryButton(provider?.let { "Join $it session" } ?: "Join karaoke session", onClick = { context.openUrl(url) }, modifier = Modifier.fillMaxWidth(), icon = Icons.Rounded.Mic)
@@ -483,13 +548,14 @@ private fun KaraokeJoinSection(session: VenueKaraoke) {
 
 /** Song requests: what's playing, and the viewer's own with where they are and Remove while they wait. */
 @Composable
-private fun SongRequestsSection(lineup: VenueLineup, model: TonightLineupModel) {
+private fun SongRequestsSection(lineup: VenueLineup, model: TonightLineupModel, onRequest: (() -> Unit)? = null) {
     val window = lineup.songRequests ?: return
     val scope = rememberCoroutineScope()
     var failure by remember { mutableStateOf<String?>(null) }
     val mine = lineup.mySongRequests
     Column(verticalArrangement = Arrangement.spacedBy(Space.s2)) {
         SectionTitle("Song requests", Modifier.semantics { heading() })
+        if (onRequest != null) RequestButton(SongRequestKind.SONG, window, "Request a song", onRequest)
         DetailSection(null) {
             window.playing?.let { playing ->
                 RequestRow(Icons.Rounded.MusicNote, "Now playing", playing.songLine, accent = true)
@@ -516,6 +582,7 @@ private fun SongRequestsSection(lineup: VenueLineup, model: TonightLineupModel) 
                 val text = when {
                     window.closed -> "Requests are closed for tonight."
                     !window.open -> window.closedReason?.takeIf { it.isNotBlank() } ?: "Requests open when a DJ is on."
+                    onRequest != null -> "Nothing requested yet."
                     else -> "Ask for a song with the + in the lineup."
                 }
                 Text(text, style = HotMessType.body, color = tokens.inkMuted, modifier = Modifier.padding(Space.s4))
