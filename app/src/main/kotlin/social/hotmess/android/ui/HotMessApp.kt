@@ -67,6 +67,7 @@ import social.hotmess.android.ui.screens.SupportScreen
 import social.hotmess.android.ui.screens.TribePickerScreen
 import social.hotmess.android.ui.screens.EventsScreen
 import social.hotmess.android.ui.screens.LaunchScreen
+import social.hotmess.android.ui.screens.LocaleScreen
 import social.hotmess.android.ui.screens.LoginScreen
 import social.hotmess.android.ui.screens.MeScreen
 import social.hotmess.android.ui.screens.NowScreen
