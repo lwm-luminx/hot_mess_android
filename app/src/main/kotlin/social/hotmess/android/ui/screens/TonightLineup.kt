@@ -229,10 +229,13 @@ private fun RequestButton(kind: SongRequestKind, window: SongRequestWindow, labe
             modifier = Modifier.fillMaxWidth().testTag(if (karaoke) "karaoke.signUp" else "songs.request"),
         )
         if (!window.open || window.closed) {
+            val venueReason = window.closedReason?.takeIf { it.isNotBlank() }
             val reason = when {
-                window.closed -> (if (karaoke) "Signups closed" else "Requests closed") +
+                window.cutOff && !window.paused -> (if (karaoke) "Signups closed" else "Requests closed") +
                     if (karaoke) " · The singers already on the list still sing." else ""
-                else -> window.closedReason?.takeIf { it.isNotBlank() } ?: if (karaoke) "Signups open when a host is on." else "Requests open when a DJ is on."
+                venueReason != null -> venueReason
+                window.paused -> if (karaoke) "Signups are paused." else "Requests are paused."
+                else -> if (karaoke) "Signups open when a host is on." else "Requests open when a DJ is on."
             }
             Text(reason, style = HotMessType.caption, color = tokens.inkMuted)
         }
