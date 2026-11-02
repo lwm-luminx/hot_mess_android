@@ -224,11 +224,11 @@ private fun RequestButton(kind: SongRequestKind, window: SongRequestWindow, labe
         PrimaryButton(
             label,
             onClick = onClick,
-            enabled = window.open,
+            enabled = window.open && !window.closed,
             icon = if (karaoke) Icons.Rounded.Mic else Icons.Rounded.MusicNote,
             modifier = Modifier.fillMaxWidth().testTag(if (karaoke) "karaoke.signUp" else "songs.request"),
         )
-        if (!window.open) {
+        if (!window.open || window.closed) {
             val reason = when {
                 window.closed -> (if (karaoke) "Signups closed" else "Requests closed") +
                     if (karaoke) " · The singers already on the list still sing." else ""
