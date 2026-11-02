@@ -68,6 +68,7 @@ import social.hotmess.android.ui.ScreenScaffold
 import social.hotmess.android.ui.ShareLinkFailure
 import social.hotmess.android.ui.components.CardRows
 import social.hotmess.android.ui.components.ChatPeek
+import social.hotmess.android.ui.components.CoatCheckRow
 import social.hotmess.android.ui.components.CoverRow
 import social.hotmess.android.ui.components.DetailSection
 import social.hotmess.android.ui.components.EmptyRow
@@ -101,6 +102,7 @@ import social.hotmess.core.PostsSubject
 import social.hotmess.core.AdaptiveLayout
 import social.hotmess.core.AppRoute
 import social.hotmess.core.ChatRoom
+import social.hotmess.core.CoatCheckOffer
 import social.hotmess.core.CoverOffer
 import social.hotmess.core.Event
 import social.hotmess.core.Formatting
@@ -247,10 +249,10 @@ fun VenuesScreen(navigator: Navigator) {
     }
 }
 
-/** Switches the venues list between [city] and Everywhere. */
+/** Switches a list between [city] and everything ([allLabel]: Everywhere for venues, Everyone for people). */
 @Composable
-private fun VenueScopePicker(city: String, everywhere: Boolean, onChange: (Boolean) -> Unit) {
-    val options = listOf(city to false, "Everywhere" to true)
+internal fun VenueScopePicker(city: String, everywhere: Boolean, onChange: (Boolean) -> Unit, allLabel: String = "Everywhere") {
+    val options = listOf(city to false, allLabel to true)
     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
         options.forEachIndexed { index, (label, value) ->
             SegmentedButton(
@@ -323,6 +325,7 @@ fun VenueScreen(id: String, navigator: Navigator) {
         navigator.openPass(pass.id)
     }
     val checkoutState by checkout.state.collectAsStateWithLifecycle()
+    val payingCoatCheck by checkout.coatCheck.collectAsStateWithLifecycle()
     val userId = rememberUserId()
     var pingHere by rememberSaveable { mutableStateOf(false) }
     val pairUpScope = rememberCoroutineScope()
@@ -415,8 +418,23 @@ fun VenueScreen(id: String, navigator: Navigator) {
                                 DetailSection("Cover") {
                                     CoverRow(
                                         offer,
-                                        paying = checkoutState == CoverCheckout.State.Working,
+                                        paying = checkoutState == CoverCheckout.State.Working && !payingCoatCheck,
                                         onPay = { checkout.pay(loaded.id, loaded.name) },
+                                        onShowPass = { pass ->
+                                            graph.passes.put(pass)
+                                            navigator.openPass(pass.id)
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                        CoatCheckOffer.of(loaded)?.let { coatCheck ->
+                            item(key = "coat-check") {
+                                DetailSection("Coat check") {
+                                    CoatCheckRow(
+                                        coatCheck,
+                                        paying = checkoutState == CoverCheckout.State.Working && payingCoatCheck,
+                                        onPay = { checkout.payCoatCheck(loaded.id, loaded.name) },
                                         onShowPass = { pass ->
                                             graph.passes.put(pass)
                                             navigator.openPass(pass.id)

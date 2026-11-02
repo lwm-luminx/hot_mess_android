@@ -18,6 +18,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.audiencekit.Admission
 import com.audiencekit.AdmissionStatus
+import com.audiencekit.CoverPurchase
 import com.stripe.android.PaymentConfiguration
 import com.stripe.android.paymentsheet.PaymentSheet
 import com.stripe.android.paymentsheet.PaymentSheetResult
@@ -65,6 +66,10 @@ class CoverCheckout(
     private val _state = MutableStateFlow<State>(State.Idle)
     val state: StateFlow<State> = _state.asStateFlow()
 
+    /** Whether the payment in progress (or that last failed) is a coat check rather than cover. */
+    private val _coatCheck = MutableStateFlow(false)
+    val coatCheck: StateFlow<Boolean> = _coatCheck.asStateFlow()
+
     /** Shows the payment sheet; set while the screen that owns it is on screen. */
     internal var present: ((clientSecret: String, configuration: PaymentSheet.Configuration) -> Unit)? = null
 
@@ -82,12 +87,19 @@ class CoverCheckout(
     }
 
     /** Pays tonight's cover at [venueId], or goes straight to the pass when it's already paid. */
-    fun pay(venueId: String, venueName: String) {
+    fun pay(venueId: String, venueName: String) = start(venueName, coatCheck = false) { api.buyCover(venueId) }
+
+    /** Pays tonight's coat check at [venueId] for [quantity] coats, the same way as cover. */
+    fun payCoatCheck(venueId: String, venueName: String, quantity: Int = 1) =
+        start(venueName, coatCheck = true) { api.buyCoatCheck(venueId, quantity) }
+
+    private fun start(venueName: String, coatCheck: Boolean, buy: suspend () -> CoverPurchase) {
         if (_state.value == State.Working) return
+        _coatCheck.value = coatCheck
         _state.value = State.Working
         viewModelScope.launch {
             try {
-                val purchase = api.buyCover(venueId)
+                val purchase = buy()
                 passes.put(purchase.admission)
                 when (val payment = CoverPayment.of(purchase)) {
                     is CoverPayment.Paid -> _state.value = State.Paid(payment.admission)
@@ -198,7 +210,7 @@ class CoverCheckout(
             countryCode = "US",
             currencyCode = admission.total.currency.uppercase(Locale.ROOT),
             amount = admission.total.cents.toLong(),
-            label = "Cover at $venueName",
+            label = if (admission.isCoatCheck) "Coat check at $venueName" else "Cover at $venueName",
         )
         return PaymentSheet.Configuration.Builder(venueName)
             .googlePay(googlePay)
@@ -251,15 +263,16 @@ fun rememberCoverCheckout(onPaid: (Admission) -> Unit): CoverCheckout {
     return checkout
 }
 
-/** Why paying cover didn't work, when it didn't. */
+/** Why paying cover (or coat check) didn't work, when it didn't. */
 @Composable
 fun CoverCheckoutFailure(checkout: CoverCheckout) {
     val state by checkout.state.collectAsStateWithLifecycle()
+    val coatCheck by checkout.coatCheck.collectAsStateWithLifecycle()
     val failed = state as? CoverCheckout.State.Failed ?: return
     AlertDialog(
         onDismissRequest = checkout::dismiss,
         confirmButton = { TextButton(onClick = checkout::dismiss) { Text("OK") } },
-        title = { Text("Couldn't pay cover") },
+        title = { Text(if (coatCheck) "Couldn't pay coat check" else "Couldn't pay cover") },
         text = { Text(failed.message) },
     )
 }

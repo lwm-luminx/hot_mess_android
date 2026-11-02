@@ -71,6 +71,7 @@ import social.hotmess.android.ui.components.HeroScaffold
 import social.hotmess.android.ui.components.InfoRow
 import social.hotmess.android.ui.components.LoadStateView
 import social.hotmess.android.ui.components.OnNowSection
+import social.hotmess.android.ui.components.CoatCheckCard
 import social.hotmess.android.ui.components.PassCard
 import social.hotmess.android.ui.components.Presence
 import social.hotmess.android.ui.components.SkipTheLineCard
@@ -88,6 +89,7 @@ import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.AppRoute
 import social.hotmess.core.ChatLine
 import social.hotmess.core.CoverAction
+import social.hotmess.core.CoatCheckOffer
 import social.hotmess.core.CoverOffer
 import social.hotmess.core.Event
 import social.hotmess.core.Formatting
@@ -242,6 +244,7 @@ fun NowScreen(navigator: Navigator) {
         navigator.openPass(pass.id)
     }
     val checkoutState by checkout.state.collectAsStateWithLifecycle()
+    val payingCoatCheck by checkout.coatCheck.collectAsStateWithLifecycle()
 
     val listState = rememberLazyListState()
     val scrolled by rememberHeroCollapsed(listState)
@@ -250,6 +253,11 @@ fun NowScreen(navigator: Navigator) {
     // The venue Now is about, when it places the user there (not a list of nearby ones), and whether Safety shows.
     val helpAt = state.valueOrNull?.takeIf { it.venues == null }?.venue
     val canGetHelp = rememberCanGetHelp(helpAt?.id)
+    // At a venue, tonight as its page shows it: the host, the lineup strip, karaoke signups and song requests.
+    val lineupModel = helpAt?.let { rememberTonightLineup(it.id) }
+    val lineup = lineupModel?.lineup?.collectAsStateWithLifecycle()?.value?.takeIf { !it.isEmpty }
+    val lineupLoaded = lineupModel?.loaded?.collectAsStateWithLifecycle()?.value ?: true
+    val viewerName = graph.session.user.collectAsStateWithLifecycle().value?.name
     HeroScaffold(
         title = title,
         tone = heroTone,
@@ -323,10 +331,23 @@ fun NowScreen(navigator: Navigator) {
                     cardLayout.cards.forEach { card ->
                         when (card.kind) {
                             CardKind.NOW_STAGE -> {
-                                // Who's on.
-                                if (now.onNow.isNotEmpty()) {
-                                    item(key = "on-now") {
-                                        OnNowSection(now.onNow) { navigator.open(AppRoute.PersonDetail(it.person.id)) }
+                                if (lineupModel != null && lineup != null) {
+                                    item(key = "tonight") {
+                                        TonightLineupSection(lineupModel, lineup, viewerName) { navigator.open(AppRoute.PersonDetail(it)) }
+                                    }
+                                } else {
+                                    // Until the lineup loads, or from an API without it: who's on, and the event's
+                                    // karaoke session (held back while loading, so its pointer doesn't flash first).
+                                    if (now.onNow.isNotEmpty()) {
+                                        item(key = "on-now") {
+                                            OnNowSection(now.onNow) { navigator.open(AppRoute.PersonDetail(it.person.id)) }
+                                        }
+                                    }
+                                    val karaoke = now.event?.karaoke
+                                    if (karaoke != null && now.venues == null && lineupLoaded) {
+                                        item(key = "karaoke") {
+                                            EventKaraokeSection(karaoke, now.event?.venue ?: now.venue) { navigator.open(AppRoute.VenueDetail(it)) }
+                                        }
                                     }
                                 }
                                 // At a venue: its photos, led by the camera; what you take goes on the stage's pages too.
@@ -388,7 +409,7 @@ fun NowScreen(navigator: Navigator) {
                             CardKind.VENUES_FRIENDS ->
                                 if (now.venue == null && cardLayout.card(CardKind.PINGS) == null) whereFriendsAre(now.friendVenues, navigator)
                             CardKind.PINGS -> {
-                                coverCards(now, checkout, checkoutState, navigator)
+                                coverCards(now, checkout, checkoutState, payingCoatCheck, navigator)
                                 val askAbout = planCheck.venueToAsk(now.myPing, Instant.now())
                                     ?.let { id -> now.venue?.takeIf { RecordId.same(it.id, id) } }
                                 tonight(
@@ -413,7 +434,7 @@ fun NowScreen(navigator: Navigator) {
                         }
                     }
                     // Passes and the cover depend on this device, so they aren't cards: they go just above pings.
-                    if (cardLayout.card(CardKind.PINGS) == null) coverCards(now, checkout, checkoutState, navigator)
+                    if (cardLayout.card(CardKind.PINGS) == null) coverCards(now, checkout, checkoutState, payingCoatCheck, navigator)
                 }
             }
         }
@@ -476,11 +497,13 @@ private fun LazyListScope.coverCards(
     now: Now,
     checkout: CoverCheckout,
     checkoutState: CoverCheckout.State,
+    payingCoatCheck: Boolean,
     navigator: Navigator,
 ) {
     val venue = now.venue ?: return
     val offer = CoverOffer.of(venue)
     val pass = offer?.pass
+    val working = checkoutState == CoverCheckout.State.Working
     when {
         pass != null -> item(key = "pass") {
             val graph = LocalAppGraph.current
@@ -492,9 +515,24 @@ private fun LazyListScope.coverCards(
         offer != null && offer.action == CoverAction.PAY -> item(key = "cover") {
             SkipTheLineCard(
                 offer,
-                paying = checkoutState == CoverCheckout.State.Working,
+                paying = working && !payingCoatCheck,
                 onPay = { checkout.pay(venue.id, venue.name) },
             )
+        }
+    }
+    // Then the coat check: its pass once paid, else the way to pay it when it can be paid here.
+    val coatCheck = CoatCheckOffer.of(venue)
+    val coatPass = coatCheck?.pass
+    when {
+        coatPass != null -> item(key = "coat-check-pass") {
+            val graph = LocalAppGraph.current
+            PassCard(coatPass, venue.name) {
+                graph.passes.put(coatPass)
+                navigator.openPass(coatPass.id)
+            }
+        }
+        coatCheck != null && coatCheck.action == CoverAction.PAY -> item(key = "coat-check") {
+            CoatCheckCard(coatCheck, paying = working && payingCoatCheck, onPay = { checkout.payCoatCheck(venue.id, venue.name) })
         }
     }
 }
