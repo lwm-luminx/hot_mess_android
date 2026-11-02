@@ -18,6 +18,7 @@ browser = "1.9.0"
 credentials = "1.5.0-rc01"
 googleid = "1.1.1"
 play-services-auth = "21.3.0"
+play-app-update = "2.1.0"
 maplibre = "13.6.1"
 firebase-messaging = "24.1.0"
 stripe = "23.22.0"
@@ -45,6 +46,7 @@ androidx-credentials = { module = "androidx.credentials:credentials", version.re
 androidx-credentials-play-services-auth = { module = "androidx.credentials:credentials-play-services-auth", version.ref = "credentials" }
 googleid = { module = "com.google.android.libraries.identity.googleid:googleid", version.ref = "googleid" }
 play-services-auth = { module = "com.google.android.gms:play-services-auth", version.ref = "play-services-auth" }
+play-app-update-ktx = { module = "com.google.android.play:app-update-ktx", version.ref = "play-app-update" }
 facebook-login = { module = "com.facebook.android:facebook-login", version.ref = "facebook" }
 androidx-fragment = { module = "androidx.fragment:fragment-ktx", version.ref = "fragment" }
 androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }

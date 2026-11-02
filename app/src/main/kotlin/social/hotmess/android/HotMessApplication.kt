@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
+import social.hotmess.android.updates.AppUpdates
 import com.audiencekit.android.AudienceKitClient
 import com.newrelic.agent.android.NewRelic
 import kotlinx.coroutines.CoroutineScope
@@ -70,6 +71,9 @@ class AppGraph(context: Context, val configuration: AppConfiguration = AppConfig
 
     /** The user's cover passes, kept so an opened pass still works with no signal at the door. */
     val passes = PassBook()
+
+    /** Whether a newer build is on Google Play (Me › About). */
+    val updates = AppUpdates(context.applicationContext, scope)
 
     /** Square's card entry, for Square venues' cover; MainActivity passes it card entry's result. */
     val squareCardEntry = SquareCardEntry()
@@ -170,6 +174,7 @@ class HotMessApplication : Application() {
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onStart(owner: LifecycleOwner) {
                 if (graph.session.isSignedIn) graph.location.start()
+                graph.updates.checkIfDue()
                 // Your notifications come over the cable while the app is in front (and signed in).
                 graph.setForeground(true)
             }

@@ -275,6 +275,8 @@ dependencies {
     implementation(libs.googleid)
     // Google's AuthorizationClient, for the scope that reads a Google account's other emails.
     implementation(libs.play.services.auth)
+    // Whether a newer build is on Google Play, for Me › About.
+    implementation(libs.play.app.update.ktx)
     // Sign-in through the Facebook app. Facebook Login brings an old Fragment; the Activity Result API needs 1.3
     // or later.
     implementation(libs.facebook.login)

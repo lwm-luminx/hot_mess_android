@@ -1,5 +1,12 @@
 package social.hotmess.android.ui.screens
 
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material.icons.rounded.SystemUpdate
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Shop
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
+import social.hotmess.android.updates.AppUpdates
 import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.background
@@ -458,6 +465,7 @@ fun MeScreen(navigator: Navigator) {
                 DetailSection("About") {
                     InfoRow("Version", "${configuration.versionName} (${configuration.versionCode})")
                     RowDivider()
+                    AboutUpdateRows(graph.updates)
                     InfoRow("Facebook", configuration.facebookEnvironment)
                     RowDivider()
                     val server = configuration.apiServer
@@ -649,4 +657,64 @@ private fun SwitchRow(title: String, detail: String, checked: Boolean, icon: Ima
 private fun listingNames(listings: List<ManagedListings.Listing>): String {
     val first = listings.firstOrNull()?.name.orEmpty()
     return if (listings.size > 1) "$first +${listings.size - 1}" else first
+}
+
+/**
+ * The update rows in Me › About, as iOS's AboutUpdateRows: where the build came from, whether a newer one is on
+ * Google Play, when we last looked, "Check for updates" and "Open on Google Play". A build that didn't come from
+ * Google Play shows none of them.
+ */
+@Composable
+private fun AboutUpdateRows(updates: AppUpdates) {
+    if (updates.source != AppUpdates.Source.GOOGLE_PLAY) return
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val state by updates.state.collectAsStateWithLifecycle()
+    InfoRow("Installed from", "Google Play")
+    RowDivider()
+    val status = state.status
+    InfoRow(
+        "Updates",
+        when (status) {
+            is AppUpdates.Status.Available -> "Update available (build ${status.versionCode})"
+            AppUpdates.Status.UpToDate -> "Up to date"
+            AppUpdates.Status.Failed -> "Couldn't check"
+            AppUpdates.Status.Unknown -> "Not checked yet"
+        },
+        icon = if (status is AppUpdates.Status.Available) Icons.Rounded.SystemUpdate else Icons.Rounded.CheckCircle,
+    )
+    RowDivider()
+    InfoRow("Last checked", state.lastChecked?.let(::lastCheckedText) ?: "Not yet")
+    RowDivider()
+    if (state.checking) {
+        Row(Modifier.fillMaxWidth().padding(Space.s4), horizontalArrangement = Arrangement.Center) {
+            CircularProgressIndicator(color = tokens.accent, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+        }
+    } else {
+        InfoRow("Check for updates", icon = Icons.Rounded.Refresh, onClick = { scope.launch { updates.check() } })
+    }
+    if (status is AppUpdates.Status.Available) {
+        RowDivider()
+        InfoRow(
+            "Open on Google Play",
+            icon = Icons.Rounded.Shop,
+            onClick = { updates.openStore(context) },
+            trailing = Icons.AutoMirrored.Rounded.OpenInNew,
+        )
+    }
+    RowDivider()
+}
+
+/** "Mon 9:14pm" within the last week, "Oct 12" before that. */
+private fun lastCheckedText(instant: java.time.Instant, now: java.time.Instant = java.time.Instant.now()): String {
+    val zone = java.time.ZoneId.systemDefault()
+    val date = instant.atZone(zone)
+    val days = java.time.temporal.ChronoUnit.DAYS.between(date.toLocalDate(), now.atZone(zone).toLocalDate())
+    val locale = java.util.Locale.getDefault()
+    return if (days in 0..6) {
+        val time = java.time.format.DateTimeFormatter.ofPattern("h:mma", locale).format(date).lowercase(locale)
+        "${date.dayOfWeek.getDisplayName(java.time.format.TextStyle.SHORT, locale)} $time"
+    } else {
+        java.time.format.DateTimeFormatter.ofPattern("MMM d", locale).format(date)
+    }
 }
