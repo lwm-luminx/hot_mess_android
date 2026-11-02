@@ -815,7 +815,8 @@ private fun VenueMessage.threadMessage(
     own = !isPostedAsAudience && isOutgoing(viewerId),
     role = if (isPostedAsAudience) null else role,
     asPlace = isPostedAsVenue,
-    rich = if (kind.isRich && kind != ChatKind.PROMPT) {
+    // A bot's lines are never cards, pinned or not.
+    rich = if (kind.isRich && kind != ChatKind.PROMPT && sender != ChatSenderKind.BOT) {
         RichContent(kind, title = title, body = caption, photoUrl = photoUrl, event = event, endsAt = endsAt, pinned = pinned)
     } else {
         null

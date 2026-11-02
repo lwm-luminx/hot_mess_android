@@ -678,6 +678,7 @@ internal fun rememberPeekMessages(lines: List<ChatLine>): List<ChatThreadMessage
                 senderId = when {
                     line.isPostedAsAudience -> "audience"
                     line.postedAsPerson -> "person:${line.name}"
+                    line.isBot -> "bot:${line.userId.lowercase()}"
                     else -> line.userId.ifEmpty { line.id }.lowercase()
                 },
                 senderName = if (line.isFromListing) line.name else graph.api.friends.displayName(line.userId, line.name),
@@ -689,6 +690,7 @@ internal fun rememberPeekMessages(lines: List<ChatLine>): List<ChatThreadMessage
                 asPlace = line.postedAsVenue,
                 asAudience = line.isPostedAsAudience,
                 asListing = line.postedAsPerson,
+                asBot = line.isBot,
                 friend = !line.isFromListing && graph.api.friends.fullName(line.userId) != null,
                 // A preview doesn't carry the prompt, so an answer is labelled "Prompt".
                 promptLabel = line.promptId?.let { "Prompt" },

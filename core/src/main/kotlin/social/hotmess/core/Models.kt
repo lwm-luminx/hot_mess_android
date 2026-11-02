@@ -520,6 +520,10 @@ data class FriendsMixin(
 @Serializable
 data class FriendVenue(val venue: Venue, val friendCount: Int = 0, val friends: List<Friend> = emptyList())
 
+/** A chat line's `sender { kind }`: GraphQL's ChatSenderKind. */
+@Serializable
+data class ChatLineSender(val kind: String? = null)
+
 /**
  * A line someone sent in a venue's or locale's chat room, as Now previews it. [message] is the line in
  * words, a rich message's summary included ("Shared an event: Sunset Social"), which is all a preview shows.
@@ -549,14 +553,19 @@ data class ChatLine(
     val postedAsAudience: Boolean = false,
     /** The prompt a text line answers, which labels its bubble "Prompt". */
     val promptId: String? = null,
+    /** Who it's from as the server says; read [isBot]. Null from a server that doesn't say. */
+    val sender: ChatLineSender? = null,
 ) {
     val role: ChatRole? get() = ChatRole.parse(roleName)
+
+    /** Software with a name, like Glam: its own art and a Bot tag. */
+    val isBot: Boolean get() = ChatSenderKind.parse(sender?.kind) == ChatSenderKind.BOT
 
     /** Posted as the audience: a prompt, even from a server that doesn't say so. */
     val isPostedAsAudience: Boolean get() = postedAsAudience || kind == ChatKind.PROMPT
 
     /** Posted as the venue, a person or the audience: a listing, so no presence and no friend's name for the sender. */
-    val isFromListing: Boolean get() = postedAsVenue || postedAsPerson || isPostedAsAudience
+    val isFromListing: Boolean get() = postedAsVenue || postedAsPerson || isPostedAsAudience || isBot
     val kind: ChatKind get() = ChatKind.parse(kindName)
 
     /** Whether the room still shows it: a special stops at its end time. */

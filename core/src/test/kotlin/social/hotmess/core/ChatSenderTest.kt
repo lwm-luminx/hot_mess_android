@@ -38,4 +38,14 @@ class ChatSenderTest {
         assertEquals(ChatSenderKind.PERSONA, line(""""message":"hi","userId":"u-1","role":"HOST","postedAsPerson":true,"person":{"id":"p-1"}""").sender)
         assertEquals(ChatSenderKind.SYSTEM, line(""""message":"q","userId":"u-0","kind":"PROMPT","postedAsAudience":true""").sender)
     }
+
+    @Test
+    fun previewsKnowABot() {
+        assertTrue(Documents.CHAT_LINE_FIELDS.contains("sender { kind }"))
+        val json = Json { ignoreUnknownKeys = true }
+        val glam = json.decodeFromString(ChatLine.serializer(), """{"id":"m-1","message":"Be kind","userId":"u-0","sender":{"kind":"BOT"}}""")
+        assertTrue(glam.isBot)
+        assertTrue(glam.isFromListing)
+        assertFalse(json.decodeFromString(ChatLine.serializer(), """{"id":"m-2","message":"hi","userId":"u-1"}""").isBot)
+    }
 }
