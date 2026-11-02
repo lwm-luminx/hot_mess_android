@@ -124,6 +124,8 @@ import com.audiencekit.LayoutScreen
 private val VENUES_FALLBACK_CARDS = listOf(CardKind.VENUES_ALL)
 private val VENUES_CARD_KINDS =
     listOf(CardKind.VENUES_TONIGHT, CardKind.VENUES_NEARBY, CardKind.VENUES_ALL, CardKind.WEB, CardKind.PROMO_SLOT)
+/** Everywhere: a card per locale, the viewer's first. Without them it lists every venue by city instead. */
+private val EVERYWHERE_CARD_KINDS = listOf(CardKind.LOCALES_SHOWCASE, CardKind.WEB, CardKind.PROMO_SLOT)
 
 /**
  * The venues on a map, then as a list. Once the device's city is known it opens on that city's venues; a segmented
@@ -146,6 +148,7 @@ fun VenuesScreen(navigator: Navigator) {
 
     LaunchedEffect(localeId) { loader.load(localeId) { graph.api.venues(localeId) } }
     val cardLayout = rememberScreenCards(LayoutScreen.VENUES, VENUES_CARD_KINDS, VENUES_FALLBACK_CARDS)
+    val everywhereLayout = rememberScreenCards(LayoutScreen.EVERYWHERE, EVERYWHERE_CARD_KINDS, emptyList())
 
     ScreenScaffold(title = branding?.audience?.name?.let { "$it venues" } ?: "Venues") {
         LoadStateView(state, onRetry = { loader.load(localeId) { graph.api.venues(localeId) } }) { venues ->
@@ -182,6 +185,23 @@ fun VenuesScreen(navigator: Navigator) {
                     val open = { venue: Venue -> navigator.open(AppRoute.VenueDetail(venue.id)) }
                     if (venues.isEmpty()) {
                         item { DetailSection("All venues") { EmptyRow("There are no venues here yet.") } }
+                    } else if (everywhereLayout.card(CardKind.LOCALES_SHOWCASE) != null && (name == null || everywhere)) {
+                        // The server's locales, each with some of its venues in turn; tapping one opens its page.
+                        everywhereLayout.cards.forEach { card ->
+                            when (card.kind) {
+                                CardKind.LOCALES_SHOWCASE -> card.localeId?.let { id ->
+                                    item(key = card.id) {
+                                        LocaleShowcaseCard(
+                                            name = card.title ?: "Venues",
+                                            venues = venues.pickedBy(card) { it.id },
+                                            onClick = { navigator.open(AppRoute.LocaleDetail(id, card.title ?: "Venues")) },
+                                        )
+                                    }
+                                }
+                                CardKind.WEB -> card.web?.let { content -> item(key = card.id) { WebCardView(content) } }
+                                CardKind.PROMO_SLOT -> item(key = card.id) { PromoSlotView(card, everywhereLayout.id, navigator) }
+                            }
+                        }
                     } else if (name == null || everywhere) {
                         venues.byCity(localeId).forEach { group ->
                             cardSection("city-${group.city}", group.city, group.venues, key = { it.id }) { venue ->

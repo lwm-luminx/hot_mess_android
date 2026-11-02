@@ -67,6 +67,7 @@ import social.hotmess.android.ui.screens.SupportScreen
 import social.hotmess.android.ui.screens.TribePickerScreen
 import social.hotmess.android.ui.screens.EventsScreen
 import social.hotmess.android.ui.screens.LaunchScreen
+import social.hotmess.android.ui.screens.LocaleScreen
 import social.hotmess.android.ui.screens.LoginScreen
 import social.hotmess.android.ui.screens.MeScreen
 import social.hotmess.android.ui.screens.NowScreen
@@ -108,6 +109,7 @@ import social.hotmess.core.postsSubject
 /** [kind] is the [PostsSubject]'s: venue, event, person or locale. */
 @Serializable data class PostsRoute(val kind: String, val id: String, val title: String)
 @Serializable data class UpdatesRoute(val localeId: String, val localeName: String)
+@Serializable data class LocaleRoute(val id: String, val name: String)
 @Serializable data object PassesRoute
 /** Get help at a venue the user is at ([address] for a friend or a ride). */
 @Serializable data class HelpRoute(
@@ -251,6 +253,7 @@ private fun MainShell(links: Flow<AppRoute>) {
                     is AppRoute.PostDetail -> PostRoute(route.id)
                     is AppRoute.Posts -> PostsRoute(route.subject.kind, route.subject.id, route.title)
                     is AppRoute.Updates -> UpdatesRoute(route.localeId, route.localeName)
+                    is AppRoute.LocaleDetail -> LocaleRoute(route.id, route.name)
                     is AppRoute.SafetyAlertHelp -> SafetyAlertRoute(route.id)
                 },
             )
@@ -402,6 +405,10 @@ private fun MainShell(links: Flow<AppRoute>) {
                 composable<UpdatesRoute> {
                     val route = it.toRoute<UpdatesRoute>()
                     UpdatesScreen(route.localeId, route.localeName, navigator)
+                }
+                composable<LocaleRoute> {
+                    val route = it.toRoute<LocaleRoute>()
+                    LocaleScreen(route.id, route.name, navigator)
                 }
             }
         }

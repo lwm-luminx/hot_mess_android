@@ -107,23 +107,33 @@ class ScreenCards(
 
 /**
  * A screen's cards, loaded for where the device is and asked for again as the server says (`refreshAfter`) while the
- * screen shows.
+ * screen shows. With [forLocale] they're that locale's, wherever the device is (the LOCALE screen).
  */
 @Composable
-fun rememberScreenCards(screen: LayoutScreen, kinds: List<String>, fallback: List<String>): CardLayout {
+fun rememberScreenCards(
+    screen: LayoutScreen,
+    kinds: List<String>,
+    fallback: List<String>,
+    forLocale: String? = null,
+): CardLayout {
     val graph = LocalAppGraph.current
     val coordinates by graph.location.coordinates.collectAsStateWithLifecycle()
     val locale by graph.location.locale.collectAsStateWithLifecycle()
-    val cards = remember(screen) {
+    val cards = remember(screen, forLocale) {
         ScreenCards(graph.audienceKit, screen, kinds, fallback, graph.configuration.versionName)
     }
-    LaunchedEffect(coordinates, locale?.id) { cards.load(coordinates, locale?.id, force = true) }
+    val position = coordinates.takeIf { forLocale == null }
+    LaunchedEffect(position, forLocale ?: locale?.id) { cards.load(position, forLocale ?: locale?.id, force = true) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(lifecycle) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
                 delay(cards.layout.value.refreshAfter * 1_000L)
-                cards.load(graph.location.coordinates.value, graph.location.locale.value?.id)
+                if (forLocale != null) {
+                    cards.load(null, forLocale)
+                } else {
+                    cards.load(graph.location.coordinates.value, graph.location.locale.value?.id)
+                }
             }
         }
     }
