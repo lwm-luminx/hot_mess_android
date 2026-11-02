@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
@@ -30,6 +31,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.audiencekit.CardKind
 import com.audiencekit.CardLayout
 import com.audiencekit.LayoutScreen
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import social.hotmess.android.ui.LocalAppGraph
 import social.hotmess.android.ui.Navigator
@@ -129,6 +131,7 @@ private data class LocalePage(val venues: List<Venue>, val events: List<Event>)
  * A locale's page, opened from its card on the Everywhere view: some of its events and its venues, in the order the
  * server's LOCALE layout gives. Without the layout it shows the locale's next events, then its venues.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LocaleScreen(id: String, name: String, navigator: Navigator) {
     val graph = LocalAppGraph.current
@@ -136,7 +139,15 @@ fun LocaleScreen(id: String, name: String, navigator: Navigator) {
     val state by loader.state.collectAsStateWithLifecycle()
     val refreshing by loader.isRefreshing.collectAsStateWithLifecycle()
     val fetch: suspend () -> LocalePage = {
-        LocalePage(graph.api.venues(id), runCatching { graph.api.events(id).allEvents }.getOrDefault(emptyList()))
+        // The venues show without the events, so an events failure only leaves them out; leaving the screen still cancels.
+        val events = try {
+            graph.api.events(id).allEvents
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            emptyList()
+        }
+        LocalePage(graph.api.venues(id), events)
     }
     LaunchedEffect(id) { loader.load(id, fetch = fetch) }
     val served = rememberScreenCards(LayoutScreen.LOCALE, LOCALE_CARD_KINDS, LOCALE_FALLBACK_CARDS, forLocale = id)
