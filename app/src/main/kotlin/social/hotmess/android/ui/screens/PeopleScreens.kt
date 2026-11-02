@@ -127,9 +127,18 @@ fun PeopleScreen(navigator: Navigator) {
                             }
                         }
                         if (city == null || everyone) {
-                            val card = cardLayout.card(CardKind.PEOPLE_EVERYONE)
-                            cardSection("people", null, people.rankedBy(card) { it.id }, key = { it.id }) { person ->
-                                PersonCard(person, onClick = { open(person) }, friends = person.friendsOut)
+                            // Everyone, in the server's order, with any announcement or promoted card around it.
+                            val cards = cardLayout.takeIf { it.card(CardKind.PEOPLE_EVERYONE) != null }
+                                ?: CardLayout.fallback(listOf(CardKind.PEOPLE_EVERYONE))
+                            cards.cards.forEach { card ->
+                                when (card.kind) {
+                                    CardKind.PEOPLE_EVERYONE ->
+                                        cardSection("people", null, people.rankedBy(card) { it.id }, key = { it.id }) { person ->
+                                            PersonCard(person, onClick = { open(person) }, friends = person.friendsOut)
+                                        }
+                                    CardKind.WEB -> card.web?.let { content -> item(key = card.id) { WebCardView(content) } }
+                                    CardKind.PROMO_SLOT -> item(key = card.id) { PromoSlotView(card, cards.id, navigator) }
+                                }
                             }
                         } else {
                             val local = listing.local(city.id)
