@@ -40,6 +40,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Chat
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.ArrowUpward
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.LocationOff
 import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material3.Icon
@@ -69,6 +70,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -91,6 +93,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.min
 import androidx.compose.ui.unit.sp
+import coil3.compose.SubcomposeAsyncImage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import social.hotmess.android.ui.theme.ContentMaxWidth
@@ -216,6 +219,10 @@ data class ChatThreadMessage(
     val opensProfile: Boolean = false,
     /** The tribes the viewer and the sender both picked: a BothMark on their avatar and a BothLine after their name. */
     val sharedTribes: List<SharedTribe> = emptyList(),
+    /** Software with a name, like Glam: its own art with no border or fill at [BotAvatarSize], a Bot tag, and plain words. */
+    val asBot: Boolean = false,
+    /** The viewer's own line, which a long press offers to delete for everyone. */
+    val deletable: Boolean = false,
 ) {
     /** Whether the room still shows it: a special disappears at its end time. */
     fun isShowing(at: Instant): Boolean {
@@ -552,16 +559,22 @@ private fun BubbleRow(
     val openProfile = onOpenProfile?.takeIf { message.opensProfile && !message.own }?.let { open -> { open(message) } }
     val profileLabel = message.senderName?.takeIf { it.isNotBlank() }?.let { "See $it's profile" } ?: "See their profile"
     // People are tiny; the venue and verified talent posting as their listing keep their 28.
-    val avatar = if (message.asPlace || message.asListing) ListingAvatarSize else avatarSize
-    val rich = message.rich?.takeIf { it.drawable }
-    // Someone else's line: a long press reports it or blocks its sender, also offered to screen readers.
-    val actions = onActions?.takeIf { !message.own }
+    val avatar = when {
+        message.asBot -> BotAvatarSize
+        message.asPlace || message.asListing -> ListingAvatarSize
+        else -> avatarSize
+    }
+    val rich = message.rich?.takeIf { it.drawable && !message.asBot }
+    // Someone else's line: a long press reports it or blocks its sender; the viewer's own, deletes it. Also offered
+    // to screen readers.
+    val actions = onActions?.takeIf { !message.own || message.deletable }
     val actionsModifier = if (actions == null) {
         Modifier
     } else {
+        val label = if (message.own) "Delete" else "Report or block"
         Modifier
             .pointerInput(message.id) { detectTapGestures(onLongPress = { actions(message) }) }
-            .semantics { customActions = listOf(CustomAccessibilityAction("Report or block") { actions(message); true }) }
+            .semantics { customActions = listOf(CustomAccessibilityAction(label) { actions(message); true }) }
     }
     Row(
         Modifier.fillMaxWidth().padding(bottom = if (entry.last) groupGap else 2.dp),
@@ -571,6 +584,8 @@ private fun BubbleRow(
         if (!message.own) {
             if (entry.last && message.asAudience) {
                 AudienceMark(message.senderName?.takeIf { it.isNotBlank() } ?: "Hot Mess", size = avatar)
+            } else if (entry.last && message.asBot) {
+                BotAvatar(message.avatarUrl, size = avatar)
             } else if (entry.last) {
                 val friendRing = tokens.accent
                 val shares = message.sharedTribes.isNotEmpty() && !message.asPlace && !message.asListing
@@ -620,7 +635,7 @@ private fun BubbleRow(
             horizontalAlignment = if (message.own) Alignment.End else Alignment.Start,
         ) {
             val name = message.senderName?.takeIf { it.isNotBlank() }
-            if (!message.own && entry.first && (name != null || message.role != null)) {
+            if (!message.own && entry.first && (name != null || message.role != null || message.asBot)) {
                 Row(
                     Modifier.widthIn(max = if (rich != null) richMax else bubbleMax).padding(start = Space.s3, bottom = 2.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -644,7 +659,7 @@ private fun BubbleRow(
                                 ),
                         )
                     }
-                    RoleTag(message.role)
+                    if (message.asBot) BotTag() else RoleTag(message.role)
                 }
                 if (!message.asPlace && !message.asListing && message.sharedTribes.isNotEmpty()) {
                     BothLine(message.sharedTribes, Modifier.padding(start = Space.s3, bottom = 2.dp))
@@ -659,7 +674,8 @@ private fun BubbleRow(
                     last = entry.last,
                     maxWidth = bubbleMax,
                     maxLines = maxLines,
-                    tinted = !message.own && (message.role == ChatRole.VENUE || message.role == ChatRole.HOST),
+                    tinted = !message.own && !message.asBot && (message.role == ChatRole.VENUE || message.role == ChatRole.HOST),
+                    plain = message.asBot,
                     label = message.promptLabel,
                     onLabelClick = message.promptId?.let { id -> onOpenPrompt?.let { open -> { open(id) } } },
                 )
@@ -684,6 +700,7 @@ fun ChatBubble(
     maxWidth: Dp = 280.dp,
     maxLines: Int = Int.MAX_VALUE,
     tinted: Boolean = false,
+    plain: Boolean = false,
     label: String? = null,
     onLabelClick: (() -> Unit)? = null,
 ) {
@@ -698,12 +715,13 @@ fun ChatBubble(
         tinted -> tokens.accentSoft
         else -> tokens.surfaceRaised
     }
+    // A bot's words have no bubble, so they sit close under its name.
     val bubble = modifier
         .widthIn(max = maxWidth)
-        .then(if (own || tinted) Modifier else Modifier.shadow(1.dp, shape))
+        .then(if (own || tinted || plain) Modifier else Modifier.shadow(1.dp, shape))
         .clip(shape)
-        .background(fill)
-        .padding(horizontal = Space.s3, vertical = Space.s2)
+        .then(if (plain) Modifier else Modifier.background(fill))
+        .padding(horizontal = Space.s3, vertical = if (plain) 2.dp else Space.s2)
     val ink = if (own) tokens.onAccent else tokens.ink
     if (label == null) {
         Text(text, style = HotMessType.body, color = ink, maxLines = maxLines, overflow = TextOverflow.Ellipsis, modifier = bubble)
@@ -734,6 +752,43 @@ fun RoleTag(role: ChatRole?, modifier: Modifier = Modifier) {
         maxLines = 1,
         modifier = modifier.clip(Radius.pill).background(fill).padding(horizontal = 6.dp),
     )
+}
+
+/** The tag after a bot's name: "Bot", in `control-fill` like Staff's. */
+@Composable
+fun BotTag(modifier: Modifier = Modifier) {
+    Text(
+        "Bot",
+        style = RoleTagText,
+        color = tokens.inkMuted,
+        maxLines = 1,
+        modifier = modifier.clip(Radius.pill).background(tokens.controlFill).padding(horizontal = 6.dp),
+    )
+}
+
+/** How big a bot draws: a persona's size with its ring, so Glam reads as a host, never a person. */
+val BotAvatarSize: Dp = 34.dp
+
+/**
+ * A bot's own art (Glam's disco ball) with no border, fill or presence, fitted rather than cropped; sparkles in
+ * `accent` until it loads, or when it has none.
+ */
+@Composable
+fun BotAvatar(url: String?, size: Dp = BotAvatarSize, modifier: Modifier = Modifier) {
+    Box(modifier.size(size).clearAndSetSemantics {}, contentAlignment = Alignment.Center) {
+        if (url.isNullOrBlank()) {
+            Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = tokens.accent, modifier = Modifier.size(size * 0.62f))
+        } else {
+            SubcomposeAsyncImage(
+                model = url,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                loading = { Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = tokens.accent, modifier = Modifier.size(size * 0.62f)) },
+                error = { Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = tokens.accent, modifier = Modifier.size(size * 0.62f)) },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+    }
 }
 
 private val RoleTagText = HotMessType.caption.copy(fontSize = 11.sp, lineHeight = 16.sp, letterSpacing = 0.02.em)

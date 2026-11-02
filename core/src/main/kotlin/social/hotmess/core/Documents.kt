@@ -26,7 +26,7 @@ object Documents {
 
     /** A chat line as a preview shows it: rich messages in words (`message`), with the sender's role and presence. */
     const val CHAT_LINE_FIELDS: String =
-        "id message name userId avatarUrl sentAt presence role kind endsAt postedAsVenue postedAsPerson postedAsAudience promptId"
+        "id message name userId avatarUrl sentAt presence role kind endsAt postedAsVenue postedAsPerson postedAsAudience promptId sender { kind }"
 
     /**
      * A room's last few chat lines, oldest first, in the venue's or locale's chat mixin (`chat { ... }`); empty unless

@@ -25,6 +25,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlin.coroutines.ContinuationInterceptor
 import kotlin.coroutines.EmptyCoroutineContext
 
@@ -215,6 +216,11 @@ class HotMessApi(val client: AudienceKitClient) {
         val data = mutate(ChatProtocol.SEND_MESSAGE, JsonObject.serializer(), mapOf("input" to ChatProtocol.sendInput(room, body, promptId)))
         val payload = data["sendMyChatMessage"] as? JsonObject
         return ChatProtocol.message(payload?.get("message"))
+    }
+
+    /** Takes back one of the signed-in user's own lines (`removeMyChatMessage`); the room removes it for everyone. */
+    suspend fun removeMyChatMessage(messageId: String) {
+        mutate(ChatProtocol.REMOVE_OWN_MESSAGE, JsonObject.serializer(), mapOf("messageId" to JsonPrimitive(messageId)))
     }
 
     // endregion
