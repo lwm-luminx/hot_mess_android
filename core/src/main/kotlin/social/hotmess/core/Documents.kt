@@ -52,10 +52,10 @@ object Documents {
         "id name startAt endAt facebookId bannerUrl isFeatured rsvp { mine } venue { venue { $VENUE_FIELDS } }"
 
     /** Who's on at a venue right now, in its people mixin. */
+    const val ON_NOW_FIELDS: String = "people { onNow { nodes { id role startsAt endsAt person { id name avatarUrl } } } }"
+
     /** A karaoke night's session (`IKaraokeNight`): the partner's to join, or AudienceKit's own. */
     const val KARAOKE_FIELDS: String = "karaoke { provider providerName sessionCode ownSessionCode joinUrl }"
-
-    const val ON_NOW_FIELDS: String = "people { onNow { nodes { id role startsAt endsAt person { id name avatarUrl } } } }"
 
     /**
      * A lineup entry as a chat room shows it: who, as what, where it is in the night, and its set when it has a hard
