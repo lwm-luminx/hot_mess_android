@@ -70,6 +70,12 @@ object Documents {
     /** Friends out now, with whether they can be reached (in chat, or by push). */
     const val FRIEND_OUT_FIELDS: String = "$FRIEND_FIELDS presence"
 
+    /** Where a person is local, for the People tab: home venue, featured locales and events, with friends out there. */
+    private const val PERSON_PLACE_FIELDS: String = "name locale { id } friends { list { nodes { $FRIEND_OUT_FIELDS } } }"
+    const val PERSON_LOCAL_FIELDS: String =
+        "venues { home { $PERSON_PLACE_FIELDS } } locales { id } " +
+            "events { involvements { nodes { startAt locale { id } venue { name venue { $PERSON_PLACE_FIELDS } } } } }"
+
     /** A Ping with its picks and who's in. Picks carry enough of the venue or event for a row. */
     const val PING_FIELDS: String =
         "id note createdAt expiresAt isMine joined reach user { $FRIEND_FIELDS } via { $FRIEND_FIELDS } " +
@@ -220,7 +226,7 @@ object Documents {
 
     val PEOPLE: String = """
         query People {
-          people { list { nodes { $PERSON_FIELDS order } } }
+          people { list { nodes { $PERSON_FIELDS order $PERSON_LOCAL_FIELDS } } }
         }
     """.trimIndent()
 

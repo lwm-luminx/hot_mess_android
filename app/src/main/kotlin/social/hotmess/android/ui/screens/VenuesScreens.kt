@@ -247,10 +247,10 @@ fun VenuesScreen(navigator: Navigator) {
     }
 }
 
-/** Switches the venues list between [city] and Everywhere. */
+/** Switches a list between [city] and everything ([allLabel]: Everywhere for venues, Everyone for people). */
 @Composable
-private fun VenueScopePicker(city: String, everywhere: Boolean, onChange: (Boolean) -> Unit) {
-    val options = listOf(city to false, "Everywhere" to true)
+internal fun VenueScopePicker(city: String, everywhere: Boolean, onChange: (Boolean) -> Unit, allLabel: String = "Everywhere") {
+    val options = listOf(city to false, allLabel to true)
     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
         options.forEachIndexed { index, (label, value) ->
             SegmentedButton(
