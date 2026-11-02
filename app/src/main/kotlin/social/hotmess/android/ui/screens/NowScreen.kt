@@ -247,11 +247,18 @@ fun NowScreen(navigator: Navigator) {
     val scrolled by rememberHeroCollapsed(listState)
     var heroTone by remember { mutableStateOf(PhotoTone.PLACEHOLDER) }
     val title = state.valueOrNull?.title?.takeIf { it.isNotBlank() } ?: "Now"
+    // The venue Now is about, when it places the user there (not a list of nearby ones), and whether Safety shows.
+    val helpAt = state.valueOrNull?.takeIf { it.venues == null }?.venue
+    val canGetHelp = rememberCanGetHelp(helpAt?.id)
     HeroScaffold(
         title = title,
         tone = heroTone,
         collapsed = state.valueOrNull == null || scrolled,
         actions = {
+            // At a venue, Safety sits by Ping, big and labelled, so it's in reach as you scroll.
+            if (canGetHelp && helpAt != null) {
+                SafetyButton(onClick = { navigator.openHelp(helpVenueOf(helpAt)) })
+            }
             // In the bar's own colour (the photo's, until it turns solid), like the icons beside it: accent pink
             // disappeared on some photos and on the bar's gradient.
             TextButton(onClick = { sheetOpen = true }, colors = ButtonDefaults.textButtonColors(contentColor = LocalContentColor.current)) {
@@ -292,6 +299,14 @@ fun NowScreen(navigator: Navigator) {
                                         Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = null)
                                     }
                                 }
+                            }
+                            // At the venue: Ping, Safety and its room, as on iOS.
+                            if (canGetHelp && helpAt != null) {
+                                HeroVenueActions(
+                                    onPing = { openPingSheet() },
+                                    onSafety = { navigator.openHelp(helpVenueOf(helpAt)) },
+                                    onChat = { navigator.openChat(helpAt.id, event?.name ?: helpAt.name) },
+                                )
                             }
                         }
                     },
