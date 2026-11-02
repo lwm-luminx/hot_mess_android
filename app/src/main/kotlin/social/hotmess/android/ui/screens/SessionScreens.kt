@@ -57,6 +57,12 @@ import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.LegalLinks
 import social.hotmess.core.SignInMethods
 import social.hotmess.core.VersionInfo
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.platform.testTag
+import social.hotmess.android.session.AgeGate
 
 /** While the session is restored. */
 @Composable
@@ -92,9 +98,30 @@ fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}, onAppleSi
     // A sign-in waiting on Cancel or Continue: the warning and what Continue does.
     var warned by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
     var enteringReviewCode by remember { mutableStateOf(false) }
+    // 18 or older: confirmed on this device before, or with the box below. Every way in waits for it.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var alreadyConfirmed by remember { mutableStateOf(AgeGate.isConfirmed(context)) }
+    var confirmedAge by remember { mutableStateOf(alreadyConfirmed) }
+    // A sign-in waiting on "I'm 18 or older".
+    var awaitingAge by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var underage by remember { mutableStateOf(false) }
+    // Stored once, so the box goes away even when this sign-in is cancelled or fails.
+    fun confirmAge() {
+        confirmedAge = true
+        alreadyConfirmed = true
+        AgeGate.confirm(context)
+    }
+    fun afterAge(signIn: () -> Unit) {
+        if (confirmedAge) {
+            confirmAge()
+            signIn()
+        } else {
+            awaitingAge = signIn
+        }
+    }
     fun begin(method: String, signIn: () -> Unit) {
         val warning = signInMethods?.warning(method)
-        if (warning == null) signIn() else warned = warning to signIn
+        if (warning == null) afterAge(signIn) else warned = warning to { afterAge(signIn) }
     }
 
     HotMessTheme(branding = branding?.theme, darkTheme = true) {
@@ -172,12 +199,28 @@ fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}, onAppleSi
                         color = Color.White.copy(alpha = 0.8f),
                         textAlign = TextAlign.Center,
                     )
+                    // "I confirm I am 18 or older", until the device has a confirmation.
+                    if (!alreadyConfirmed && !signingIn) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .toggleable(value = confirmedAge, role = Role.Checkbox, onValueChange = { confirmedAge = it })
+                                .testTag("login.ageCheckbox"),
+                        ) {
+                            Checkbox(
+                                checked = confirmedAge,
+                                onCheckedChange = null,
+                                colors = CheckboxDefaults.colors(checkedColor = Color.White, checkmarkColor = Color.Black, uncheckedColor = Color.White),
+                            )
+                            Text("I confirm I am 18 or older", style = HotMessType.bodySmall, color = Color.White, modifier = Modifier.padding(start = Space.s2))
+                        }
+                    }
                     if (signInMethods?.reviewCode == true && !signingIn) {
-                        TextButton(onClick = { enteringReviewCode = true }, enabled = asked) {
+                        TextButton(onClick = { afterAge { enteringReviewCode = true } }, enabled = asked) {
                             Text("Have an App Review code?", style = HotMessType.bodySmall, color = Color.White.copy(alpha = 0.85f))
                         }
                     }
-                    val context = androidx.compose.ui.platform.LocalContext.current
                     Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                         TextButton(onClick = { context.openUrl(LegalLinks.TERMS) }) {
                             Text("Terms of use", style = HotMessType.caption, color = Color.White)
@@ -201,6 +244,38 @@ fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}, onAppleSi
                     dismissButton = { TextButton(onClick = { warned = null }) { Text("Cancel") } },
                     title = { Text("Before you continue", style = HotMessType.heading) },
                     text = { Text(warning, style = HotMessType.body) },
+                    containerColor = tokens.surfaceRaised,
+                )
+            }
+
+            awaitingAge?.let { signIn ->
+                AlertDialog(
+                    onDismissRequest = { awaitingAge = null },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            awaitingAge = null
+                            confirmAge()
+                            signIn()
+                        }, modifier = Modifier.testTag("login.ageConfirm")) { Text("I'm 18 or older") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = {
+                            awaitingAge = null
+                            confirmedAge = false
+                            underage = true
+                        }) { Text("I'm not") }
+                    },
+                    title = { Text("Hot Mess is for adults", style = HotMessType.heading) },
+                    text = { Text("Confirm you're ${AgeGate.MINIMUM_AGE} or older to continue.", style = HotMessType.body) },
+                    containerColor = tokens.surfaceRaised,
+                )
+            }
+            if (underage) {
+                AlertDialog(
+                    onDismissRequest = { underage = false },
+                    confirmButton = { TextButton(onClick = { underage = false }) { Text("OK") } },
+                    title = { Text("Hot Mess is for adults", style = HotMessType.heading) },
+                    text = { Text("You need to be ${AgeGate.MINIMUM_AGE} or older to use Hot Mess. Thanks for stopping by.", style = HotMessType.body) },
                     containerColor = tokens.surfaceRaised,
                 )
             }

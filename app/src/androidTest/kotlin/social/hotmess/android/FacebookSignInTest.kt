@@ -71,6 +71,8 @@ class FacebookSignInTest {
         val signIn = device.wait(Until.findObject(inApp().text("Continue with Facebook")), TIMEOUT)
         assertNotNull("The sign-in screen didn't appear", signIn)
         signIn.click()
+        // A fresh install asks for the 18+ confirmation first (AgeGate).
+        device.wait(Until.findObject(inApp().text("I'm 18 or older")), SHORT_WAIT)?.click()
 
         walkFacebook()
 
@@ -240,6 +242,7 @@ class FacebookSignInTest {
 
     private companion object {
         const val TIMEOUT = 20_000L
+        const val SHORT_WAIT = 3_000L
         const val CHROME = "com.android.chrome"
         // Login for Business ends on "… has been connected to AudienceKit" with Got it.
         val CONTINUE: Pattern = Pattern.compile("(?i)continue|got it")
