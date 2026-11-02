@@ -77,6 +77,9 @@ data class Venue(
     /** The user's cover for tonight, paid or being paid; asked for alongside [coverCharge]. */
     val viewerAdmission: Admission? get() = cover?.viewerAdmission
 
+    /** The user's coat check for tonight, paid or being paid; asked for alongside [coverCharge]. */
+    val viewerCoatCheck: Admission? get() = cover?.viewerCoatCheck
+
     val coordinate: Coordinate? get() = point?.let(Coordinate::fromWkt)
 
     /** What goes under the name in a list row. */
@@ -105,6 +108,7 @@ data class VenueTicketsMixin(val cover: VenueCoverMixin? = null)
 data class VenueCoverMixin(
     val charge: CoverCharge? = null,
     val viewerAdmission: Admission? = null,
+    val viewerCoatCheck: Admission? = null,
 )
 
 /** An event's tickets mixin (`Event.tickets`), read for the cover mixin the cover module nests in it. */

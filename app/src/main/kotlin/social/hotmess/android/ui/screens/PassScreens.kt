@@ -1,5 +1,7 @@
 package social.hotmess.android.ui.screens
 
+import social.hotmess.core.quantityText
+import androidx.compose.material.icons.rounded.Checkroom
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,6 +13,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ConfirmationNumber
 import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material3.Icon
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -109,7 +112,7 @@ fun PassScreen(id: String, navigator: Navigator) {
         }
     }
 
-    ScreenScaffold(title = "Pass", onBack = navigator::back) {
+    ScreenScaffold(title = if (pass?.isCoatCheck == true) "Coat check" else "Pass", onBack = navigator::back) {
         when {
             pass != null -> Feed {
                 item {
@@ -159,7 +162,7 @@ fun PassScreen(id: String, navigator: Navigator) {
         val amount = Formatting.money(pass.total)
         AlertDialog(
             onDismissRequest = { confirmRefund = false },
-            title = { Text("Refund your cover?") },
+            title = { Text(if (pass.isCoatCheck) "Refund your coat check?" else "Refund your cover?") },
             text = { Text("$amount goes back to your card, and this pass stops working. Refunds take 5 to 10 days to show up.") },
             confirmButton = {
                 TextButton(onClick = {
@@ -195,9 +198,16 @@ private fun PassFace(pass: Admission, holderName: String, holderPhoto: String?) 
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(Space.s3),
         ) {
-            Text(pass.venue?.name ?: "Cover", style = HotMessType.title, color = tokens.ink, textAlign = TextAlign.Center)
+            if (pass.isCoatCheck) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s1)) {
+                    Icon(Icons.Rounded.Checkroom, contentDescription = null, tint = tokens.accentInk, modifier = Modifier.size(18.dp))
+                    Text("Coat check", style = HotMessType.caption, color = tokens.accentInk)
+                }
+            }
+            Text(pass.venue?.name ?: if (pass.isCoatCheck) "Coat check" else "Cover", style = HotMessType.title, color = tokens.ink, textAlign = TextAlign.Center)
             Text(
-                listOfNotNull(Formatting.night(pass.night), pass.event?.name).joinToString(" · "),
+                listOfNotNull(Formatting.night(pass.night), pass.event?.name?.takeUnless { pass.isCoatCheck }, pass.quantityText)
+                    .joinToString(" · "),
                 style = HotMessType.body,
                 color = tokens.inkMuted,
                 textAlign = TextAlign.Center,
@@ -216,8 +226,15 @@ private fun PassFace(pass: Admission, holderName: String, holderPhoto: String?) 
             if (code != null) {
                 Box(Modifier.widthIn(max = 360.dp).fillMaxWidth()) { QrCode(code, Modifier.fillMaxWidth()) }
                 LiveClock()
+                pass.claimCheckNumber?.takeIf { pass.isCoatCheck && it.isNotBlank() }?.let { ticket ->
+                    Text("Ticket $ticket", style = HotMessType.heading, color = tokens.ink)
+                }
                 Text(
-                    "Show this at the door. The code changes every 30 seconds, so screenshots don't work.",
+                    if (pass.isCoatCheck) {
+                        "Show this at the coat check. The code changes every 30 seconds, so screenshots don't work."
+                    } else {
+                        "Show this at the door. The code changes every 30 seconds, so screenshots don't work."
+                    },
                     style = HotMessType.bodySmall,
                     color = tokens.inkMuted,
                     textAlign = TextAlign.Center,
@@ -230,7 +247,7 @@ private fun PassFace(pass: Admission, holderName: String, holderPhoto: String?) 
     }
 }
 
-/** Every cover you've paid in the app, newest first. */
+/** Every cover and coat check you've paid in the app, newest first. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PassesScreen(navigator: Navigator) {
@@ -274,7 +291,8 @@ private fun PassRow(pass: Admission, onClick: () -> Unit) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(pass.venue?.name ?: "Cover", style = HotMessType.subheading, color = tokens.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
-                "${Formatting.night(pass.night)} · ${pass.statusText}",
+                listOfNotNull(if (pass.isCoatCheck) "Coat check" else null, Formatting.night(pass.night), pass.statusText)
+                    .joinToString(" · "),
                 style = HotMessType.bodySmall,
                 color = tokens.inkMuted,
                 maxLines = 1,
