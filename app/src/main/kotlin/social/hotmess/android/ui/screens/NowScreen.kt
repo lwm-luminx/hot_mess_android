@@ -250,6 +250,11 @@ fun NowScreen(navigator: Navigator) {
     // The venue Now is about, when it places the user there (not a list of nearby ones), and whether Safety shows.
     val helpAt = state.valueOrNull?.takeIf { it.venues == null }?.venue
     val canGetHelp = rememberCanGetHelp(helpAt?.id)
+    // At a venue, tonight as its page shows it: the host, the lineup strip, karaoke signups and song requests.
+    val lineupModel = helpAt?.let { rememberTonightLineup(it.id) }
+    val lineup = lineupModel?.lineup?.collectAsStateWithLifecycle()?.value?.takeIf { !it.isEmpty }
+    val lineupLoaded = lineupModel?.loaded?.collectAsStateWithLifecycle()?.value ?: true
+    val viewerName = graph.session.user.collectAsStateWithLifecycle().value?.name
     HeroScaffold(
         title = title,
         tone = heroTone,
@@ -323,10 +328,23 @@ fun NowScreen(navigator: Navigator) {
                     cardLayout.cards.forEach { card ->
                         when (card.kind) {
                             CardKind.NOW_STAGE -> {
-                                // Who's on.
-                                if (now.onNow.isNotEmpty()) {
-                                    item(key = "on-now") {
-                                        OnNowSection(now.onNow) { navigator.open(AppRoute.PersonDetail(it.person.id)) }
+                                if (lineupModel != null && lineup != null) {
+                                    item(key = "tonight") {
+                                        TonightLineupSection(lineupModel, lineup, viewerName) { navigator.open(AppRoute.PersonDetail(it)) }
+                                    }
+                                } else {
+                                    // Until the lineup loads, or from an API without it: who's on, and the event's
+                                    // karaoke session (held back while loading, so its pointer doesn't flash first).
+                                    if (now.onNow.isNotEmpty()) {
+                                        item(key = "on-now") {
+                                            OnNowSection(now.onNow) { navigator.open(AppRoute.PersonDetail(it.person.id)) }
+                                        }
+                                    }
+                                    val karaoke = now.event?.karaoke
+                                    if (karaoke != null && now.venues == null && lineupLoaded) {
+                                        item(key = "karaoke") {
+                                            EventKaraokeSection(karaoke, now.event?.venue ?: now.venue) { navigator.open(AppRoute.VenueDetail(it)) }
+                                        }
                                     }
                                 }
                                 // At a venue: its photos, led by the camera; what you take goes on the stage's pages too.

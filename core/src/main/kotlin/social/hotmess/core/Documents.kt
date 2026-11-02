@@ -52,6 +52,9 @@ object Documents {
         "id name startAt endAt facebookId bannerUrl isFeatured rsvp { mine } venue { venue { $VENUE_FIELDS } }"
 
     /** Who's on at a venue right now, in its people mixin. */
+    /** A karaoke night's session (`IKaraokeNight`): the partner's to join, or AudienceKit's own. */
+    const val KARAOKE_FIELDS: String = "karaoke { provider providerName sessionCode ownSessionCode joinUrl }"
+
     const val ON_NOW_FIELDS: String = "people { onNow { nodes { id role startsAt endsAt person { id name avatarUrl } } } }"
 
     /**
@@ -77,7 +80,7 @@ object Documents {
     val REPORT_LOCATION: String = """
         mutation ReportLocation(${'$'}position: CoordinatesInput!) {
           reportLocation(input: { position: ${'$'}position }) {
-            event { $EVENT_FIELDS }
+            event { $EVENT_FIELDS $KARAOKE_FIELDS }
             venue {
               $VENUE_FIELDS chat { $RECENT_MESSAGES } $VENUE_COVER_FIELDS
               $ON_NOW_FIELDS
@@ -250,7 +253,7 @@ object Documents {
               tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } } }
               venue { venue { id $VENUE_COVER_FIELDS } }
               people { lineup { nodes { $PERSON_FIELDS } } organizers { nodes { $PERSON_FIELDS } } hosts { nodes { $PERSON_FIELDS } } }
-              karaoke { provider providerName sessionCode ownSessionCode joinUrl }
+              $KARAOKE_FIELDS
               ping { friendPings { $PING_FIELDS } }
             }
           }
