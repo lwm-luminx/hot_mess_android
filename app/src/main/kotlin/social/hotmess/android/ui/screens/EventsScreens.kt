@@ -184,6 +184,7 @@ fun EventScreen(id: String, navigator: Navigator) {
         navigator.openPass(pass.id)
     }
     val checkoutState by checkout.state.collectAsStateWithLifecycle()
+    val payingCoatCheck by checkout.coatCheck.collectAsStateWithLifecycle()
     val userId = rememberUserId()
     var pingHere by rememberSaveable { mutableStateOf(false) }
     val actions = rememberPingActions { ping ->
@@ -274,7 +275,7 @@ fun EventScreen(id: String, navigator: Navigator) {
                         DetailSection("Cover") {
                             CoverRow(
                                 offer,
-                                paying = checkoutState == CoverCheckout.State.Working,
+                                paying = checkoutState == CoverCheckout.State.Working && !payingCoatCheck,
                                 onPay = { loaded.venue?.let { checkout.pay(it.id, it.name) } },
                                 onShowPass = { pass ->
                                     graph.passes.put(pass)

@@ -36,7 +36,7 @@ object Documents {
 
     /** Tonight's cover at a venue and the user's pass for it, in the cover mixin inside the venue's tickets mixin. */
     const val VENUE_COVER_FIELDS: String =
-        "tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } viewerAdmission { ${Queries.ADMISSION_FIELDS} } } }"
+        "tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } viewerAdmission { ${Queries.ADMISSION_FIELDS} } viewerCoatCheck { ${Queries.ADMISSION_FIELDS} } } }"
 
     /** A person, with their Facebook Page under their profile mixin. */
     const val PERSON_FIELDS: String = "id name avatarUrl bannerUrl profile { facebook { facebookId isLiked link } }"
@@ -69,6 +69,12 @@ object Documents {
 
     /** Friends out now, with whether they can be reached (in chat, or by push). */
     const val FRIEND_OUT_FIELDS: String = "$FRIEND_FIELDS presence"
+
+    /** Where a person is local, for the People tab: home venue, featured locales and events, with friends out there. */
+    private const val PERSON_PLACE_FIELDS: String = "name locale { id } friends { list { nodes { $FRIEND_OUT_FIELDS } } }"
+    const val PERSON_LOCAL_FIELDS: String =
+        "venues { home { $PERSON_PLACE_FIELDS } } locales { id } " +
+            "events { involvements { nodes { startAt locale { id } venue { name venue { $PERSON_PLACE_FIELDS } } } } }"
 
     /** A Ping with its picks and who's in. Picks carry enough of the venue or event for a row. */
     const val PING_FIELDS: String =
@@ -191,7 +197,7 @@ object Documents {
               $VENUE_FIELDS
               bannerPhotos { url }
               chat { open $RECENT_MESSAGES }
-              tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } viewerAdmission { ${Queries.ADMISSION_FIELDS} } } }
+              tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } viewerAdmission { ${Queries.ADMISSION_FIELDS} } viewerCoatCheck { ${Queries.ADMISSION_FIELDS} } } }
               $ON_NOW_FIELDS
               events { upcoming { nodes { $EVENT_FIELDS } } }
               $PROFILE_SOCIAL_LINKS
@@ -220,7 +226,7 @@ object Documents {
 
     val PEOPLE: String = """
         query People {
-          people { list { nodes { $PERSON_FIELDS order } } }
+          people { list { nodes { $PERSON_FIELDS order $PERSON_LOCAL_FIELDS } } }
         }
     """.trimIndent()
 
