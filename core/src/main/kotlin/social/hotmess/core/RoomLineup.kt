@@ -31,6 +31,8 @@ data class LineupEntry(
     val scenes: List<Scene> = emptyList(),
     /** A break inside an act: the scene it follows. */
     val afterScene: Ref? = null,
+    /** A karaoke singer's signup: the song and who's singing it (the venue page's lineup query only). */
+    val songRequest: SongRequest? = null,
 ) {
     /** One number in an act: who's on it, and when advancing put it on and took it off. */
     @Serializable
