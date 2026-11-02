@@ -119,9 +119,9 @@ import com.audiencekit.CardLayout
 import com.audiencekit.LayoutScreen
 
 /** Under the map: the city's venues. The server can add what's on tonight, what's nearby, announcements and promoted cards. */
-private val VENUES_FALLBACK_CARDS = listOf(CardKind.VENUES_ALL)
+private val VENUES_FALLBACK_CARDS = listOf(CardKind.VENUES_ALL, CardKind.VENUES_THIN_CITY)
 private val VENUES_CARD_KINDS =
-    listOf(CardKind.VENUES_TONIGHT, CardKind.VENUES_NEARBY, CardKind.VENUES_ALL, CardKind.WEB, CardKind.PROMO_SLOT)
+    listOf(CardKind.VENUES_TONIGHT, CardKind.VENUES_NEARBY, CardKind.VENUES_ALL, CardKind.VENUES_THIN_CITY, CardKind.WEB, CardKind.PROMO_SLOT)
 /** Everywhere: a card per locale, the viewer's first. Without them it lists every venue by city instead. */
 private val EVERYWHERE_CARD_KINDS = listOf(CardKind.LOCALES_SHOWCASE, CardKind.WEB, CardKind.PROMO_SLOT)
 
@@ -221,6 +221,10 @@ fun VenuesScreen(navigator: Navigator) {
                                 // Only the server sends these, with their own headings.
                                 CardKind.VENUES_TONIGHT, CardKind.VENUES_NEARBY ->
                                     cardSection(card.id, card.title, venues.pickedBy(card) { it.id }, key = { it.id }) { venue -> VenueCard(venue, onClick = { open(venue) }) }
+                                // "Don't see your local spot?": suggesting needs an account.
+                                CardKind.VENUES_THIN_CITY -> if (graph.session.isSignedIn) {
+                                    item(key = "thin-city") { ThinCityCard(here.size, name, navigator) }
+                                }
                                 CardKind.WEB -> card.web?.let { content -> item(key = card.id) { WebCardView(content) } }
                                 CardKind.PROMO_SLOT -> item(key = card.id) { PromoSlotView(card, cards.id, navigator) }
                             }
@@ -327,6 +331,12 @@ fun VenueScreen(id: String, navigator: Navigator) {
     LaunchedEffect(id) { pairUp.load() }
     // Whether the app places the user here, so Safety shows in the hero.
     val canGetHelp = rememberCanGetHelp(id)
+    // Whether people say it has closed: its own request, so an API without suggestions still shows the venue.
+    var reportedClosed by remember(id) { mutableStateOf(false) }
+    LaunchedEffect(id) {
+        reportedClosed = runCatching { graph.api.venueSuggestionState(id)?.reportedClosed == true }
+            .getOrElse { if (it is kotlinx.coroutines.CancellationException) throw it else false }
+    }
     val actions = rememberPingActions { ping ->
         loader.update { overview -> overview.copy(friendPings = overview.friendPings.map { if (it.id == ping.id) ping else it }) }
         graph.pingUpdated(ping.id)
@@ -392,6 +402,9 @@ fun VenueScreen(id: String, navigator: Navigator) {
                             }
                         },
                     ) {
+                        if (reportedClosed) {
+                            item(key = "reported-closed") { ReportedClosedNotice(loaded.id) { reportedClosed = it } }
+                        }
                         val offer = CoverOffer.of(loaded)
                         if (offer != null) {
                             item {
@@ -503,6 +516,9 @@ fun VenueScreen(id: String, navigator: Navigator) {
                                     SocialLinkRow(link, onClick = { link.url?.let(context::openUrl) }, namesService = true)
                                 }
                             }
+                        }
+                        if (graph.session.isSignedIn) {
+                            item(key = "suggest-fix") { SuggestFixRow { navigator.openSuggestFix(FixTarget(isVenue = true, loaded.id, loaded.name)) } }
                         }
                         loaded.coordinate?.takeIf { graph.configuration.isTestBuild }?.let { coordinate ->
                             item {

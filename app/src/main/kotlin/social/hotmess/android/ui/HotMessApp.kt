@@ -60,6 +60,11 @@ import social.hotmess.android.location.LocationAccess
 import social.hotmess.android.session.AuthState
 import social.hotmess.android.ui.screens.EventScreen
 import social.hotmess.android.ui.screens.GetHelpScreen
+import social.hotmess.android.ui.screens.FixTarget
+import social.hotmess.android.ui.screens.SuggestListingScreen
+import social.hotmess.android.ui.screens.SuggestFixScreen
+import social.hotmess.android.ui.screens.FixDetailScreen
+import social.hotmess.android.ui.screens.YourSuggestionsScreen
 import social.hotmess.android.ui.screens.CardsYouSeeScreen
 import social.hotmess.android.ui.screens.GettingHelpScreen
 import social.hotmess.android.ui.screens.SafetyAlertsScreen
@@ -129,6 +134,10 @@ import social.hotmess.core.postsSubject
 @Serializable data object CardsYouSeeRoute
 /** "Your tribes", from Me. */
 @Serializable data object TribesRoute
+@Serializable data class SuggestListingRoute(val event: Boolean, val venueId: String = "", val venueName: String = "")
+@Serializable data class SuggestFixRoute(val venue: Boolean, val id: String, val name: String)
+@Serializable data class FixDetailRoute(val venue: Boolean, val id: String, val name: String)
+@Serializable data object YourSuggestionsRoute
 
 private val AppTab.route: Any
     get() = when (this) {
@@ -175,6 +184,14 @@ interface Navigator {
     /** Me > Cards you see: the promoted-card categories to show. */
     fun openCardsYouSee()
     fun openTribes()
+    /** "Suggest a venue" or "Suggest an event"; an event from a venue's page names that venue. */
+    fun openSuggestListing(event: Boolean, venueId: String? = null, venueName: String? = null)
+    /** "Suggest a fix" for a venue or event. */
+    fun openSuggestFix(target: FixTarget)
+    fun openFixDetail(target: FixTarget)
+    fun openYourSuggestions()
+    /** Back out of every suggestion screen, to the page the member started from. */
+    fun closeSuggestion()
     fun back()
 }
 
@@ -310,6 +327,29 @@ private fun MainShell(links: Flow<AppRoute>) {
             navController.navigate(TribesRoute) { launchSingleTop = true }
         }
 
+        override fun openSuggestListing(event: Boolean, venueId: String?, venueName: String?) {
+            navController.navigate(SuggestListingRoute(event, venueId.orEmpty(), venueName.orEmpty()))
+        }
+
+        override fun openSuggestFix(target: FixTarget) {
+            navController.navigate(SuggestFixRoute(target.isVenue, target.id, target.name)) { launchSingleTop = true }
+        }
+
+        override fun openFixDetail(target: FixTarget) {
+            navController.navigate(FixDetailRoute(target.isVenue, target.id, target.name))
+        }
+
+        override fun openYourSuggestions() {
+            navController.navigate(YourSuggestionsRoute) { launchSingleTop = true }
+        }
+
+        override fun closeSuggestion() {
+            val suggestionRoutes = listOf(SuggestListingRoute::class, SuggestFixRoute::class, FixDetailRoute::class)
+            while (suggestionRoutes.any { navController.currentDestination?.hasRoute(it) == true }) {
+                if (!navController.popBackStack()) break
+            }
+        }
+
         override fun back() {
             navController.popBackStack()
         }
@@ -402,6 +442,19 @@ private fun MainShell(links: Flow<AppRoute>) {
                 composable<GettingHelpRoute> { GettingHelpScreen(navigator) }
                 composable<CardsYouSeeRoute> { CardsYouSeeScreen(navigator) }
                 composable<TribesRoute> { TribePickerScreen(navigator) }
+                composable<SuggestListingRoute> {
+                    val route = it.toRoute<SuggestListingRoute>()
+                    SuggestListingScreen(route.event, route.venueId.ifBlank { null }, route.venueName.ifBlank { null }, navigator)
+                }
+                composable<SuggestFixRoute> {
+                    val route = it.toRoute<SuggestFixRoute>()
+                    SuggestFixScreen(FixTarget(route.venue, route.id, route.name), navigator)
+                }
+                composable<FixDetailRoute> {
+                    val route = it.toRoute<FixDetailRoute>()
+                    FixDetailScreen(FixTarget(route.venue, route.id, route.name), navigator)
+                }
+                composable<YourSuggestionsRoute> { YourSuggestionsScreen(navigator) }
                 composable<UpdatesRoute> {
                     val route = it.toRoute<UpdatesRoute>()
                     UpdatesScreen(route.localeId, route.localeName, navigator)

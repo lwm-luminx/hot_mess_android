@@ -431,6 +431,8 @@ fun MeScreen(navigator: Navigator) {
             }
             item {
                 DetailSection("Feedback") {
+                    YourSuggestionsRow(navigator::openYourSuggestions)
+                    RowDivider()
                     InfoRow(
                         "Report a problem",
                         icon = Icons.Rounded.BugReport,
