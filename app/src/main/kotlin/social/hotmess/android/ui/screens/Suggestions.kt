@@ -82,6 +82,7 @@ import social.hotmess.core.SuggestionRequest
 import social.hotmess.core.SuggestionStatus
 import social.hotmess.core.SuggestionSummary
 import social.hotmess.core.Venue
+import social.hotmess.core.isIn
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
@@ -446,7 +447,13 @@ fun FixDetailScreen(target: FixTarget, navigator: Navigator) {
                         }
                         startsAt?.let { start ->
                             RowDivider()
-                            InfoRow("Starts", Formatting.dateTime(start), onClick = { pickDateTime(context, start) { startsAt = it } })
+                            InfoRow("Starts", Formatting.dateTime(start), onClick = {
+                                pickDateTime(context, start) { picked ->
+                                    // An end that's no longer after the start moves with it.
+                                    endsAt = endsAt?.let { end -> if (end.isBefore(picked)) picked else end }
+                                    startsAt = picked
+                                }
+                            })
                         }
                         endsAt?.let { end ->
                             RowDivider()
@@ -568,7 +575,9 @@ fun SuggestListingScreen(event: Boolean, venueId: String?, venueName: String?, n
     LaunchedEffect(event, venueId) {
         if (!event || venueId != null) return@LaunchedEffect
         venues = try {
-            graph.api.venues(graph.location.locale.value?.id).sortedBy { it.name.lowercase(Locale.getDefault()) }
+            // The API lists every venue, the city's first; the picker offers only the city's.
+            val localeId = graph.location.locale.value?.id
+            graph.api.venues(localeId).filter { localeId == null || it.isIn(localeId) }.sortedBy { it.name.lowercase(Locale.getDefault()) }
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -671,7 +680,12 @@ fun SuggestListingScreen(event: Boolean, venueId: String?, venueName: String?, n
                 }
                 item {
                     DetailSection("When") {
-                        InfoRow("Starts", Formatting.dateTime(startsAt), onClick = { pickDateTime(context, startsAt) { startsAt = it } })
+                        InfoRow("Starts", Formatting.dateTime(startsAt), onClick = {
+                            pickDateTime(context, startsAt) { picked ->
+                                endsAt = endsAt?.let { end -> if (end.isBefore(picked)) picked else end }
+                                startsAt = picked
+                            }
+                        })
                         RowDivider()
                         CheckRow("Ends", endsAt != null) { on -> endsAt = if (on) startsAt.plusSeconds(3 * 3600) else null }
                         endsAt?.let { end ->
