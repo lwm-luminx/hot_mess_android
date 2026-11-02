@@ -55,14 +55,19 @@ class AppUpdates(private val context: Context, private val scope: CoroutineScope
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private val manager: AppUpdateManager by lazy { AppUpdateManagerFactory.create(context) }
 
-    private val _state = MutableStateFlow(State(lastChecked = prefs.getLong(LAST_CHECKED, 0L).takeIf { it > 0 }?.let(Instant::ofEpochMilli)))
+    private val _state = MutableStateFlow(
+        State(
+            status = savedStatus(),
+            lastChecked = prefs.getLong(LAST_CHECKED, 0L).takeIf { it > 0 }?.let(Instant::ofEpochMilli),
+        ),
+    )
     val state: StateFlow<State> = _state.asStateFlow()
 
     /** Looks once a day at most; the app calls it whenever it comes to the front. */
     fun checkIfDue(now: Instant = Instant.now()) {
         if (source != Source.GOOGLE_PLAY) return
         val last = _state.value.lastChecked
-        if (last != null && _state.value.status != Status.Unknown && Duration.between(last, now) < CHECK_EVERY) return
+        if (last != null && Duration.between(last, now) < CHECK_EVERY) return
         scope.launch { check() }
     }
 
@@ -86,8 +91,40 @@ class AppUpdates(private val context: Context, private val scope: CoroutineScope
             Status.Failed
         }
         val now = Instant.now()
-        if (status != Status.Failed) prefs.edit().putLong(LAST_CHECKED, now.toEpochMilli()).apply()
+        if (status != Status.Failed) save(status, now)
         _state.update { it.copy(status = status, checking = false, lastChecked = if (status != Status.Failed) now else it.lastChecked) }
+    }
+
+    /** The last check's answer, so the rows read the same after a restart. */
+    private fun savedStatus(): Status = when (prefs.getString(LAST_STATUS, null)) {
+        STATUS_UP_TO_DATE -> Status.UpToDate
+        // A build saved as available that is now installed (the person updated since) reads as up to date.
+        STATUS_AVAILABLE -> prefs.getInt(AVAILABLE_VERSION, 0).let { code ->
+            if (code > installedVersionCode()) Status.Available(code) else Status.UpToDate
+        }
+        else -> Status.Unknown
+    }
+
+    private fun installedVersionCode(): Long = try {
+        val info = context.packageManager.getPackageInfo(context.packageName, 0)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.longVersionCode else @Suppress("DEPRECATION") info.versionCode.toLong()
+    } catch (_: Exception) {
+        0L
+    }
+
+    private fun save(status: Status, checkedAt: Instant) {
+        prefs.edit()
+            .putLong(LAST_CHECKED, checkedAt.toEpochMilli())
+            .putString(
+                LAST_STATUS,
+                when (status) {
+                    Status.UpToDate -> STATUS_UP_TO_DATE
+                    is Status.Available -> STATUS_AVAILABLE
+                    else -> STATUS_UNKNOWN
+                },
+            )
+            .putInt(AVAILABLE_VERSION, (status as? Status.Available)?.versionCode ?: 0)
+            .apply()
     }
 
     /** "Open on Google Play": the app's store page, in the Play Store when it's there, else on the web. */
@@ -107,6 +144,11 @@ class AppUpdates(private val context: Context, private val scope: CoroutineScope
     companion object {
         private const val PREFS = "hotmess.updates"
         private const val LAST_CHECKED = "lastChecked"
+        private const val LAST_STATUS = "lastStatus"
+        private const val AVAILABLE_VERSION = "availableVersionCode"
+        private const val STATUS_UP_TO_DATE = "upToDate"
+        private const val STATUS_AVAILABLE = "available"
+        private const val STATUS_UNKNOWN = "unknown"
         private const val PLAY_STORE = "com.android.vending"
         private val CHECK_EVERY: Duration = Duration.ofDays(1)
 

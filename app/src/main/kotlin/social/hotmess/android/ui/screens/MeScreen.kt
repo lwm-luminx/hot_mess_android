@@ -679,7 +679,7 @@ private fun AboutUpdateRows(updates: AppUpdates) {
             is AppUpdates.Status.Available -> "Update available (build ${status.versionCode})"
             AppUpdates.Status.UpToDate -> "Up to date"
             AppUpdates.Status.Failed -> "Couldn't check"
-            AppUpdates.Status.Unknown -> "Not checked yet"
+            AppUpdates.Status.Unknown -> if (state.lastChecked != null) "Google Play didn't say" else "Not checked yet"
         },
         icon = if (status is AppUpdates.Status.Available) Icons.Rounded.SystemUpdate else Icons.Rounded.CheckCircle,
     )
