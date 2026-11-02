@@ -331,6 +331,10 @@ fun VenueScreen(id: String, navigator: Navigator) {
     LaunchedEffect(id) { pairUp.load() }
     // Whether the app places the user here, so Safety shows in the hero.
     val canGetHelp = rememberCanGetHelp(id)
+    val tonightModel = rememberTonightLineup(id)
+    val tonightLineup by tonightModel.lineup.collectAsStateWithLifecycle()
+    // Non-null whenever signed in, even with no display name: it marks who may sign up, and prefills "Singing as".
+    val viewerName = graph.session.user.collectAsStateWithLifecycle().value?.name
     // Whether people say it has closed: its own request, so an API without suggestions still shows the venue.
     var reportedClosed by remember(id) { mutableStateOf(false) }
     LaunchedEffect(id) {
@@ -451,7 +455,13 @@ fun VenueScreen(id: String, navigator: Navigator) {
                                 )
                             }
                         }
-                        if (overview.onNow.isNotEmpty()) {
+                        // Tonight's lineup with its karaoke and song requests, as on iOS; On now where the API has no lineup.
+                        val tonight = tonightLineup?.takeIf { !it.isEmpty }
+                        if (tonight != null) {
+                            item(key = "tonight") {
+                                TonightLineupSection(tonightModel, tonight, viewerName) { navigator.open(AppRoute.PersonDetail(it)) }
+                            }
+                        } else if (overview.onNow.isNotEmpty()) {
                             item(key = "on-now") {
                                 OnNowSection(overview.onNow) { navigator.open(AppRoute.PersonDetail(it.person.id)) }
                             }

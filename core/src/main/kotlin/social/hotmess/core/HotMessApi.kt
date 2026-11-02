@@ -145,6 +145,35 @@ class HotMessApi(val client: AudienceKitClient) {
         )
     }
 
+    /**
+     * A venue's lineup tonight for its page: the running order with its karaoke singers, who runs its karaoke, and
+     * whether it takes signups and song requests (the viewer's own, and the song queue). Null when there's no venue.
+     */
+    suspend fun tonightLineup(venueId: String): VenueLineup? =
+        query(Lineups.VENUE_LINEUP, TonightLineupResponse.serializer(), graphQLVariables("id" to venueId)).lineup
+
+    /**
+     * Signs the viewer up to sing ([SongRequestKind.KARAOKE]) or asks for a song ([SongRequestKind.SONG]) at a venue.
+     * They must be there and it must be taking them; the server's refusal comes back worded for the room.
+     */
+    suspend fun requestSong(venueId: String, kind: SongRequestKind, draft: SongRequestDraft): SongRequest {
+        val variables = buildMap<String, Any?> {
+            put("venueId", venueId)
+            put("kind", kind.name)
+            put("title", draft.title.trim())
+            draft.artist?.trim()?.takeIf { it.isNotEmpty() }?.let { put("artist", it) }
+            if (kind == SongRequestKind.KARAOKE) draft.singer?.trim()?.takeIf { it.isNotEmpty() }?.let { put("singer", it) }
+            draft.note?.trim()?.takeIf { it.isNotEmpty() }?.let { put("note", it) }
+        }
+        return mutate(Lineups.REQUEST_SONG, RequestSongResponse.serializer(), graphQLVariables(*variables.toList().toTypedArray()))
+            .requestSong.request
+    }
+
+    /** Takes back one of the viewer's signups or song requests that hasn't been called up. */
+    suspend fun withdrawSongRequest(id: String): SongRequest =
+        mutate(Lineups.WITHDRAW_SONG_REQUEST, WithdrawSongRequestResponse.serializer(), graphQLVariables("id" to id))
+            .withdrawSongRequest.request
+
     // endregion
 
     // region People
