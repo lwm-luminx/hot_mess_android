@@ -100,14 +100,20 @@ fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}, onAppleSi
     var enteringReviewCode by remember { mutableStateOf(false) }
     // 18 or older: confirmed on this device before, or with the box below. Every way in waits for it.
     val context = androidx.compose.ui.platform.LocalContext.current
-    val alreadyConfirmed = remember { AgeGate.isConfirmed(context) }
+    var alreadyConfirmed by remember { mutableStateOf(AgeGate.isConfirmed(context)) }
     var confirmedAge by remember { mutableStateOf(alreadyConfirmed) }
     // A sign-in waiting on "I'm 18 or older".
     var awaitingAge by remember { mutableStateOf<(() -> Unit)?>(null) }
     var underage by remember { mutableStateOf(false) }
+    // Stored once, so the box goes away even when this sign-in is cancelled or fails.
+    fun confirmAge() {
+        confirmedAge = true
+        alreadyConfirmed = true
+        AgeGate.confirm(context)
+    }
     fun afterAge(signIn: () -> Unit) {
         if (confirmedAge) {
-            AgeGate.confirm(context)
+            confirmAge()
             signIn()
         } else {
             awaitingAge = signIn
@@ -248,14 +254,14 @@ fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}, onAppleSi
                     confirmButton = {
                         TextButton(onClick = {
                             awaitingAge = null
-                            confirmedAge = true
-                            AgeGate.confirm(context)
+                            confirmAge()
                             signIn()
                         }, modifier = Modifier.testTag("login.ageConfirm")) { Text("I'm 18 or older") }
                     },
                     dismissButton = {
                         TextButton(onClick = {
                             awaitingAge = null
+                            confirmedAge = false
                             underage = true
                         }) { Text("I'm not") }
                     },
