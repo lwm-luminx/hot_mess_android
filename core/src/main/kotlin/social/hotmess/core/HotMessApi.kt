@@ -216,6 +216,9 @@ class HotMessApi(val client: AudienceKitClient) {
      */
     suspend fun buyCover(venueId: String): CoverPurchase = mutate { client.buyCover(venueId) }
 
+    /** Starts paying tonight's coat check at a venue for [quantity] coats; paid the same way as cover. */
+    suspend fun buyCoatCheck(venueId: String, quantity: Int = 1): CoverPurchase = mutate { client.buyCoatCheck(venueId, quantity) }
+
     /**
      * Pays a Square venue's cover with the nonce Square's card entry made ([sourceId]). The pass comes back
      * paid when Square took the payment.

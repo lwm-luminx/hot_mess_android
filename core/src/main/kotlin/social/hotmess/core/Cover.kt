@@ -2,6 +2,7 @@ package social.hotmess.core
 
 import com.audiencekit.Admission
 import com.audiencekit.AdmissionStatus
+import com.audiencekit.CoatCheck
 import com.audiencekit.CoverCharge
 import com.audiencekit.CoverPurchase
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -69,6 +70,40 @@ data class CoverOffer(
     }
 }
 
+/** A venue's coat check tonight, as the venue page and Now show it: the price per coat and what the user can do. */
+data class CoatCheckOffer(
+    val charge: CoatCheck,
+    /** [CoverAction.PAY], [CoverAction.SHOW_PASS] or [CoverAction.PAY_AT_DOOR] (paid at the coat check). */
+    val action: CoverAction,
+    /** The user's paid coat check pass, when [action] is [CoverAction.SHOW_PASS]. */
+    val pass: Admission? = null,
+) {
+    /** "Coat check $3.00 a coat". */
+    val line: String get() = "Coat check ${Formatting.money(charge.total)} a coat"
+
+    companion object {
+        /** The venue's coat check tonight, or null when it has none. */
+        fun of(venue: Venue): CoatCheckOffer? {
+            val charge = venue.coverCharge?.coatCheck ?: return null
+            val pass = venue.viewerCoatCheck?.takeIf { it.isPaid && it.isCoatCheck && it.night == charge.night }
+            val action = when {
+                pass != null -> CoverAction.SHOW_PASS
+                charge.payable -> CoverAction.PAY
+                else -> CoverAction.PAY_AT_DOOR
+            }
+            return CoatCheckOffer(charge, action, pass)
+        }
+    }
+}
+
+/** "2 coats" or "1 coat" on a coat check pass; "2 people" on a cover for more than one. Null for one cover. */
+val Admission.quantityText: String?
+    get() = when {
+        isCoatCheck -> if (quantity == 1) "1 coat" else "$quantity coats"
+        quantity > 1 -> "$quantity people"
+        else -> null
+    }
+
 /**
  * How to pay for a [CoverPurchase]: Stripe venues pay on Stripe's payment sheet, Square venues with
  * Square's card entry and [HotMessApi.payCover].
@@ -99,17 +134,19 @@ sealed interface CoverPayment {
     data class Unavailable(val message: String) : CoverPayment
 
     companion object {
-        private const val UNAVAILABLE = "This venue can't take cover in the app right now. Pay at the door."
+        private const val UNAVAILABLE_COVER = "This venue can't take cover in the app right now. Pay at the door."
+        private const val UNAVAILABLE_COAT_CHECK = "This venue can't take coat check in the app right now. Pay at the coat check."
 
         fun of(purchase: CoverPurchase): CoverPayment {
             val admission = purchase.admission
             if (admission.isPaid) return Paid(admission)
+            val unavailable = if (admission.isCoatCheck) UNAVAILABLE_COAT_CHECK else UNAVAILABLE_COVER
             if (purchase.isSquare) {
-                val applicationId = purchase.squareApplicationId?.takeIf { it.isNotBlank() } ?: return Unavailable(UNAVAILABLE)
+                val applicationId = purchase.squareApplicationId?.takeIf { it.isNotBlank() } ?: return Unavailable(unavailable)
                 return Square(admission.id, applicationId, purchase.squareLocationId)
             }
             val clientSecret = purchase.paymentIntentClientSecret ?: return Confirm(admission.id)
-            val publishableKey = purchase.publishableKey?.takeIf { it.isNotBlank() } ?: return Unavailable(UNAVAILABLE)
+            val publishableKey = purchase.publishableKey?.takeIf { it.isNotBlank() } ?: return Unavailable(unavailable)
             return Stripe(admission.id, clientSecret, publishableKey, purchase.stripeAccountId)
         }
     }

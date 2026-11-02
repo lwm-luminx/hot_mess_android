@@ -58,6 +58,10 @@ import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.CoverAction
 import social.hotmess.core.CoverOffer
+import social.hotmess.core.quantityText
+import social.hotmess.core.CoatCheckOffer
+import androidx.compose.ui.platform.testTag
+import androidx.compose.material.icons.rounded.Checkroom
 import social.hotmess.core.Formatting
 import social.hotmess.core.PassQr
 import social.hotmess.core.QrMatrix
@@ -87,6 +91,52 @@ fun CoverRow(offer: CoverOffer, paying: Boolean, onPay: () -> Unit, onShowPass: 
             CoverAction.SHOW_PASS -> offer.pass?.let { pass -> PrimaryButton("Show pass", { onShowPass(pass) }) }
             CoverAction.PAY_AT_DOOR -> Text("Pay at the door", style = HotMessType.bodySmall, color = tokens.inkMuted)
             CoverAction.PRICE_ONLY -> Unit
+        }
+    }
+}
+
+/**
+ * "Coat check $3.00 a coat", with "Pay coat check", "Show coat check pass" or "Pay at the coat check". [paying] shows
+ * a spinner in place of the button while the payment starts.
+ */
+@Composable
+fun CoatCheckRow(offer: CoatCheckOffer, paying: Boolean, onPay: () -> Unit, onShowPass: (Admission) -> Unit) {
+    RowButton(null) {
+        Icon(Icons.Rounded.Checkroom, contentDescription = null, tint = tokens.inkMuted, modifier = Modifier.size(20.dp))
+        Text(offer.line, style = HotMessType.body, color = tokens.ink, modifier = Modifier.weight(1f))
+        when (offer.action) {
+            CoverAction.PAY ->
+                if (paying) {
+                    CircularProgressIndicator(color = tokens.accent, strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
+                } else {
+                    PrimaryButton("Pay coat check", onPay, Modifier.testTag("coatCheck.pay"))
+                }
+            CoverAction.SHOW_PASS -> offer.pass?.let { pass -> PrimaryButton("Show pass", { onShowPass(pass) }) }
+            CoverAction.PAY_AT_DOOR -> Text("Pay at the coat check", style = HotMessType.bodySmall, color = tokens.inkMuted)
+            CoverAction.PRICE_ONLY -> Unit
+        }
+    }
+}
+
+/** The coat check card on Now: tonight's coat check at the venue you're at, and the way to pay it. */
+@Composable
+fun CoatCheckCard(offer: CoatCheckOffer, paying: Boolean, onPay: () -> Unit) {
+    Card {
+        Row(
+            Modifier.fillMaxWidth().padding(Space.s4),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Space.s3),
+        ) {
+            Icon(Icons.Rounded.Checkroom, contentDescription = null, tint = tokens.accentInk, modifier = Modifier.size(28.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Check your coat", style = HotMessType.heading, color = tokens.ink)
+                Text(offer.line, style = HotMessType.bodySmall, color = tokens.inkMuted)
+            }
+            if (paying) {
+                CircularProgressIndicator(color = tokens.accent, strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
+            } else {
+                PrimaryButton("Pay", onPay, Modifier.testTag("coatCheck.pay"))
+            }
         }
     }
 }
@@ -190,17 +240,25 @@ fun PassCard(pass: Admission, venueName: String, onOpen: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(Space.s2),
         ) {
-            Text("Your pass", style = HotMessType.caption, color = tokens.accentInk)
+            Text(if (pass.isCoatCheck) "Coat check" else "Your pass", style = HotMessType.caption, color = tokens.accentInk)
             Text(venueName, style = HotMessType.heading, color = tokens.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
-                "${Formatting.night(pass.night)} · ${Formatting.money(pass.total)} paid",
+                listOfNotNull(Formatting.night(pass.night), pass.quantityText, "${Formatting.money(pass.total)} paid")
+                    .joinToString(" · "),
                 style = HotMessType.bodySmall,
                 color = tokens.inkMuted,
             )
             if (code != null) {
                 Box(Modifier.widthIn(max = 200.dp).fillMaxWidth()) { QrCode(code, Modifier.fillMaxWidth()) }
             }
-            Text("Tap to open it full screen at the door", style = HotMessType.bodySmall, color = tokens.inkMuted)
+            pass.claimCheckNumber?.takeIf { pass.isCoatCheck && it.isNotBlank() }?.let { ticket ->
+                Text("Ticket $ticket", style = HotMessType.subheading, color = tokens.ink)
+            }
+            Text(
+                if (pass.isCoatCheck) "Tap to open it full screen at the coat check" else "Tap to open it full screen at the door",
+                style = HotMessType.bodySmall,
+                color = tokens.inkMuted,
+            )
         }
     }
 }

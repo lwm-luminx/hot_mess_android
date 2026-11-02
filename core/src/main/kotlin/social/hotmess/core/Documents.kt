@@ -36,7 +36,7 @@ object Documents {
 
     /** Tonight's cover at a venue and the user's pass for it, in the cover mixin inside the venue's tickets mixin. */
     const val VENUE_COVER_FIELDS: String =
-        "tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } viewerAdmission { ${Queries.ADMISSION_FIELDS} } } }"
+        "tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } viewerAdmission { ${Queries.ADMISSION_FIELDS} } viewerCoatCheck { ${Queries.ADMISSION_FIELDS} } } }"
 
     /** A person, with their Facebook Page under their profile mixin. */
     const val PERSON_FIELDS: String = "id name avatarUrl bannerUrl profile { facebook { facebookId isLiked link } }"
@@ -197,7 +197,7 @@ object Documents {
               $VENUE_FIELDS
               bannerPhotos { url }
               chat { open $RECENT_MESSAGES }
-              tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } viewerAdmission { ${Queries.ADMISSION_FIELDS} } } }
+              tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } viewerAdmission { ${Queries.ADMISSION_FIELDS} } viewerCoatCheck { ${Queries.ADMISSION_FIELDS} } } }
               $ON_NOW_FIELDS
               events { upcoming { nodes { $EVENT_FIELDS } } }
               $PROFILE_SOCIAL_LINKS
