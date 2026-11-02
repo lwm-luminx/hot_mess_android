@@ -30,6 +30,9 @@ sealed interface AppRoute {
     /** A locale's updates feed, from Now. */
     data class Updates(val localeId: String, val localeName: String) : AppRoute
 
+    /** A locale's own page from the Venues tab's Everywhere view: some of its events and its venues. */
+    data class LocaleDetail(val id: String, val name: String) : AppRoute
+
     /** One of the user's safety alerts, from a push about it (`/safety-alerts/<id>`); it opens over Me. */
     data class SafetyAlertHelp(val id: String) : AppRoute
 
@@ -39,7 +42,7 @@ sealed interface AppRoute {
     /** Which tab the route opens in. */
     val tab: AppTab
         get() = when (this) {
-            is VenueDetail -> AppTab.VENUES
+            is VenueDetail, is LocaleDetail -> AppTab.VENUES
             is EventDetail -> AppTab.EVENTS
             is PersonDetail -> AppTab.PEOPLE
             is NowPing -> AppTab.NOW
