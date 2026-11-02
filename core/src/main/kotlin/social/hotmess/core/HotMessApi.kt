@@ -668,6 +668,37 @@ class HotMessApi(val client: AudienceKitClient) {
 
     // endregion
 
+    // region Suggestions
+
+    /**
+     * Sends a suggestion (`submitContribution`). A missing venue or event that's already listed files nothing and
+     * comes back as [SuggestionOutcome.AlreadyListed], unless the member said it's a different place (`notListed`).
+     */
+    suspend fun suggest(request: SuggestionRequest): SuggestionOutcome =
+        mutate(SuggestionDocuments.SUBMIT, SubmitContributionResponse.serializer(), graphQLVariables("input" to request.input))
+            .submitContribution.outcome ?: throw ApiError.Decoding("submitContribution")
+
+    /** The member's own suggestions, newest first. */
+    suspend fun mySuggestions(): List<SuggestionSummary> =
+        query(SuggestionDocuments.MINE, MySuggestionsResponse.serializer()).me?.submissions.orEmpty()
+
+    /** Whether the venue is reported closed, and its details as a fix starts from. Its own request. */
+    suspend fun venueSuggestionState(venueId: String): VenueSuggestionState? =
+        query(SuggestionDocuments.VENUE_STATE, VenueSuggestionStateResponse.serializer(), graphQLVariables("id" to venueId))
+            .venues?.venue
+
+    /** "It's still open", on a venue reported closed. Returns whether it's still reported closed afterwards. */
+    suspend fun reportVenueOpen(venueId: String, note: String? = null): Boolean {
+        val input = buildMap<String, Any?> {
+            put("venueId", venueId)
+            note?.trim()?.takeIf { it.isNotEmpty() }?.let { put("body", it) }
+        }
+        return mutate(SuggestionDocuments.REPORT_VENUE_OPEN, ReportVenueOpenResponse.serializer(), graphQLVariables("input" to input))
+            .reportVenueOpen.venue.reportedClosed
+    }
+
+    // endregion
+
     // region Safety alerts
 
     /**

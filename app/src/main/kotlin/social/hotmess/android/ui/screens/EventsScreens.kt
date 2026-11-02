@@ -288,6 +288,10 @@ fun EventScreen(id: String, navigator: Navigator) {
                 cardSection("lineup", "Lineup", loaded.people, key = { it.id }) { person ->
                     PersonCard(person, onClick = { navigator.open(AppRoute.PersonDetail(person.id)) })
                 }
+                // Something wrong or cancelled? A person checks it first.
+                if (graph.session.isSignedIn) {
+                    item(key = "suggest-fix") { SuggestFixRow { navigator.openSuggestFix(FixTarget(isVenue = false, loaded.id, loaded.name)) } }
+                }
             }
         }
     }
