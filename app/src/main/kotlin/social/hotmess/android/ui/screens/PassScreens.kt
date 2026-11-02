@@ -223,12 +223,13 @@ private fun PassFace(pass: Admission, holderName: String, holderPhoto: String?) 
                     )
                 }
             }
+            // The coat check's ticket number, whether or not this phone can show the code.
+            pass.claimCheckNumber?.takeIf { pass.isCoatCheck && it.isNotBlank() }?.let { ticket ->
+                Text("Ticket $ticket", style = HotMessType.heading, color = tokens.ink)
+            }
             if (code != null) {
                 Box(Modifier.widthIn(max = 360.dp).fillMaxWidth()) { QrCode(code, Modifier.fillMaxWidth()) }
                 LiveClock()
-                pass.claimCheckNumber?.takeIf { pass.isCoatCheck && it.isNotBlank() }?.let { ticket ->
-                    Text("Ticket $ticket", style = HotMessType.heading, color = tokens.ink)
-                }
                 Text(
                     if (pass.isCoatCheck) {
                         "Show this at the coat check. The code changes every 30 seconds, so screenshots don't work."
@@ -291,8 +292,13 @@ private fun PassRow(pass: Admission, onClick: () -> Unit) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(pass.venue?.name ?: "Cover", style = HotMessType.subheading, color = tokens.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
-                listOfNotNull(if (pass.isCoatCheck) "Coat check" else null, Formatting.night(pass.night), pass.statusText)
-                    .joinToString(" · "),
+                listOfNotNull(
+                    if (pass.isCoatCheck) "Coat check" else null,
+                    Formatting.night(pass.night),
+                    pass.quantityText,
+                    pass.claimCheckNumber?.takeIf { pass.isCoatCheck && it.isNotBlank() }?.let { "Ticket $it" },
+                    pass.statusText,
+                ).joinToString(" · "),
                 style = HotMessType.bodySmall,
                 color = tokens.inkMuted,
                 maxLines = 1,
