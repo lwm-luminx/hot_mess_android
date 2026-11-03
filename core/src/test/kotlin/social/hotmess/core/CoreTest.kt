@@ -200,6 +200,21 @@ class ListingTest {
         assertEquals(listOf("3", "5"), groups.first().venues.map { it.id })
         assertEquals(listOf("Austin", "Portland", "Seattle", "Elsewhere"), venues.byCity(null).map { it.city })
     }
+
+    @Test
+    fun listsTheVenuesCitiesToChooseFrom() {
+        val seattle = "b0f8b66a-e636-495d-9475-0f5317ea08e0"
+        val austin = "c1f8b66a-e636-495d-9475-0f5317ea08e1"
+        val venues = listOf(
+            Venue(id = "1", name = "Pony", locale = LocaleSummary(seattle, name = "Seattle")),
+            Venue(id = "2", name = "Oilcan", locale = LocaleSummary(austin.uppercase(), label = "Austin")),
+            Venue(id = "3", name = "Cuff", locale = LocaleSummary(seattle, name = "Seattle")),
+            Venue(id = "4", name = "Nowhere"),
+            Venue(id = "5", name = "Unnamed", locale = LocaleSummary("d1f8b66a-e636-495d-9475-0f5317ea08e2")),
+        )
+
+        assertEquals(listOf(AppLocale(austin, "Austin"), AppLocale(seattle, "Seattle")), venues.cities())
+    }
 }
 
 class DeepLinkTest {

@@ -13,31 +13,26 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.Campaign
 import androidx.compose.material.icons.rounded.LocationOff
+import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.material.icons.rounded.Campaign
-import androidx.compose.material3.Icon
-import androidx.compose.material3.TextButton
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import social.hotmess.core.PostsSubject
-import social.hotmess.core.RecordId
-import social.hotmess.core.ApiError
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -51,6 +46,13 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import com.audiencekit.CardKind
+import com.audiencekit.LayoutCard
+import com.audiencekit.LayoutScreen
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import social.hotmess.android.location.LocationProblem
 import social.hotmess.android.payments.CoverCheckout
 import social.hotmess.android.payments.CoverCheckoutFailure
 import social.hotmess.android.payments.rememberCoverCheckout
@@ -60,6 +62,7 @@ import social.hotmess.android.ui.components.Avatar
 import social.hotmess.android.ui.components.ChatPeek
 import social.hotmess.android.ui.components.ChatPeekParticipant
 import social.hotmess.android.ui.components.ChatThreadMessage
+import social.hotmess.android.ui.components.CoatCheckCard
 import social.hotmess.android.ui.components.DetailInset
 import social.hotmess.android.ui.components.DetailSection
 import social.hotmess.android.ui.components.EmptyRow
@@ -71,25 +74,29 @@ import social.hotmess.android.ui.components.HeroScaffold
 import social.hotmess.android.ui.components.InfoRow
 import social.hotmess.android.ui.components.LoadStateView
 import social.hotmess.android.ui.components.OnNowSection
-import social.hotmess.android.ui.components.CoatCheckCard
 import social.hotmess.android.ui.components.PassCard
 import social.hotmess.android.ui.components.Presence
+import social.hotmess.android.ui.components.RowDivider
 import social.hotmess.android.ui.components.SkipTheLineCard
 import social.hotmess.android.ui.components.VenueCard
+import social.hotmess.android.ui.components.actionLabel
 import social.hotmess.android.ui.components.cardSection
 import social.hotmess.android.ui.components.friendNames
 import social.hotmess.android.ui.components.presenceOf
 import social.hotmess.android.ui.components.rememberHeroCollapsed
+import social.hotmess.android.ui.components.rememberLocationProblem
+import social.hotmess.android.ui.components.rememberTurnOnLocation
 import social.hotmess.android.ui.openUrl
 import social.hotmess.android.ui.rememberLoader
 import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.Sizes
 import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
+import social.hotmess.core.ApiError
 import social.hotmess.core.AppRoute
 import social.hotmess.core.ChatLine
-import social.hotmess.core.CoverAction
 import social.hotmess.core.CoatCheckOffer
+import social.hotmess.core.CoverAction
 import social.hotmess.core.CoverOffer
 import social.hotmess.core.Event
 import social.hotmess.core.Formatting
@@ -101,12 +108,11 @@ import social.hotmess.core.PhotoTone
 import social.hotmess.core.Ping
 import social.hotmess.core.PingPick
 import social.hotmess.core.PlanChangeCheck
+import social.hotmess.core.PostsSubject
+import social.hotmess.core.RecordId
 import social.hotmess.core.RoomLineup
 import social.hotmess.core.Venue
 import java.time.Instant
-import com.audiencekit.CardKind
-import com.audiencekit.LayoutCard
-import com.audiencekit.LayoutScreen
 
 /** How often Now reloads while it's showing. */
 private const val NOW_REFRESH_MS = 60_000L
@@ -488,7 +494,7 @@ private fun LazyListScope.nearby(now: Now, card: LayoutCard, located: Boolean, n
     when {
         venues != null && venues.isEmpty() -> item { DetailSection("Venues near you") { EmptyRow("You aren't near any venues right now.") } }
         venues != null -> cardSection("nearby", "Venues near you", venues.take(3), key = { it.id }) { VenueCard(it, onClick = { open(it) }) }
-        !located -> item { DetailSection("Venues near you") { EmptyRow("Turn on location to see what's happening near you.") } }
+        !located -> item { DetailSection("Venues near you") { TurnOnLocationRows("Turn on location to see what's happening near you.") } }
     }
 }
 
@@ -796,5 +802,21 @@ private fun LazyListScope.whereFriendsAre(entries: List<FriendVenue>, navigator:
             pill = if (entry.friendCount == 1) "1 friend" else "${entry.friendCount} friends",
             corner = { FriendFaces(entry.friends) },
         )
+    }
+}
+
+/** Why there's nothing nearby, and the one tap that fixes it (asks, or opens Settings when Android won't ask again). */
+@Composable
+private fun TurnOnLocationRows(text: String) {
+    val problem = rememberLocationProblem()
+    val turnOn = rememberTurnOnLocation()
+    when (problem) {
+        LocationProblem.SERVICES_OFF -> EmptyRow("Location is off on this phone. Turn it on to see what's happening near you.")
+        LocationProblem.WAITING -> EmptyRow("Finding where you are…")
+        else -> EmptyRow(text)
+    }
+    if (problem != null && problem != LocationProblem.WAITING) {
+        RowDivider()
+        InfoRow(problem.actionLabel(), icon = Icons.Rounded.MyLocation, onClick = turnOn)
     }
 }

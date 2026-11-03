@@ -10,7 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.EditCalendar
-import androidx.compose.material.icons.rounded.LocationOff
+import androidx.compose.material.icons.rounded.LocationCity
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.AlertDialog
@@ -47,6 +47,8 @@ import social.hotmess.android.ui.ScreenScaffold
 import social.hotmess.android.ui.ShareLinkFailure
 import social.hotmess.android.ui.addToCalendar
 import social.hotmess.android.ui.components.Avatar
+import social.hotmess.android.ui.components.CityPickerSheet
+import social.hotmess.android.ui.components.LocationNeeded
 import social.hotmess.android.ui.components.CoverRow
 import social.hotmess.android.ui.components.DetailSection
 import social.hotmess.android.ui.components.EmptyRow
@@ -110,13 +112,20 @@ fun EventsScreen(navigator: Navigator) {
     LaunchedEffect(Unit) { graph.location.refreshLocale() }
 
     val current = locale
-    ScreenScaffold(title = current?.name?.let { "Events in $it" } ?: "Events") {
+    val cityChosen by graph.location.cityChosen.collectAsStateWithLifecycle()
+    var choosingCity by rememberSaveable { mutableStateOf(false) }
+    ScreenScaffold(
+        title = current?.name?.let { "Events in $it" } ?: "Events",
+        actions = {
+            // A city picked by hand can be changed here; the device's own city follows the device.
+            if (current != null && cityChosen) {
+                IconButton(onClick = { choosingCity = true }) { Icon(Icons.Rounded.LocationCity, contentDescription = "Choose a city") }
+            }
+        },
+    ) {
+        if (choosingCity) CityPickerSheet(onDismiss = { choosingCity = false })
         if (current == null) {
-            Message(
-                icon = Icons.Rounded.LocationOff,
-                title = "Where are you?",
-                text = "We need your location to find events near you.",
-            )
+            LocationNeeded(title = "Where are you?", text = "Hot Mess shows the events in your city.")
             return@ScreenScaffold
         }
         var selectedNight by remember(current.id) { mutableStateOf<LocalDate?>(null) }

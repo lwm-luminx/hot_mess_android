@@ -1425,3 +1425,17 @@ private data class MutePostAuthorResponse(val mutePostAuthor: Payload) {
     @Serializable
     data class Payload(val muted: Boolean = true)
 }
+
+/**
+ * The cities the venues are in, by name, for choosing one by hand when location is off. Venues without a named
+ * locale are left out.
+ */
+fun List<Venue>.cities(): List<AppLocale> =
+    mapNotNull { venue ->
+        val locale = venue.locale ?: return@mapNotNull null
+        val id = RecordId.normalize(locale.id) ?: return@mapNotNull null
+        val name = locale.displayName?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+        AppLocale(id, name)
+    }
+        .distinctBy { it.id }
+        .sortedBy { it.name.lowercase() }

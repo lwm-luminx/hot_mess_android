@@ -1,12 +1,5 @@
 package social.hotmess.android.ui.screens
 
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material.icons.rounded.SystemUpdate
-import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material.icons.rounded.Shop
-import androidx.compose.material.icons.automirrored.rounded.OpenInNew
-import social.hotmess.android.updates.AppUpdates
 import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.background
@@ -18,23 +11,30 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ViewAgenda
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
-import androidx.compose.material.icons.rounded.NotificationsActive
-import androidx.compose.material.icons.rounded.Shield
-import androidx.compose.material.icons.rounded.Favorite
-import androidx.compose.material.icons.rounded.ConfirmationNumber
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.ConfirmationNumber
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Email
 import androidx.compose.material.icons.rounded.Face
+import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.Link
+import androidx.compose.material.icons.rounded.LocationCity
 import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.PrivacyTip
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.rounded.Shop
+import androidx.compose.material.icons.rounded.SystemUpdate
+import androidx.compose.material.icons.rounded.ViewAgenda
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -46,6 +46,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,14 +62,15 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import social.hotmess.android.AppConfiguration
 import social.hotmess.android.location.LocationAccess
+import social.hotmess.android.location.LocationProblem
 import social.hotmess.android.session.LocalGoogleAccounts
 import social.hotmess.android.ui.LocalAppGraph
 import social.hotmess.android.ui.Navigator
 import social.hotmess.android.ui.ScreenScaffold
 import social.hotmess.android.ui.StaffApp
-import social.hotmess.android.ui.openStaffApp
 import social.hotmess.android.ui.components.Avatar
 import social.hotmess.android.ui.components.ChatBubble
+import social.hotmess.android.ui.components.CityPickerSheet
 import social.hotmess.android.ui.components.DangerRow
 import social.hotmess.android.ui.components.DetailInset
 import social.hotmess.android.ui.components.DetailRowPadding
@@ -77,16 +79,20 @@ import social.hotmess.android.ui.components.Feed
 import social.hotmess.android.ui.components.InfoRow
 import social.hotmess.android.ui.components.RowDivider
 import social.hotmess.android.ui.components.TinyAvatarSize
-import social.hotmess.android.ui.openAppSettings
+import social.hotmess.android.ui.components.actionLabel
+import social.hotmess.android.ui.components.rememberLocationProblem
+import social.hotmess.android.ui.components.rememberTurnOnLocation
+import social.hotmess.android.ui.openStaffApp
 import social.hotmess.android.ui.openUrl
 import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.Radius
 import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
+import social.hotmess.android.updates.AppUpdates
 import social.hotmess.core.ApiError
 import social.hotmess.core.CalendarFeed
-import social.hotmess.core.ManagedListings
 import social.hotmess.core.LegalLinks
+import social.hotmess.core.ManagedListings
 import social.hotmess.core.initialsForDisplay
 
 private enum class Confirm { RESET, SIGN_OUT, DELETE }
@@ -102,6 +108,7 @@ fun MeScreen(navigator: Navigator) {
     val user by graph.session.user.collectAsStateWithLifecycle()
     val locale by graph.location.locale.collectAsStateWithLifecycle()
     val access by graph.location.access.collectAsStateWithLifecycle()
+    var choosingCity by rememberSaveable { mutableStateOf(false) }
     val safety by graph.safety.state.collectAsStateWithLifecycle()
     // "Your tribes", shown once the API answers with them (hidden signed out, or on an older API).
     val tribes by graph.tribes.choices.collectAsStateWithLifecycle()
@@ -252,20 +259,36 @@ fun MeScreen(navigator: Navigator) {
             }
             item {
                 DetailSection("Location") {
+                    val problem = rememberLocationProblem()
+                    val turnOn = rememberTurnOnLocation()
+                    val cityChosen by graph.location.cityChosen.collectAsStateWithLifecycle()
                     InfoRow(
                         "Location access",
-                        when (access) {
-                            LocationAccess.ALLOWED -> "On"
-                            LocationAccess.DENIED -> "Off"
-                            LocationAccess.NOT_REQUESTED -> "Not asked yet"
+                        when {
+                            access == LocationAccess.NOT_REQUESTED -> "Not asked yet"
+                            access == LocationAccess.DENIED -> "Off"
+                            problem == LocationProblem.SERVICES_OFF -> "Off on this phone"
+                            else -> "On"
                         },
                         icon = Icons.Rounded.LocationOn,
                     )
-                    if (access == LocationAccess.DENIED) {
+                    if (problem != null && problem != LocationProblem.WAITING) {
                         RowDivider()
-                        InfoRow("Open settings", onClick = context::openAppSettings, trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight)
+                        InfoRow(problem.actionLabel(), onClick = turnOn, trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight)
+                    }
+                    // Without a position of its own, Hot Mess uses a city picked here.
+                    if (problem != null || cityChosen) {
+                        RowDivider()
+                        InfoRow(
+                            "City",
+                            locale?.name ?: "Choose",
+                            icon = Icons.Rounded.LocationCity,
+                            onClick = { choosingCity = true },
+                            trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        )
                     }
                 }
+                if (choosingCity) CityPickerSheet(onDismiss = { choosingCity = false })
             }
             if (googleAccounts?.available == true && user?.signedInWithGoogle == false) {
                 item {
