@@ -277,6 +277,8 @@ dependencies {
     implementation(libs.play.services.auth)
     // Whether a newer build is on Google Play, for Me › About.
     implementation(libs.play.app.update.ktx)
+    // Venue geofences (VenueGeofences.kt).
+    implementation(libs.play.services.location)
     // Sign-in through the Facebook app. Facebook Login brings an old Fragment; the Activity Result API needs 1.3
     // or later.
     implementation(libs.facebook.login)

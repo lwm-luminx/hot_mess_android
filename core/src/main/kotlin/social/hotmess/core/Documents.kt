@@ -184,6 +184,13 @@ object Documents {
         }
     """.trimIndent()
 
+    /** The venues near a position with their envelopes (point and distance tolerance), for venue geofences. */
+    val VENUE_FENCES: String = """
+        query VenueFences(${'$'}near: CoordinatesInput!) {
+          venues { list(near: ${'$'}near) { nodes { id point distanceTolerance } } }
+        }
+    """.trimIndent()
+
     val VENUES: String = """
         query Venues {
           venues { list { nodes { $VENUE_FIELDS hidden order locale { id name label } } } }

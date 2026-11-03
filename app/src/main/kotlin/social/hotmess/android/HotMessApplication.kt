@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.maplibre.android.MapLibre
 import social.hotmess.android.location.LocationProvider
+import social.hotmess.android.location.VenueGeofences
 import social.hotmess.android.payments.SquareCardEntry
 import social.hotmess.android.push.HotMessMessagingService
 import social.hotmess.android.push.InAppNotifications
@@ -49,7 +50,8 @@ class AppGraph(context: Context, val configuration: AppConfiguration = AppConfig
     val brand = BrandStore(audienceKit, scope)
     val push = PushRegistrar(context, api, scope)
     val session = SessionStore(context, api, audienceKit, configuration, push, scope)
-    val location = LocationProvider(context, api, configuration, scope)
+    val geofences = VenueGeofences(context.applicationContext, api)
+    val location = LocationProvider(context, api, configuration, scope, geofences)
 
     /** Terms of use, blocking and reporting, as the API keeps them for the signed-in user. */
     val safety = SafetyStore(api)
@@ -119,6 +121,8 @@ class AppGraph(context: Context, val configuration: AppConfiguration = AppConfig
                         listings.clear()
                         tribes.clear()
                         cable.disconnect()
+                        // A signed-out app is never woken for a venue.
+                        geofences.stopAll()
                     }
                     AuthState.SignedIn -> {
                         if (isForeground) notifications.start()
