@@ -39,6 +39,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.launch
 import social.hotmess.android.AppGraph
+import social.hotmess.android.location.LocationProblem
 import social.hotmess.android.ui.LocalAppGraph
 import social.hotmess.android.ui.Navigator
 import social.hotmess.android.ui.ScreenScaffold
@@ -55,6 +56,9 @@ import social.hotmess.android.ui.components.PromptBarState
 import social.hotmess.android.ui.components.RichContent
 import social.hotmess.android.ui.components.RoomBanner
 import social.hotmess.android.ui.components.RoomBannerKind
+import social.hotmess.android.ui.components.actionLabel
+import social.hotmess.android.ui.components.rememberLocationProblem
+import social.hotmess.android.ui.components.rememberTurnOnLocation
 import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.ApiError
@@ -79,8 +83,8 @@ import social.hotmess.core.RoomLineup
 import social.hotmess.core.RoomPeople
 import social.hotmess.core.RoomPerson
 import social.hotmess.core.SharedTribe
-import social.hotmess.core.VenueChatConnection
 import social.hotmess.core.Venue
+import social.hotmess.core.VenueChatConnection
 import social.hotmess.core.VenueMessage
 import social.hotmess.core.VenueNight
 import social.hotmess.core.opensProfile
@@ -543,16 +547,35 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator, docked: 
     ) {
         Column(Modifier.fillMaxSize().imePadding().navigationBarsPadding()) {
             if (status == VenueChatModel.Status.AWAY) {
+                val problem = rememberLocationProblem()
+                val turnOn = rememberTurnOnLocation()
+                // Location just came on (back from Settings, or the prompt): try the room again, once.
+                var hadProblem by remember { mutableStateOf(problem != null) }
+                LaunchedEffect(problem) {
+                    if (problem == null && hadProblem) {
+                        model.disconnect()
+                        model.connect()
+                    }
+                    hadProblem = problem != null
+                }
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     Message(
                         Icons.AutoMirrored.Rounded.Chat,
                         if (isLocale) "Only for people out in $venueName" else "Only for people at $venueName",
-                        if (isLocale) {
-                            "The room opens when you're out in $venueName and not at a venue. Venues have their own chat."
-                        } else {
-                            "The room opens when you're there. Your location has to be on so Hot Mess can tell."
+                        when {
+                            problem == LocationProblem.DENIED || problem == LocationProblem.NOT_ASKED ->
+                                "The room opens when you're there. Location is off for Hot Mess, so it can't tell. Turn it on, then try again."
+                            problem == LocationProblem.SERVICES_OFF ->
+                                "The room opens when you're there. Location is off on this phone, so Hot Mess can't tell. Turn it on, then try again."
+                            isLocale -> "The room opens when you're out in $venueName and not at a venue. Venues have their own chat."
+                            else -> "The room opens when you're there. Your location has to be on so Hot Mess can tell."
                         },
-                        action = "Try again" to { model.disconnect(); model.connect() },
+                        // Location off: the button fixes that first; once a position comes in, the room tries again.
+                        action = if (problem != null && problem != LocationProblem.WAITING) {
+                            problem.actionLabel() to turnOn
+                        } else {
+                            "Try again" to { model.disconnect(); model.connect() }
+                        },
                     )
                 }
                 return@Column
