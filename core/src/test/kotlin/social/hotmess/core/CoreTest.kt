@@ -215,6 +215,17 @@ class DeepLinkTest {
     }
 
     @Test
+    fun aReviewLinkCarriesItsCodeAndRoutesNowhere() {
+        assertEquals("ABCD-1234-EFGH-5678", DeepLink.reviewCode("hotmess://review?code=ABCD-1234-EFGH-5678"))
+        assertEquals("ABCD 1234", DeepLink.reviewCode("hotmess://review?code=%20ABCD%201234%20"), "decoded and trimmed")
+        assertNull(DeepLink.reviewCode("hotmess://review"))
+        assertNull(DeepLink.reviewCode("hotmess://review?code="))
+        assertNull(DeepLink.reviewCode("https://hotmess.social/review?code=ABCD"), "only the app's own scheme")
+        assertNull(DeepLink.reviewCode("hotmess://venues/$id?code=ABCD"))
+        assertNull(DeepLink.route("hotmess://review?code=ABCD"))
+    }
+
+    @Test
     fun aTextedPingLinkKeepsItsInvitationAsItCame() {
         assertEquals(AppRoute.NowPing(id, "v3.abc"), DeepLink.route("https://hotmess.social/pings/$id?e=v3.abc"))
         assertEquals(AppRoute.NowPing(id, "v3.abc"), DeepLink.route("hotmess://pings/$id?utm=sms&e=v3.abc"))
