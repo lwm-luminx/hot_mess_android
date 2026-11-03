@@ -4,6 +4,7 @@ import com.audiencekit.APIRequest
 import com.audiencekit.Admission
 import com.audiencekit.AudienceKitClient
 import com.audiencekit.AudienceKitException
+import com.audiencekit.Coordinate
 import com.audiencekit.Coordinates
 import com.audiencekit.CoverPurchase
 import com.audiencekit.GraphQLError
@@ -106,6 +107,15 @@ class HotMessApi(val client: AudienceKitClient) {
         val id = RecordId.normalize(locale.id) ?: return null
         return AppLocale(id = id, name = locale.displayName ?: "")
     }
+
+    /** The envelopes of the venues near [near], for venue geofences; venues without a point are left out. */
+    suspend fun venueFences(near: Coordinates): List<VenueFence> =
+        query(Documents.VENUE_FENCES, VenueFencesResponse.serializer(), mapOf("near" to near.toGraphQLValue()))
+            .venues?.list?.nodes.orEmpty().mapNotNull { node ->
+                val point = node.point?.let(Coordinate::fromWkt) ?: return@mapNotNull null
+                val id = RecordId.normalize(node.id) ?: return@mapNotNull null
+                VenueFence(id, point.latitude, point.longitude, node.distanceTolerance ?: return@mapNotNull null)
+            }
 
     /**
      * The audience's venues for the Venues tab: visible ones, those in [localeId] first, then in the
@@ -1083,6 +1093,13 @@ private data class SetChatInitialsResponse(val setChatInitials: Payload) {
 
 @Serializable
 private data class ClosestLocaleResponse(val closestLocale: LocaleSummary? = null)
+
+@Serializable
+private data class VenueFencesResponse(val venues: Venues? = null) {
+    @Serializable data class Venues(val list: Nodes<Node> = Nodes())
+
+    @Serializable data class Node(val id: String, val point: String? = null, val distanceTolerance: Double? = null)
+}
 
 @Serializable
 private data class VenuesResponse(@SerialName("venues") val venuesMixin: VenuesMixin? = null) {

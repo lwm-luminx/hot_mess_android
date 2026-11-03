@@ -60,6 +60,7 @@ class LocationProvider(
     private val api: HotMessApi,
     configuration: AppConfiguration,
     private val scope: CoroutineScope,
+    private val geofences: VenueGeofences? = null,
 ) {
     // First, since the flows below read it as they start.
     private val manager = context.getSystemService(LocationManager::class.java)
@@ -259,12 +260,32 @@ class LocationProvider(
         }
 
         beacons?.start()
+        // Play Services forgets geofences when location is turned off and on again; hand the kept plan back.
+        geofences?.restore()
         scope.launch { refreshLocale() }
     }
 
     private fun update(location: Location) {
+        // Geofences follow the device, even while pretending to be elsewhere; the plan only changes once it's moved.
+        geofences?.let { fences -> scope.launch { fences.plan(Coordinates(location.latitude, location.longitude)) } }
         if (!tracker.deviceFix(location.latitude, location.longitude)) return
         reportWhenDue()
+    }
+
+    /**
+     * A venue geofence was crossed (or the re-center circle left), perhaps with Hot Mess closed: reports [location] at
+     * once, since arriving or leaving is what the API needs to hear, then plans the geofences again from there when
+     * [replan] (leaving the re-center circle means unwatched venues may be close now).
+     */
+    suspend fun reportCrossing(location: Location, replan: Boolean) {
+        tracker.deviceFix(location.latitude, location.longitude)
+        pendingReport?.cancel()
+        publish()
+        tracker.current?.let { position ->
+            throttle.sent(position, SystemClock.elapsedRealtime())
+            reportPosition(position)
+        }
+        geofences?.plan(Coordinates(location.latitude, location.longitude), force = replan)
     }
 
     private fun onBeacon(major: Int, minor: Int) {

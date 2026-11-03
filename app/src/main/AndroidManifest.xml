@@ -6,6 +6,11 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- Venue geofences (VenueGeofences.kt): arriving at or leaving a venue is reported with the app closed too, once
+         someone chooses "Allow all the time" after the in-app explanation (BackgroundLocationPrompt.kt). -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!-- Android drops geofences on restart and on app updates; VenueGeofenceRestore adds them back. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Pair me up: scanning your match's code when you meet. -->
@@ -119,6 +124,14 @@
         <meta-data
             android:name="com.google.android.gms.wallet.api.enabled"
             android:value="true" />
+
+        <receiver android:name=".location.VenueGeofenceReceiver" android:exported="false" />
+        <receiver android:name=".location.VenueGeofenceRestore" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <service
             android:name=".push.HotMessMessagingService"

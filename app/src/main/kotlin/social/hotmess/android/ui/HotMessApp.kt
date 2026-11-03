@@ -57,6 +57,7 @@ import androidx.navigation.toRoute
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.Serializable
 import social.hotmess.android.location.LocationAccess
+import social.hotmess.android.ui.components.BackgroundLocationPrompt
 import social.hotmess.android.session.AuthState
 import social.hotmess.android.ui.screens.EventScreen
 import social.hotmess.android.ui.screens.GetHelpScreen
@@ -370,6 +371,7 @@ private fun MainShell(links: Flow<AppRoute>) {
     }
 
     AskForPermissions()
+    BackgroundLocationPrompt()
 
     if (linkExpired) {
         AlertDialog(
