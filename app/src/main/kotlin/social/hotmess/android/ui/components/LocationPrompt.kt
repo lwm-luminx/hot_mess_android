@@ -1,10 +1,9 @@
 package social.hotmess.android.ui.components
 
 import android.Manifest
-import android.app.Activity
 import android.content.Context
-import android.content.ContextWrapper
 import android.content.Intent
+import android.os.SystemClock
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -43,7 +42,6 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.core.app.ActivityCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.CancellationException
 import social.hotmess.android.location.LocationAccess
@@ -83,24 +81,30 @@ fun rememberTurnOnLocation(): () -> Unit {
     val location = LocalAppGraph.current.location
     val access by location.access.collectAsStateWithLifecycle()
     val servicesOn by location.servicesOn.collectAsStateWithLifecycle()
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+    // When the request went out: Android answers a request it won't show at once, so a quick refusal means no prompt.
+    val askedAt = remember { longArrayOf(0L) }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
         location.onPermissionResult()
+        val noPrompt = SystemClock.elapsedRealtime() - askedAt[0] < NO_PROMPT_MS
+        // Refused without a prompt ("Don't ask again", or denied twice): the app's settings page is the only way.
+        if (granted.values.none { it } && noPrompt) context.openAppSettings()
     }
     return {
-        val activity = context.findActivity()
-        // Once asked and refused, Android says no without a prompt unless it would show a rationale (denied only
-        // once): go to the app's settings page instead of a button that seems to do nothing.
-        val androidWillAsk = access == LocationAccess.NOT_REQUESTED || (activity != null && LOCATION_PERMISSIONS.any {
-            ActivityCompat.shouldShowRequestPermissionRationale(activity, it)
-        })
         when {
             access == LocationAccess.ALLOWED && !servicesOn -> context.openLocationSettings()
             access == LocationAccess.ALLOWED -> location.start()
-            androidWillAsk -> launcher.launch(LOCATION_PERMISSIONS)
-            else -> context.openAppSettings()
+            // Always asks first, rather than guessing from what was asked before: Android may have reset the
+            // permission itself (unused apps, "Only this time"), and then it prompts again.
+            else -> {
+                askedAt[0] = SystemClock.elapsedRealtime()
+                launcher.launch(LOCATION_PERMISSIONS)
+            }
         }
     }
 }
+
+/** Faster than anyone answers a prompt: Android refused without showing one. */
+private const val NO_PROMPT_MS = 500L
 
 private val LOCATION_PERMISSIONS = arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
 
@@ -203,10 +207,4 @@ fun CityPickerSheet(onDismiss: () -> Unit) {
 fun Context.openLocationSettings() {
     runCatching { startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
         .onFailure { openAppSettings() }
-}
-
-private tailrec fun Context.findActivity(): Activity? = when (this) {
-    is Activity -> this
-    is ContextWrapper -> baseContext.findActivity()
-    else -> null
 }
