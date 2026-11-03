@@ -10,9 +10,9 @@ import kotlin.test.assertTrue
 class VenueGeofencesTest {
     private val here = Coordinates(47.6145, -122.3210)
 
-    /** A venue [north] metres north of [here] (about 111,320 m to a degree of latitude). */
+    /** A venue [north] metres north of [here] (about 111,195 m to a degree of latitude on [metersTo]'s sphere). */
     private fun venue(id: String, north: Double, radius: Double = 50.0) =
-        VenueFence(id, here.latitude + north / 111_320.0, here.longitude, radius)
+        VenueFence(id, here.latitude + north / 111_195.0, here.longitude, radius)
 
     @Test
     fun watchesTheNearestVenuesAndStopsTheRecenterCircleShortOfTheNextOne() {
@@ -47,8 +47,8 @@ class VenueGeofencesTest {
     @Test
     fun plansAgainHalfWayToTheEdgeOrWhenTheEnvelopesAreOld() {
         val plan = GeofencePlan.plan(here, listOf(venue("a", 300.0), venue("b", 1_000.0)), regionLimit = 2)
-        val nearby = Coordinates(here.latitude + 100 / 111_320.0, here.longitude)
-        val halfWay = Coordinates(here.latitude + 500 / 111_320.0, here.longitude)
+        val nearby = Coordinates(here.latitude + 100 / 111_195.0, here.longitude)
+        val halfWay = Coordinates(here.latitude + 500 / 111_195.0, here.longitude)
 
         assertFalse(plan.isStale(nearby, fencesFresh = true))
         assertTrue(plan.isStale(halfWay, fencesFresh = true))
