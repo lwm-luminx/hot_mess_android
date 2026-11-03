@@ -98,6 +98,8 @@ fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}, onAppleSi
     // A sign-in waiting on Cancel or Continue: the warning and what Continue does.
     var warned by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
     var enteringReviewCode by remember { mutableStateOf(false) }
+    // The code from a hotmess://review link, filled into the dialog.
+    var reviewCodeFromLink by remember { mutableStateOf("") }
     // 18 or older: confirmed on this device before, or with the box below. Every way in waits for it.
     val context = androidx.compose.ui.platform.LocalContext.current
     var alreadyConfirmed by remember { mutableStateOf(AgeGate.isConfirmed(context)) }
@@ -118,6 +120,15 @@ fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}, onAppleSi
         } else {
             awaitingAge = signIn
         }
+    }
+    // A hotmess://review link: once the methods are known, open the review code dialog with its code (after the age box).
+    val offeredReviewCode by graph.session.offeredReviewCode.collectAsStateWithLifecycle()
+    LaunchedEffect(offeredReviewCode, asked) {
+        val code = offeredReviewCode ?: return@LaunchedEffect
+        if (!asked) return@LaunchedEffect
+        graph.session.reviewCodeTaken()
+        reviewCodeFromLink = code
+        afterAge { enteringReviewCode = true }
     }
     fun begin(method: String, signIn: () -> Unit) {
         val warning = signInMethods?.warning(method)
@@ -282,11 +293,16 @@ fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}, onAppleSi
 
             if (enteringReviewCode) {
                 ReviewCodeDialog(
+                    initialCode = reviewCodeFromLink,
                     onSubmit = { code ->
                         enteringReviewCode = false
+                        reviewCodeFromLink = ""
                         graph.session.signInWithReviewCode(code)
                     },
-                    onDismiss = { enteringReviewCode = false },
+                    onDismiss = {
+                        enteringReviewCode = false
+                        reviewCodeFromLink = ""
+                    },
                 )
             }
 
@@ -318,8 +334,8 @@ fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}, onAppleSi
  * designated reviewer account (hot_mess_ios ReviewCodeSheet).
  */
 @Composable
-private fun ReviewCodeDialog(onSubmit: (String) -> Unit, onDismiss: () -> Unit) {
-    var code by remember { mutableStateOf("") }
+private fun ReviewCodeDialog(initialCode: String = "", onSubmit: (String) -> Unit, onDismiss: () -> Unit) {
+    var code by remember { mutableStateOf(initialCode) }
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
     val submit = { if (code.isNotBlank()) onSubmit(code.trim()) }

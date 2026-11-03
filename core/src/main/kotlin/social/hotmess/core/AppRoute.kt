@@ -80,6 +80,17 @@ object DeepLink {
      */
     fun route(url: String): AppRoute? = link(url)?.route
 
+    /**
+     * The code in `hotmess://review?code=<code>`, which opens "Have an App Review code?" with the code filled in
+     * (`adb shell am start -d 'hotmess://review?code=…'` on an emulator). It never signs in by itself: the person
+     * still taps Sign in, so a link can't quietly swap someone's account. Null for any other link.
+     */
+    fun reviewCode(url: String): String? {
+        val uri = runCatching { URI(url) }.getOrNull() ?: return null
+        if (uri.scheme != "hotmess" || uri.host != "review") return null
+        return query(uri, "code")?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
     /** [route], with the link's host, path and `e` (`?e=<token>`) for checking a share link. */
     fun link(url: String): Link? {
         val uri = runCatching { URI(url) }.getOrNull() ?: return null
