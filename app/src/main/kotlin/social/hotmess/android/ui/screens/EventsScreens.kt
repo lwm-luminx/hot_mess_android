@@ -159,7 +159,7 @@ fun EventsScreen(navigator: Navigator) {
                         } else {
                             listing.sections.filter { it.events.isNotEmpty() }.forEach { section ->
                                 cardSection(section.id, section.title, section.events, key = { it.id }) { event ->
-                                    EventCard(event, onClick = { open(event) })
+                                    EventCard(event, onClick = { open(event) }, featured = if (section.isFeatured) true else null)
                                 }
                             }
                         }

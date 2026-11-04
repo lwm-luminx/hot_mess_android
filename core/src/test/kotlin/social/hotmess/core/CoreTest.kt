@@ -155,6 +155,8 @@ class ListingTest {
         )
 
         assertEquals(listOf("featured", "upcoming"), listing.sections.map { it.id })
+        // Featured cards are sized by the section, not each event's own featured flag.
+        assertEquals(listOf(true, false), listing.sections.map { it.isFeatured })
         assertEquals(listOf("a", "c"), listing.sections[0].events.map { it.id })
         assertEquals(listOf("b", "d"), listing.sections[1].events.map { it.id })
         assertEquals(listOf("a", "b", "c", "d"), listing.allEvents.map { it.id })

@@ -1,7 +1,14 @@
 package social.hotmess.core
 
 /** A titled run of events on the Events tab. */
-data class EventSection(val id: String, val title: String, val events: List<Event>)
+data class EventSection(val id: String, val title: String, val events: List<Event>) {
+    /** The Featured section [EventListing.upcoming] makes; its cards are featured height. */
+    val isFeatured: Boolean get() = id == FEATURED_ID
+
+    companion object {
+        const val FEATURED_ID = "featured"
+    }
+}
 
 data class EventListing(val sections: List<EventSection> = emptyList()) {
     val isEmpty: Boolean get() = sections.all { it.events.isEmpty() }
@@ -21,7 +28,7 @@ data class EventListing(val sections: List<EventSection> = emptyList()) {
             val upcoming = sorted.filterNot { it.id in featuredIds }
             return EventListing(
                 listOf(
-                    EventSection(id = "featured", title = "Featured", events = featured),
+                    EventSection(id = EventSection.FEATURED_ID, title = "Featured", events = featured),
                     EventSection(id = "upcoming", title = "Upcoming", events = upcoming),
                 ).filter { it.events.isNotEmpty() },
             )
