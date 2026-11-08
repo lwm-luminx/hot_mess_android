@@ -114,3 +114,12 @@ belonged to, are no longer used.
 Figtree is by The Figtree Project Authors and licensed under the SIL Open Font License 1.1
 (`design/Figtree-OFL.txt`). Map tiles are from
 [OpenFreeMap](https://openfreemap.org), © OpenStreetMap contributors.
+
+## License and copyright
+
+Copyright © 2026 Love Wins Media. All rights reserved. This code is public so it
+can be read, **not** so it can be reused. You may not copy, redistribute, or
+build on any of it without written permission. Copying it without permission,
+or removing the attribution, is copyright infringement, and doing it willfully
+for commercial gain is a federal crime (17 U.S.C. §§ 506, 1202, 1204). See
+[LICENSE](LICENSE) for the full terms.
