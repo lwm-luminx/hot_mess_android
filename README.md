@@ -114,3 +114,7 @@ belonged to, are no longer used.
 Figtree is by The Figtree Project Authors and licensed under the SIL Open Font License 1.1
 (`design/Figtree-OFL.txt`). Map tiles are from
 [OpenFreeMap](https://openfreemap.org), © OpenStreetMap contributors.
+
+## License and copyright
+
+Copyright © 2026 Love Wins Media, Inc. All rights reserved; see [LICENSE](LICENSE), which grants no license of any kind. This code is public so it can be read and security-scanned, **not** so it can be reused. Copying this work beyond what [LICENSE](LICENSE) allows is copyright infringement, and willful copying can be a federal crime (17 U.S.C. §§ 501, 506). Removing, altering or faking copyright or attribution notices is unlawful under 17 U.S.C. § 1202, and a federal crime under § 1204 when done willfully for commercial advantage or private financial gain. Publishing an app built from it without a license also breaks [App Store Review Guideline 5.2.1](https://developer.apple.com/app-store/review/guidelines/#intellectual-property) (Intellectual Property) and [Google Play's Intellectual Property policy](https://support.google.com/googleplay/android-developer/answer/9888072). See [NOTICE.md](NOTICE.md) for the details.
