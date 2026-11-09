@@ -1,5 +1,7 @@
 package social.hotmess.android.ui.screens
 
+import com.audiencekit.SoapboxCopy
+import com.audiencekit.ArticleTopic
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
@@ -184,6 +186,7 @@ fun EventScreen(id: String, navigator: Navigator) {
 
     LaunchedEffect(id) { loader.load(id) { graph.api.event(id) } }
     val postsSubject = remember(id) { PostsSubject.Event(id) }
+    val news = rememberNews(remember(id) { ArticleTopic.Event(id) })
     val postsLoader = rememberPosts(postsSubject)
     val posts by postsLoader.state.collectAsStateWithLifecycle()
     val postActions = rememberPostActions(navigator) { poster -> postsLoader.update { list -> list.filterNot { it.poster == poster } } }
@@ -303,6 +306,7 @@ fun EventScreen(id: String, navigator: Navigator) {
                     }
                 }
                 postsSection("From the venue and hosts", postsSubject, posts, postActions)
+                newsSection(SoapboxCopy.IN_THE_NEWS, news, navigator)
                 item(key = "photos") { PhotosSection(postsSubject, navigator) }
                 item {
                     DetailSection("When") {

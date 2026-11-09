@@ -1,5 +1,7 @@
 package social.hotmess.android.ui.screens
 
+import com.audiencekit.SoapboxCopy
+import com.audiencekit.ArticleTopic
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -351,6 +353,7 @@ fun VenueScreen(id: String, navigator: Navigator) {
 
     val venue = state.valueOrNull?.venue
     val postsSubject = remember(id) { PostsSubject.Venue(id) }
+    val news = rememberNews(remember(id) { ArticleTopic.Venue(id) })
     val postsLoader = rememberPosts(postsSubject)
     val posts by postsLoader.state.collectAsStateWithLifecycle()
     val postActions = rememberPostActions(navigator) { poster -> postsLoader.update { list -> list.filterNot { it.poster == poster } } }
@@ -510,6 +513,7 @@ fun VenueScreen(id: String, navigator: Navigator) {
                             item { FriendsHere(overview.friends) }
                         }
                         postsSection("Posts", postsSubject, posts, postActions)
+                        newsSection(SoapboxCopy.IN_THE_NEWS, news, navigator)
                         item {
                             DetailSection("About") {
                                 loaded.description?.takeIf { it.isNotBlank() }?.let {

@@ -33,6 +33,12 @@ sealed interface AppRoute {
     /** A locale's own page from the Venues tab's Everywhere view: some of its events and its venues. */
     data class LocaleDetail(val id: String, val name: String) : AppRoute
 
+    /** A Soapbox article, by its id. */
+    data class ArticleDetail(val id: String) : AppRoute
+
+    /** A Soapbox publication's page: its articles and "Write an op-ed". */
+    data class PublicationDetail(val id: String) : AppRoute
+
     /** One of the user's safety alerts, from a push about it (`/safety-alerts/<id>`); it opens over Me. */
     data class SafetyAlertHelp(val id: String) : AppRoute
 
@@ -51,6 +57,8 @@ sealed interface AppRoute {
             is Chat -> if (room.kind == ChatRoom.Kind.VENUE) AppTab.VENUES else AppTab.NOW
             // A post opens wherever it's linked from; a link from outside lands on Now.
             is PostDetail, is Updates -> AppTab.NOW
+            // News opens wherever it's linked from; a link from outside lands on Now.
+            is ArticleDetail, is PublicationDetail -> AppTab.NOW
             // Me lists the user's safety alerts, so Back from one lands there.
             is SafetyAlertHelp -> AppTab.ME
             is Posts -> when (subject) {
