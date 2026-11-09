@@ -88,9 +88,31 @@ fun LazyListScope.newsSection(title: String, articles: List<Article>, navigator:
     if (articles.isEmpty()) return
     item(key = "news-title") { SectionTitle(title) }
     items(articles, key = { "news-${it.id}" }) { article ->
-        ArticleRow(article) { navigator.open(AppRoute.ArticleDetail(article.id)) }
+        ArticleRow(article, onClick = rememberOpenArticle(article, navigator))
     }
 }
+
+/**
+ * Opens an article: the reader, or for a teaser (a publication that isn't on Soapbox yet links out) the piece on the
+ * publication's own site, where its ads and traffic are.
+ */
+@Composable
+fun rememberOpenArticle(article: Article, navigator: Navigator): () -> Unit {
+    val uriHandler = LocalUriHandler.current
+    val url = article.canonicalUrl?.takeIf { article.teaser }
+    return remember(article.id, url) {
+        {
+            val opened = url != null && runCatching { uriHandler.openUri(url) }.isSuccess
+            if (!opened) navigator.open(AppRoute.ArticleDetail(article.id))
+        }
+    }
+}
+
+/** A teaser's site, e.g. "qsaltlake.com", shown on its row so readers know it opens the web. */
+fun linkOutHost(article: Article): String? =
+    article.canonicalUrl?.takeIf { article.teaser }
+        ?.let { runCatching { java.net.URI(it).host }.getOrNull() }
+        ?.removePrefix("www.")
 
 /** An article in a list: its photo, "Op-ed" on readers' pieces, its title, summary and dateline. */
 @Composable
@@ -115,7 +137,12 @@ fun ArticleRow(article: Article, onClick: () -> Unit) {
                 article.summary?.takeIf { it.isNotBlank() }?.let {
                     Text(it, style = HotMessType.bodySmall, color = tokens.inkMuted, maxLines = 2)
                 }
-                Text(dateline(article), style = HotMessType.caption, color = tokens.inkMuted)
+                val host = linkOutHost(article)
+                Text(
+                    if (host != null) "${dateline(article)} · $host ↗" else dateline(article),
+                    style = HotMessType.caption,
+                    color = tokens.inkMuted,
+                )
             }
         }
     }
@@ -278,7 +305,7 @@ fun PublicationScreen(id: String, navigator: Navigator) {
                     item(key = "empty") { Text("Nothing published yet.", style = HotMessType.body, color = tokens.inkMuted) }
                 } else {
                     items(page.articles, key = { "article-${it.id}" }) { article ->
-                        ArticleRow(article) { navigator.open(AppRoute.ArticleDetail(article.id)) }
+                        ArticleRow(article, onClick = rememberOpenArticle(article, navigator))
                     }
                 }
             }
