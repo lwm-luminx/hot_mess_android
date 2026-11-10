@@ -1,5 +1,7 @@
 package social.hotmess.android.ui.screens
 
+import com.audiencekit.SoapboxCopy
+import com.audiencekit.ArticleTopic
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -208,6 +210,7 @@ fun PersonScreen(id: String, navigator: Navigator) {
 
     LaunchedEffect(id) { loader.load(id) { graph.api.person(id) } }
     val postsSubject = remember(id) { PostsSubject.Person(id) }
+    val news = rememberNews(remember(id) { ArticleTopic.Person(id) })
     val postsLoader = rememberPosts(postsSubject)
     val posts by postsLoader.state.collectAsStateWithLifecycle()
     val postActions = rememberPostActions(navigator) { poster -> postsLoader.update { list -> list.filterNot { it.poster == poster } } }
@@ -275,6 +278,7 @@ fun PersonScreen(id: String, navigator: Navigator) {
                     }
                 }
                 postsSection("Posts", postsSubject, posts, postActions)
+                newsSection(SoapboxCopy.IN_THE_NEWS, news, navigator)
                 item(key = "photos") { PhotosSection(postsSubject, navigator, title = "On stage") }
                 if (detail.tracks.isNotEmpty()) {
                     item {

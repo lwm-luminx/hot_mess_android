@@ -1,5 +1,7 @@
 package social.hotmess.android.ui.screens
 
+import com.audiencekit.SoapboxCopy
+import com.audiencekit.ArticleTopic
 import android.provider.Settings
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
@@ -151,6 +153,7 @@ fun LocaleScreen(id: String, name: String, navigator: Navigator) {
     }
     LaunchedEffect(id) { loader.load(id, fetch = fetch) }
     val served = rememberScreenCards(LayoutScreen.LOCALE, LOCALE_CARD_KINDS, LOCALE_FALLBACK_CARDS, forLocale = id)
+    val news = rememberNews(remember(id) { ArticleTopic.Locale(id) }, limit = 5)
 
     ScreenScaffold(name, onBack = navigator::back) {
         LoadStateView(state, onRetry = { loader.load(id, refresh = true, fetch = fetch) }) { page ->
@@ -186,6 +189,7 @@ fun LocaleScreen(id: String, name: String, navigator: Navigator) {
                             CardKind.PROMO_SLOT -> item(key = card.id) { PromoSlotView(card, cards.id, navigator) }
                         }
                     }
+                    newsSection(SoapboxCopy.NEWS, news, navigator)
                 }
             }
         }

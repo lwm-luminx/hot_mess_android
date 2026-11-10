@@ -59,7 +59,9 @@ import kotlinx.serialization.Serializable
 import social.hotmess.android.location.LocationAccess
 import social.hotmess.android.ui.components.BackgroundLocationPrompt
 import social.hotmess.android.session.AuthState
+import social.hotmess.android.ui.screens.ArticleScreen
 import social.hotmess.android.ui.screens.EventScreen
+import social.hotmess.android.ui.screens.PublicationScreen
 import social.hotmess.android.ui.screens.GetHelpScreen
 import social.hotmess.android.ui.screens.FixTarget
 import social.hotmess.android.ui.screens.SuggestListingScreen
@@ -116,6 +118,8 @@ import social.hotmess.core.postsSubject
 @Serializable data class PostsRoute(val kind: String, val id: String, val title: String)
 @Serializable data class UpdatesRoute(val localeId: String, val localeName: String)
 @Serializable data class LocaleRoute(val id: String, val name: String)
+@Serializable data class ArticleRoute(val id: String)
+@Serializable data class PublicationRoute(val id: String)
 @Serializable data object PassesRoute
 /** Get help at a venue the user is at ([address] for a friend or a ride). */
 @Serializable data class HelpRoute(
@@ -272,6 +276,8 @@ private fun MainShell(links: Flow<AppRoute>) {
                     is AppRoute.Posts -> PostsRoute(route.subject.kind, route.subject.id, route.title)
                     is AppRoute.Updates -> UpdatesRoute(route.localeId, route.localeName)
                     is AppRoute.LocaleDetail -> LocaleRoute(route.id, route.name)
+                    is AppRoute.ArticleDetail -> ArticleRoute(route.id)
+                    is AppRoute.PublicationDetail -> PublicationRoute(route.id)
                     is AppRoute.SafetyAlertHelp -> SafetyAlertRoute(route.id)
                 },
             )
@@ -465,6 +471,8 @@ private fun MainShell(links: Flow<AppRoute>) {
                     val route = it.toRoute<LocaleRoute>()
                     LocaleScreen(route.id, route.name, navigator)
                 }
+                composable<ArticleRoute> { ArticleScreen(it.toRoute<ArticleRoute>().id, navigator) }
+                composable<PublicationRoute> { PublicationScreen(it.toRoute<PublicationRoute>().id, navigator) }
             }
         }
     }
