@@ -48,6 +48,9 @@ import social.hotmess.android.ui.Navigator
 import social.hotmess.android.ui.ScreenScaffold
 import social.hotmess.android.ui.ShareLinkFailure
 import social.hotmess.android.ui.addToCalendar
+import social.hotmess.android.ui.components.rememberManages
+import social.hotmess.android.ui.components.ManagedListingNotice
+import social.hotmess.android.ui.components.ManagedKind
 import social.hotmess.android.ui.components.Avatar
 import social.hotmess.android.ui.components.CityPickerSheet
 import social.hotmess.android.ui.components.LocationNeeded
@@ -227,6 +230,8 @@ fun EventScreen(id: String, navigator: Navigator) {
     val tonightLineup = tonightModel?.lineup?.collectAsStateWithLifecycle()?.value
     val tonightLoaded = tonightModel?.loaded?.collectAsStateWithLifecycle()?.value ?: true
     val viewerName = graph.session.user.collectAsStateWithLifecycle().value?.name
+    // Velvet, on this event, when it's at a venue the signed-in person manages.
+    val managesVenue = rememberManages(ManagedKind.VENUE, event?.venue?.id.orEmpty())
     val listState = rememberLazyListState()
     val scrolled by rememberHeroCollapsed(listState)
     var heroTone by remember { mutableStateOf(PhotoTone.PLACEHOLDER) }
@@ -268,6 +273,10 @@ fun EventScreen(id: String, navigator: Navigator) {
                     }
                 },
             ) {
+                val managedVenueId = loaded.venue?.id
+                if (managesVenue && managedVenueId != null) {
+                    item(key = "managed") { ManagedListingNotice(ManagedKind.VENUE, managedVenueId, eventId = loaded.id) }
+                }
                 item {
                     // Pings are tonight only, so only tonight's events can be picked.
                     PingStripSection(
