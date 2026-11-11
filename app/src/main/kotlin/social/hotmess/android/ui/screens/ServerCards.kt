@@ -52,6 +52,7 @@ import com.audiencekit.LayoutScreen
 import com.audiencekit.PromoCard
 import com.audiencekit.PromoViewRecorder
 import com.audiencekit.android.CardPreferences
+import com.audiencekit.android.StaffApps
 import com.audiencekit.cardCategories
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -146,6 +147,7 @@ fun rememberScreenCards(
  * anywhere, with the audience's published categories to name them.
  */
 class CardSettings(context: Context, private val client: AudienceKitClient, scope: CoroutineScope) {
+    private val appContext = context.applicationContext
     private val preferences = CardPreferences(context)
     private val loaded = MutableStateFlow<List<CardCategory>?>(null)
 
@@ -157,7 +159,9 @@ class CardSettings(context: Context, private val client: AudienceKitClient, scop
     /** Says which promoted cards were seen, for the fair rotation. */
     val views = PromoViewRecorder(client, scope)
 
-    fun filter(hidden: Set<String>, categories: List<CardCategory>?): CardFilter = CardFilter(hidden, categories)
+    /** AudienceKit's cards about getting Velvet or Backstage are skipped when the phone has it (checked here only). */
+    fun filter(hidden: Set<String>, categories: List<CardCategory>?): CardFilter =
+        CardFilter(hidden, categories, installedStaffApps = StaffApps.installed(appContext))
 
     fun setHidden(key: String, hide: Boolean) = preferences.setHidden(key, hide)
 
