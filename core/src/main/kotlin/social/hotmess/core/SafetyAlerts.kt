@@ -106,6 +106,24 @@ data class SafetyAlertDraft(
 @Serializable
 data class VenueSafety(val canSendSafetyAlert: Boolean = false, val safetyStaffOnShift: Boolean = false)
 
+/**
+ * The emergency number for a region (ISO 3166 country, or subdivision like GB-SCT), for when the app hasn't loaded
+ * `supportResources` (or can't): 999 in the UK, 000 in Australia, 911 across North America, and 112 elsewhere, which
+ * GSM phones route to the local service almost everywhere.
+ */
+object EmergencyNumber {
+    fun forRegion(code: String?): String = when (code?.uppercase()?.substringBefore('-')?.ifBlank { null }) {
+        "GB", "IM", "JE", "GG" -> "999"
+        "AU" -> "000"
+        "NZ" -> "111"
+        "US", "CA", "MX", "PR", "GU", "VI", "AS", "MP", null -> "911"
+        else -> "112"
+    }
+
+    /** The number for the phone's own region. */
+    val current: String get() = forRegion(java.util.Locale.getDefault().country)
+}
+
 /** "Need support?": the emergency number and the crisis and support lines for a region (`supportResources`). */
 @Serializable
 data class SupportResources(
