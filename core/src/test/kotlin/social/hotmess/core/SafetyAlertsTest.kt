@@ -78,4 +78,17 @@ class SafetyAlertsTest {
         assertEquals(null, draft.choose(SafetyPlace.BAR).place)
         assertEquals(setOf(SafetyConcern.OTHER), draft.toggle(SafetyConcern.UNWELL).concerns)
     }
+
+    @Test
+    fun emergencyNumberFollowsTheRegion() {
+        assertEquals("911", EmergencyNumber.forRegion("US"))
+        assertEquals("911", EmergencyNumber.forRegion("CA"))
+        assertEquals("911", EmergencyNumber.forRegion("MX"))
+        assertEquals("999", EmergencyNumber.forRegion("GB"))
+        assertEquals("999", EmergencyNumber.forRegion("gb-sct"))
+        assertEquals("000", EmergencyNumber.forRegion("AU"))
+        assertEquals("112", EmergencyNumber.forRegion("FR"))
+        assertEquals("911", EmergencyNumber.forRegion(""))
+        assertEquals("911", EmergencyNumber.forRegion(null))
+    }
 }

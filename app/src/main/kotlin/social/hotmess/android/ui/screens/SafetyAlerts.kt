@@ -80,6 +80,7 @@ import social.hotmess.android.ui.theme.Radius
 import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.ApiError
+import social.hotmess.core.EmergencyNumber
 import social.hotmess.core.HelpVenue
 import social.hotmess.core.HotMessApi
 import social.hotmess.core.RidePickup
@@ -451,9 +452,9 @@ private fun Context.shareText(text: String) {
     startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 }
 
-/** "In danger right now? Call 911": the one red thing, always last. */
+/** "In danger right now? Call 911" (or the local number): the one red thing, always last. */
 @Composable
-private fun EmergencySection(number: String = "911") {
+private fun EmergencySection(number: String = EmergencyNumber.current) {
     val context = LocalContext.current
     DetailSection("In danger right now?", footer = { Footnote("Hot Mess isn't a crisis service. In an emergency, call $number.") }) {
         Surface(color = tokens.dangerSoft, modifier = Modifier.fillMaxWidth()) {
@@ -586,7 +587,7 @@ private fun AlertStatus(controller: SafetyAlertController, alert: SafetyAlert, o
                         Footnote(
                             if (acknowledged) "Stay where you are if you can. They know where you said you'd be."
                             else "Stay where you feel safest. You'll feel a buzz, with no sound, when someone picks it up. " +
-                                "If nobody does in 2 minutes, we'll help you reach a friend, a ride or 911.",
+                                "If nobody does in 2 minutes, we'll help you reach a friend, a ride or ${EmergencyNumber.current}.",
                         )
                     },
                 ) {
