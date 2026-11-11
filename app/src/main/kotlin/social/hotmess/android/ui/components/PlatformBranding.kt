@@ -47,14 +47,15 @@ fun rememberManages(kind: ManagedKind, id: String): Boolean {
 /**
  * "You manage this venue · Open in Velvet" on a venue the signed-in person manages, and the same with Backstage on their
  * person page. Hot Mess doesn't edit pages; the staff app does, opened on this page. On a phone without the app the
- * button gets it instead ("Join the Velvet beta", "Get Backstage"). Nothing on anyone else's page.
+ * button gets it instead ("Join the Velvet beta", "Get Backstage"). With [eventId], it's on an event at venue [id] and
+ * opens Velvet on that event. Nothing on anyone else's page.
  */
 @Composable
-fun ManagedListingNotice(kind: ManagedKind, id: String, modifier: Modifier = Modifier) {
+fun ManagedListingNotice(kind: ManagedKind, id: String, modifier: Modifier = Modifier, eventId: String? = null) {
     val context = LocalContext.current
     val app = if (kind == ManagedKind.VENUE) StaffApp.VELVET else StaffApp.BACKSTAGE
     val audienceId = BuildConfig.AUDIENCE_ID.takeIf { it.isNotEmpty() }
-    val link = if (kind == ManagedKind.VENUE) StaffApp.velvet(id, audienceId) else StaffApp.backstage(id, audienceId)
+    val link = if (kind == ManagedKind.VENUE) StaffApp.velvet(id, audienceId, eventId) else StaffApp.backstage(id, audienceId)
     val installed = StaffApps.isInstalled(context, app)
 
     Row(
@@ -67,11 +68,15 @@ fun ManagedListingNotice(kind: ManagedKind, id: String, modifier: Modifier = Mod
     ) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.s1)) {
             Text(
-                if (kind == ManagedKind.VENUE) "You manage this venue" else "You manage this page",
+                when {
+                    eventId != null -> "This is at a venue you manage"
+                    kind == ManagedKind.VENUE -> "You manage this venue"
+                    else -> "You manage this page"
+                },
                 style = HotMessType.label,
                 color = tokens.accentInk,
             )
-            Text("Post and manage it in ${app.appName}.", style = HotMessType.bodySmall, color = tokens.inkMuted)
+            Text(if (eventId != null) "Edit it in ${app.appName}." else "Post and manage it in ${app.appName}.", style = HotMessType.bodySmall, color = tokens.inkMuted)
         }
         PrimaryButton(app.linkTitle(installed), onClick = { context.openStaffApp(app, link) })
     }
