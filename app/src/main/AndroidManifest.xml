@@ -157,9 +157,14 @@
         </intent>
         <!-- Messenger, for opening a friend's thread. -->
         <package android:name="com.facebook.orca" />
-        <!-- Velvet and Backstage, which Me opens for venue and talent managers. -->
+        <!-- The staff apps (and their Next builds): Me and managed pages open Velvet and Backstage, and AudienceKit's
+             cards about getting one are skipped when the phone has it. -->
         <package android:name="com.audiencekit.Velvet" />
+        <package android:name="com.audiencekit.Velvet.next" />
         <package android:name="com.audiencekit.Backstage" />
+        <package android:name="com.audiencekit.Backstage.next" />
+        <package android:name="com.audiencekit.Focus" />
+        <package android:name="com.audiencekit.Focus.next" />
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="geo" />

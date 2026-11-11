@@ -58,8 +58,10 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.audiencekit.StaffApp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import social.hotmess.android.BuildConfig
 import social.hotmess.android.AppConfiguration
 import social.hotmess.android.location.LocationAccess
 import social.hotmess.android.location.LocationProblem
@@ -67,7 +69,6 @@ import social.hotmess.android.session.LocalGoogleAccounts
 import social.hotmess.android.ui.LocalAppGraph
 import social.hotmess.android.ui.Navigator
 import social.hotmess.android.ui.ScreenScaffold
-import social.hotmess.android.ui.StaffApp
 import social.hotmess.android.ui.components.Avatar
 import social.hotmess.android.ui.components.ChatBubble
 import social.hotmess.android.ui.components.CityPickerSheet
@@ -82,6 +83,7 @@ import social.hotmess.android.ui.components.TinyAvatarSize
 import social.hotmess.android.ui.components.actionLabel
 import social.hotmess.android.ui.components.rememberLocationProblem
 import social.hotmess.android.ui.components.rememberTurnOnLocation
+import social.hotmess.android.ui.components.PlatformCreditFooter
 import social.hotmess.android.ui.openStaffApp
 import social.hotmess.android.ui.openUrl
 import social.hotmess.android.ui.theme.HotMessType
@@ -315,18 +317,18 @@ fun MeScreen(navigator: Navigator) {
                     DetailSection("Your pages") {
                         if (listings.venues.isNotEmpty()) {
                             InfoRow(
-                                "Open ${StaffApp.VELVET.title}",
+                                "Open ${StaffApp.VELVET.appName}",
                                 value = listingNames(listings.venues),
-                                onClick = { context.openStaffApp(StaffApp.VELVET) },
+                                onClick = { context.openStaffApp(StaffApp.VELVET, staffAppLink(StaffApp.VELVET, listings.venues)) },
                                 trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                             )
                         }
                         if (listings.venues.isNotEmpty() && listings.people.isNotEmpty()) RowDivider()
                         if (listings.people.isNotEmpty()) {
                             InfoRow(
-                                "Open ${StaffApp.BACKSTAGE.title}",
+                                "Open ${StaffApp.BACKSTAGE.appName}",
                                 value = listingNames(listings.people),
-                                onClick = { context.openStaffApp(StaffApp.BACKSTAGE) },
+                                onClick = { context.openStaffApp(StaffApp.BACKSTAGE, staffAppLink(StaffApp.BACKSTAGE, listings.people)) },
                                 trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                             )
                         }
@@ -515,6 +517,8 @@ fun MeScreen(navigator: Navigator) {
                     }
                 }
             }
+            // Powered by AudienceKit, a Love Wins Media product: AudienceKit's policies and "Bring AudienceKit to your venue".
+            item { PlatformCreditFooter() }
         }
     }
 
@@ -677,6 +681,13 @@ private fun SwitchRow(title: String, detail: String, checked: Boolean, icon: Ima
 }
 
 /** "The Wildrose", or "The Wildrose +2" for someone managing more than one. */
+/** The page itself when they manage one, the app's home for several. */
+private fun staffAppLink(app: StaffApp, listings: List<ManagedListings.Listing>): String? {
+    val id = listings.singleOrNull()?.id ?: return null
+    val audienceId = BuildConfig.AUDIENCE_ID.takeIf { it.isNotEmpty() }
+    return if (app == StaffApp.VELVET) StaffApp.velvet(id, audienceId) else StaffApp.backstage(id, audienceId)
+}
+
 private fun listingNames(listings: List<ManagedListings.Listing>): String {
     val first = listings.firstOrNull()?.name.orEmpty()
     return if (listings.size > 1) "$first +${listings.size - 1}" else first

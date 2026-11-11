@@ -91,6 +91,9 @@ import social.hotmess.android.ui.components.VenueCard
 import social.hotmess.android.ui.components.VenueMap
 import social.hotmess.android.ui.components.cardSection
 import social.hotmess.android.ui.components.rememberHeroCollapsed
+import social.hotmess.android.ui.components.ManagedKind
+import social.hotmess.android.ui.components.ManagedListingNotice
+import social.hotmess.android.ui.components.rememberManages
 import social.hotmess.android.ui.dial
 import social.hotmess.android.ui.openMap
 import social.hotmess.android.ui.openUrl
@@ -315,6 +318,8 @@ private val VenueHeroContrast = ToneSettings(target = 7.0, scrimFloor = ImageTon
 @Composable
 fun VenueScreen(id: String, navigator: Navigator) {
     val graph = LocalAppGraph.current
+    // Velvet or Backstage for a page the signed-in person manages.
+    val manages = rememberManages(ManagedKind.VENUE, id)
     val context = LocalContext.current
     val loader = rememberLoader<VenueOverview>("venue-$id")
     val state by loader.state.collectAsStateWithLifecycle()
@@ -412,6 +417,7 @@ fun VenueScreen(id: String, navigator: Navigator) {
                             }
                         },
                     ) {
+                        if (manages) item(key = "managed") { ManagedListingNotice(ManagedKind.VENUE, id) }
                         if (reportedClosed) {
                             item(key = "reported-closed") { ReportedClosedNotice(loaded.id) { reportedClosed = it } }
                         }

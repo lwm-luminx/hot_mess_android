@@ -64,6 +64,9 @@ import social.hotmess.android.ui.components.SocialLinkRow
 import social.hotmess.android.ui.components.TrackRow
 import social.hotmess.android.ui.components.cardSection
 import social.hotmess.android.ui.components.rememberHeroCollapsed
+import social.hotmess.android.ui.components.ManagedKind
+import social.hotmess.android.ui.components.ManagedListingNotice
+import social.hotmess.android.ui.components.rememberManages
 import social.hotmess.android.ui.openUrl
 import social.hotmess.android.ui.rememberLoader
 import social.hotmess.android.ui.theme.HotMessType
@@ -204,6 +207,8 @@ private fun gigLine(gig: Gig): String {
 @Composable
 fun PersonScreen(id: String, navigator: Navigator) {
     val graph = LocalAppGraph.current
+    // Velvet or Backstage for a page the signed-in person manages.
+    val manages = rememberManages(ManagedKind.PERSON, id)
     val context = LocalContext.current
     val loader = rememberLoader<PersonDetail>("person-$id")
     val state by loader.state.collectAsStateWithLifecycle()
@@ -237,6 +242,7 @@ fun PersonScreen(id: String, navigator: Navigator) {
         LoadStateView(state, onRetry = { loader.load(id) { graph.api.person(id) } }) { detail ->
             val open = { person: Person -> navigator.open(AppRoute.PersonDetail(person.id)) }
             HeroFeed(listState, hero = { Hero(detail, topInset) { heroTone = it } }) {
+                if (manages) item(key = "managed") { ManagedListingNotice(ManagedKind.PERSON, id) }
                 if (detail.tipLinks.isNotEmpty()) {
                     item {
                         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Space.s2)) {
