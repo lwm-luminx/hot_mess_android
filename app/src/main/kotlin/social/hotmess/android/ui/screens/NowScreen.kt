@@ -49,6 +49,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.audiencekit.CardKind
 import com.audiencekit.LayoutCard
 import com.audiencekit.LayoutScreen
+import com.audiencekit.SoapboxCopy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -124,7 +125,7 @@ private const val NOW_REFRESH_MS = 60_000L
  */
 private val NOW_FALLBACK_CARDS = listOf(
     CardKind.NOW_STAGE, CardKind.NOW_CHAT, CardKind.POSTS_TONIGHT, CardKind.NOW_SMALL_TALK, CardKind.EVENTS_UPCOMING,
-    CardKind.POSTS_LOCALE, CardKind.VENUES_NEARBY, CardKind.VENUES_FRIENDS, CardKind.PINGS,
+    CardKind.ARTICLES_LOCALE, CardKind.POSTS_LOCALE, CardKind.VENUES_NEARBY, CardKind.VENUES_FRIENDS, CardKind.PINGS,
 )
 private val NOW_CARD_KINDS = NOW_FALLBACK_CARDS + listOf(CardKind.WEB, CardKind.PROMO_SLOT)
 
@@ -396,6 +397,13 @@ fun NowScreen(navigator: Navigator) {
                             } else {
                                 cardSection("events", "Events", now.events.take(3), key = { it.id }) { event ->
                                     EventCard(event, onClick = { navigator.open(AppRoute.EventDetail(event.id)) })
+                                }
+                            }
+                            // A few articles from the locale's publishers; a teaser opens the publisher's site.
+                            CardKind.ARTICLES_LOCALE -> (card.localeId ?: now.locale?.id)?.let { localeId ->
+                                val name = now.locale?.name.orEmpty()
+                                item(key = "local-news") {
+                                    LocalNewsSection(if (name.isBlank()) SoapboxCopy.NEWS else "News in $name", localeId, navigator)
                                 }
                             }
                             // Away from venues, the locale's updates.
