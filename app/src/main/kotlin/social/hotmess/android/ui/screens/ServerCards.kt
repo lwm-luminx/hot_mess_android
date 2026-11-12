@@ -218,7 +218,8 @@ fun PromoSlotView(card: LayoutCard, layoutId: String?, navigator: Navigator) {
         badge = promo.label,
         route = route(promo),
         navigator = navigator,
-        menu = { close ->
+        // AudienceKit's own cards are part of the app: no menu to hide or explain them.
+        menu = if (promo.category == "audiencekit") null else { close ->
             if (category?.hideable != false) {
                 DropdownMenuItem(text = { Text("Don't show me $categoryName") }, onClick = {
                     close()
