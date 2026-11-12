@@ -20,6 +20,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -89,6 +90,23 @@ fun LazyListScope.newsSection(title: String, articles: List<Article>, navigator:
     item(key = "news-title") { SectionTitle(title) }
     items(articles, key = { "news-${it.id}" }) { article ->
         ArticleRow(article, onClick = rememberOpenArticle(article, navigator))
+    }
+}
+
+/**
+ * Now's local news (the server's articles.locale card): a few articles from the publishers covering the viewer's
+ * locale, newest first. Draws nothing while loading, when there are none, or without Soapbox, so the built-in order
+ * can always list it.
+ */
+@Composable
+fun LocalNewsSection(title: String, localeId: String, navigator: Navigator) {
+    val articles = rememberNews(remember(localeId) { ArticleTopic.Locale(localeId) }).take(3)
+    if (articles.isEmpty()) return
+    Column(Modifier.fillMaxWidth().testTag("now.news"), verticalArrangement = Arrangement.spacedBy(Space.s2)) {
+        SectionTitle(title)
+        articles.forEach { article ->
+            key(article.id) { ArticleRow(article, onClick = rememberOpenArticle(article, navigator)) }
+        }
     }
 }
 
