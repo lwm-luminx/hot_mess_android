@@ -68,6 +68,8 @@ data class VenueMessage(
     val sharedTribes: List<SharedTribe>? = null,
     /** Who it's from as the server says (`sender { kind }`); null from a server that doesn't, when [sender] works it out. */
     val senderKind: ChatSenderKind? = null,
+    /** Only the viewer sees it (`isPrivate`): a private nudge from the AI host, drawn with "Only you can see this". */
+    val isPrivate: Boolean = false,
 ) {
     fun isOutgoing(currentUserId: String?): Boolean = currentUserId != null && userId.equals(currentUserId, ignoreCase = true)
 
@@ -316,7 +318,7 @@ object ChatProtocol {
     /** A chat line's fields, as [message] reads them. */
     const val MESSAGE_FIELDS: String =
         "id message body name avatarUrl sentAt userId role kind title photoUrl event { id name startAt } endsAt pinned " +
-            "postedAsVenue postedAsPerson person { id } postedAsAudience promptId sender { kind } " +
+            "postedAsVenue postedAsPerson person { id } postedAsAudience promptId sender { kind } isPrivate " +
             "prompt { id kind text answer revealAt shownAs number total nextAt }"
 
     /**
@@ -682,6 +684,7 @@ object ChatProtocol {
         val sharedTribes: JsonArray? = null,
         // Read on its own, so an unexpected sender drops only the kind, never the line.
         val sender: JsonElement? = null,
+        val isPrivate: Boolean? = null,
     ) {
         fun toMessage(): VenueMessage {
             val base = VenueMessage(body = message, userId = userId, avatarUrl = avatarUrl.blankToNull())
@@ -705,6 +708,7 @@ object ChatProtocol {
                     runCatching { json.decodeFromJsonElement(SharedTribe.serializer(), tribe) }.getOrNull()
                 },
                 senderKind = ChatSenderKind.parse((sender as? JsonObject)?.string("kind")),
+                isPrivate = isPrivate ?: false,
             )
         }
     }

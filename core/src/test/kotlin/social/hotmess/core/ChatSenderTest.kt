@@ -30,6 +30,14 @@ class ChatSenderTest {
     }
 
     @Test
+    fun readsAPrivateLine() {
+        assertTrue(ChatProtocol.MESSAGE_FIELDS.contains("isPrivate"))
+        assertTrue(line(""""message":"Easy there.","userId":"u-0","sender":{"kind":"BOT"},"isPrivate":true"""").isPrivate)
+        assertFalse(line(""""message":"hi","userId":"u-1","isPrivate":false"""").isPrivate)
+        assertFalse(line(""""message":"hi","userId":"u-1"""").isPrivate, "an older server has no private lines")
+    }
+
+    @Test
     fun worksTheSenderOutOnAnOlderServer() {
         val plain = line(""""message":"hi","userId":"u-1"""")
         assertNull(plain.senderKind)

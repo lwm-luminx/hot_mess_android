@@ -43,6 +43,7 @@ import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.LocationOff
 import androidx.compose.material.icons.rounded.PushPin
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
@@ -223,6 +224,8 @@ data class ChatThreadMessage(
     val asBot: Boolean = false,
     /** The viewer's own line, which a long press offers to delete for everyone. */
     val deletable: Boolean = false,
+    /** Only the viewer sees it (a private nudge from the AI host): "Only you can see this" under it. */
+    val onlyYou: Boolean = false,
 ) {
     /** Whether the room still shows it: a special disappears at its end time. */
     fun isShowing(at: Instant): Boolean {
@@ -680,7 +683,19 @@ private fun BubbleRow(
                     onLabelClick = message.promptId?.let { id -> onOpenPrompt?.let { open -> { open(id) } } },
                 )
             }
+            if (message.onlyYou) {
+                PrivateLineNote(Modifier.padding(start = Space.s3, top = 2.dp))
+            }
         }
+    }
+}
+
+/** Under a line only the viewer sees (a private nudge from the AI host): an eye with a slash and "Only you can see this". */
+@Composable
+fun PrivateLineNote(modifier: Modifier = Modifier) {
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.Rounded.VisibilityOff, contentDescription = null, tint = tokens.inkMuted, modifier = Modifier.size(12.dp))
+        Text("Only you can see this", style = HotMessType.caption, color = tokens.inkMuted, maxLines = 1)
     }
 }
 

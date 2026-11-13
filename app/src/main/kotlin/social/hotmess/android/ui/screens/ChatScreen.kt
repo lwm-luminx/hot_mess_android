@@ -827,7 +827,8 @@ private fun VenueMessage.threadMessage(
     senderId = when {
         isPostedAsAudience -> "audience"
         personId != null -> "person:$personId"
-        sender == ChatSenderKind.BOT -> "bot:${userId.lowercase()}"
+        // A private line groups on its own, so it keeps its name and its "Only you can see this".
+        sender == ChatSenderKind.BOT -> (if (isPrivate) "private:" else "") + "bot:${userId.lowercase()}"
         else -> userId.lowercase()
     },
     senderName = if (isFromListing) name else friends.displayName(userId, name),
@@ -855,4 +856,5 @@ private fun VenueMessage.threadMessage(
     sharedTribes = if (isFromListing || isOutgoing(viewerId)) emptyList() else sharedTribes[userId.lowercase()].orEmpty(),
     asBot = sender == ChatSenderKind.BOT,
     deletable = !isPostedAsAudience && isOutgoing(viewerId),
+    onlyYou = isPrivate,
 )
