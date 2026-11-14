@@ -622,6 +622,17 @@ class HotMessApi(val client: AudienceKitClient) {
     /** Whether pushes about chat rooms the user left lately are on, or null when there's no signed-in user. */
     suspend fun recentChatPush(): Boolean? = query(Documents.RECENT_CHAT_PUSH, RecentChatPushResponse.serializer()).me?.recentChatPush
 
+    /**
+     * Whether Quickie pushes the user (`me.pairUpPush`): paired, revealed, met, and invites to join. Null when
+     * there's no signed-in user; throws on an API without the setting, which hides the row.
+     */
+    suspend fun pairUpPush(): Boolean? = query(Documents.PAIR_UP_PUSH, PairUpPushResponse.serializer()).me?.pairUpPush
+
+    /** Turns Quickie pushes on or off; returns the setting as it now is. */
+    suspend fun setPairUpPush(enabled: Boolean): Boolean =
+        mutate(Documents.SET_PAIR_UP_PUSH, SetPairUpPushResponse.serializer(), graphQLVariables("enabled" to enabled))
+            .setPairUpPush.pairUpPush
+
     /** The user's calendar subscription link (`me.calendarFeed`), or null before they made one. */
     suspend fun calendarFeed(): CalendarFeed? = query(Documents.CALENDAR_FEED, CalendarFeedResponse.serializer()).me?.calendarFeed
 
@@ -1048,6 +1059,16 @@ private data class MeResponse(val me: UserState? = null) {
 @Serializable
 private data class RecentChatPushResponse(val me: Me? = null) {
     @Serializable data class Me(val recentChatPush: Boolean = false)
+}
+
+@Serializable
+private data class PairUpPushResponse(val me: Me? = null) {
+    @Serializable data class Me(val pairUpPush: Boolean? = null)
+}
+
+@Serializable
+private data class SetPairUpPushResponse(val setPairUpPush: Payload) {
+    @Serializable data class Payload(val pairUpPush: Boolean = true)
 }
 
 @Serializable

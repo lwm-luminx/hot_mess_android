@@ -131,6 +131,19 @@ object Documents {
         }
     """.trimIndent()
 
+    /** Whether Quickie pushes the signed-in user (paired, revealed, met, invites to join). On until they turn it off. */
+    val PAIR_UP_PUSH: String = """
+        query PairUpPush {
+          me { pairUpPush }
+        }
+    """.trimIndent()
+
+    val SET_PAIR_UP_PUSH: String = """
+        mutation SetPairUpPush(${'$'}enabled: Boolean!) {
+          setPairUpPush(input: { enabled: ${'$'}enabled }) { pairUpPush }
+        }
+    """.trimIndent()
+
     val CALENDAR_FEED: String = """
         query CalendarFeed {
           me { calendarFeed { url webcalUrl googleUrl } }

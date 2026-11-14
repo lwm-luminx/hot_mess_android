@@ -124,6 +124,9 @@ fun MeScreen(navigator: Navigator) {
     // Pushes about rooms they just left (me.recentChatPush); null until known, and the row stays hidden
     // when the server can't say (signed out, or an older API).
     var recentChatPush by remember { mutableStateOf<Boolean?>(null) }
+    // Quickie pushes (me.pairUpPush): paired, revealed, met, and invites to join someone's Quickie where you are.
+    // Hidden, like the other push setting, until known.
+    var pairUpPush by remember { mutableStateOf<Boolean?>(null) }
     // "Use my initials instead" in chat rooms (me.chatInitials); hidden, like the push setting, until known.
     var chatInitials by remember { mutableStateOf<Boolean?>(null) }
     // Connect Google, offered while the account has no Google sign-in (me.self.signedInWithGoogle is false).
@@ -154,6 +157,16 @@ fun MeScreen(navigator: Navigator) {
         if (!graph.session.isSignedIn) return@LaunchedEffect
         recentChatPush = try {
             graph.api.recentChatPush()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+    }
+    LaunchedEffect(Unit) {
+        if (!graph.session.isSignedIn) return@LaunchedEffect
+        pairUpPush = try {
+            graph.api.pairUpPush()
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -209,6 +222,20 @@ fun MeScreen(navigator: Navigator) {
         scope.launch {
             recentChatPush = try {
                 graph.api.setRecentChatPush(enabled)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                before
+            }
+        }
+    }
+
+    fun setPairUpPush(enabled: Boolean) {
+        val before = pairUpPush
+        pairUpPush = enabled
+        scope.launch {
+            pairUpPush = try {
+                graph.api.setPairUpPush(enabled)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -388,16 +415,28 @@ fun MeScreen(navigator: Navigator) {
                     }
                 }
             }
-            recentChatPush?.let { enabled ->
+            if (recentChatPush != null || pairUpPush != null) {
                 item {
                     DetailSection("Notifications") {
-                        SwitchRow(
-                            "Rooms you just left",
-                            "Get a push when people keep talking in a chat room you left in the last 30 minutes.",
-                            checked = enabled,
-                            icon = Icons.Rounded.Notifications,
-                            onCheckedChange = ::setRecentChatPush,
-                        )
+                        recentChatPush?.let { enabled ->
+                            SwitchRow(
+                                "Rooms you just left",
+                                "Get a push when people keep talking in a chat room you left in the last 30 minutes.",
+                                checked = enabled,
+                                icon = Icons.Rounded.Notifications,
+                                onCheckedChange = ::setRecentChatPush,
+                            )
+                        }
+                        if (recentChatPush != null && pairUpPush != null) RowDivider()
+                        pairUpPush?.let { enabled ->
+                            SwitchRow(
+                                "Quickie",
+                                "Get a push when you're paired, and when someone where you are wants a Quickie.",
+                                checked = enabled,
+                                icon = Icons.Rounded.Notifications,
+                                onCheckedChange = ::setPairUpPush,
+                            )
+                        }
                     }
                 }
             }
