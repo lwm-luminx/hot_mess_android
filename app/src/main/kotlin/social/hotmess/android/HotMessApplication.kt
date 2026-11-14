@@ -77,6 +77,9 @@ class AppGraph(context: Context, val configuration: AppConfiguration = AppConfig
     /** The user's cover passes, kept so an opened pass still works with no signal at the door. */
     val passes = PassBook()
 
+    /** Who has acknowledged that publishers run their own ads, asked before their first Soapbox story. */
+    val publisherAds = PublisherAds(context.applicationContext)
+
     /** Whether a newer build is on Google Play (Me › About). */
     val updates = AppUpdates(context.applicationContext, scope)
 
