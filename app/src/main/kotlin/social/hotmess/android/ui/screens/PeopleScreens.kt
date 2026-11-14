@@ -2,6 +2,14 @@ package social.hotmess.android.ui.screens
 
 import com.audiencekit.SoapboxCopy
 import com.audiencekit.ArticleTopic
+import com.audiencekit.PersonOffice
+import com.audiencekit.titles
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.outlined.EmojiEvents
+import androidx.compose.material.icons.rounded.EmojiEvents
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.font.FontWeight
+import social.hotmess.android.ui.components.RowButton
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -71,6 +79,7 @@ import social.hotmess.android.ui.openUrl
 import social.hotmess.android.ui.rememberLoader
 import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.Space
+import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.PostsSubject
 import social.hotmess.core.AppRoute
 import social.hotmess.core.Event
@@ -216,6 +225,7 @@ fun PersonScreen(id: String, navigator: Navigator) {
     LaunchedEffect(id) { loader.load(id) { graph.api.person(id) } }
     val postsSubject = remember(id) { PostsSubject.Person(id) }
     val news = rememberNews(remember(id) { ArticleTopic.Person(id) })
+    val titles = rememberTitles(id)
     val postsLoader = rememberPosts(postsSubject)
     val posts by postsLoader.state.collectAsStateWithLifecycle()
     val postActions = rememberPostActions(navigator) { poster -> postsLoader.update { list -> list.filterNot { it.poster == poster } } }
@@ -256,6 +266,9 @@ fun PersonScreen(id: String, navigator: Navigator) {
                             }
                         }
                     }
+                }
+                if (titles.isNotEmpty()) {
+                    item(key = "titles") { DetailSection("Titles") { CardRows(titles) { TitleRow(it) } } }
                 }
                 val links = detail.profileLinks.filter { it.url != null }
                 val facebook = detail.person.facebookUrl.takeIf { links.none { it.network == SocialLink.Network.FACEBOOK } }
@@ -330,6 +343,39 @@ private fun Hero(detail: PersonDetail, topInset: Dp, onTone: (PhotoTone) -> Unit
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).semantics { heading() },
             )
+        }
+    }
+}
+
+/** A performer's community titles (crowns, reigns), reigning first; empty in an audience without them. */
+@Composable
+private fun rememberTitles(personId: String): List<PersonOffice> {
+    val graph = LocalAppGraph.current
+    val loader = rememberLoader<List<PersonOffice>>("titles-$personId")
+    LaunchedEffect(personId) {
+        loader.load(personId) { runCatching { graph.audienceKit.titles(personId) }.getOrDefault(emptyList()) }
+    }
+    val state by loader.state.collectAsStateWithLifecycle()
+    return state.valueOrNull.orEmpty()
+}
+
+/** One title: a filled trophy while they hold it, an outline once it's history, with the place and years under it. */
+@Composable
+private fun TitleRow(title: PersonOffice) {
+    val reigning = title.isReigning
+    RowButton(
+        onClick = null,
+        modifier = Modifier.semantics(mergeDescendants = true) { stateDescription = if (reigning) "Reigning" else "Former" },
+    ) {
+        Icon(
+            if (reigning) Icons.Rounded.EmojiEvents else Icons.Outlined.EmojiEvents,
+            contentDescription = null,
+            tint = if (reigning) tokens.accent else tokens.inkMuted,
+            modifier = Modifier.size(24.dp),
+        )
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title.title, style = HotMessType.body.copy(fontWeight = FontWeight.SemiBold), color = tokens.ink)
+            if (title.detail.isNotEmpty()) Text(title.detail, style = HotMessType.bodySmall, color = tokens.inkMuted)
         }
     }
 }

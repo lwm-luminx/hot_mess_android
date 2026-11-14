@@ -67,6 +67,7 @@ import social.hotmess.android.ui.screens.FixTarget
 import social.hotmess.android.ui.screens.SuggestListingScreen
 import social.hotmess.android.ui.screens.SuggestFixScreen
 import social.hotmess.android.ui.screens.FixDetailScreen
+import social.hotmess.android.ui.screens.CheckTheAppScreen
 import social.hotmess.android.ui.screens.YourSuggestionsScreen
 import social.hotmess.android.ui.screens.CardsYouSeeScreen
 import social.hotmess.android.ui.screens.GettingHelpScreen
@@ -143,6 +144,8 @@ import social.hotmess.core.postsSubject
 @Serializable data class SuggestFixRoute(val venue: Boolean, val id: String, val name: String)
 @Serializable data class FixDetailRoute(val venue: Boolean, val id: String, val name: String)
 @Serializable data object YourSuggestionsRoute
+/** Me › "Check the app". */
+@Serializable data object CheckTheAppRoute
 
 private val AppTab.route: Any
     get() = when (this) {
@@ -195,6 +198,8 @@ interface Navigator {
     fun openSuggestFix(target: FixTarget)
     fun openFixDetail(target: FixTarget)
     fun openYourSuggestions()
+    /** Me › "Check the app". */
+    fun openCheckTheApp()
     /** Back out of every suggestion screen, to the page the member started from. */
     fun closeSuggestion()
     fun back()
@@ -350,6 +355,10 @@ private fun MainShell(links: Flow<AppRoute>) {
             navController.navigate(YourSuggestionsRoute) { launchSingleTop = true }
         }
 
+        override fun openCheckTheApp() {
+            navController.navigate(CheckTheAppRoute) { launchSingleTop = true }
+        }
+
         override fun closeSuggestion() {
             val suggestionRoutes = listOf(SuggestListingRoute::class, SuggestFixRoute::class, FixDetailRoute::class)
             while (suggestionRoutes.any { navController.currentDestination?.hasRoute(it) == true }) {
@@ -463,6 +472,7 @@ private fun MainShell(links: Flow<AppRoute>) {
                     FixDetailScreen(FixTarget(route.venue, route.id, route.name), navigator)
                 }
                 composable<YourSuggestionsRoute> { YourSuggestionsScreen(navigator) }
+                composable<CheckTheAppRoute> { CheckTheAppScreen(navigator) }
                 composable<UpdatesRoute> {
                     val route = it.toRoute<UpdatesRoute>()
                     UpdatesScreen(route.localeId, route.localeName, navigator)
