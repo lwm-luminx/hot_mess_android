@@ -38,7 +38,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
 import social.hotmess.android.payments.CoverCheckout
 import social.hotmess.android.payments.CoverCheckoutFailure
@@ -80,7 +80,6 @@ import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.PostsSubject
-import social.hotmess.core.ApiError
 import social.hotmess.core.AppRoute
 import social.hotmess.core.CalendarEntry
 import social.hotmess.core.CoverOffer
@@ -95,6 +94,7 @@ import social.hotmess.core.PhotoTone
 import social.hotmess.core.PingChoices
 import social.hotmess.core.PingPick
 import social.hotmess.core.Rsvp
+import social.hotmess.core.RsvpChange
 import social.hotmess.core.Venue
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -210,16 +210,14 @@ fun EventScreen(id: String, navigator: Navigator) {
     fun choose(rsvp: Rsvp) {
         val previous = state.valueOrNull?.rsvp ?: return
         if (rsvp == previous) return
-        loader.update { it.withRsvp(rsvp) }
-        scope.launch {
-            try {
-                graph.api.setRsvp(rsvp, id)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                loader.update { it.withRsvp(previous) }
-                rsvpError = ApiError.of(e).message ?: "Try again in a moment."
-            }
+        // Undispatched, so the new choice is on screen before this returns (RsvpChange shows it, then saves).
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            RsvpChange.choose(
+                previous,
+                rsvp,
+                show = { choice -> loader.update { it.withRsvp(choice) } },
+                save = { choice -> graph.api.setRsvp(choice, id) },
+            )?.let { rsvpError = it }
         }
     }
 
