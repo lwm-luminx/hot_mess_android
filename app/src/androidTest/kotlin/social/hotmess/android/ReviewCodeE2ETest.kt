@@ -52,13 +52,50 @@ class ReviewCodeE2ETest {
         val intent = requireNotNull(context.packageManager.getLaunchIntentForPackage(context.packageName))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         context.startActivity(intent)
+        // Start signed out, so the code decides who's signed in (a run before may have left a session).
+        val tabsOrSignIn = device.wait(Until.findObject(By.text("Venues")), 10_000)
+        if (tabsOrSignIn != null && !device.hasObject(By.textContains("Have an App Review code?"))) signOut()
+    }
+
+    /** Answers the system's permission prompts: location while using the app, no notifications. */
+    private fun answerSystemPrompts() {
+        repeat(3) {
+            val button = find(By.text("While using the app"), 1_500) ?: find(By.text("Don’t allow"), 500)
+                ?: find(By.text("Don't allow"), 500) ?: return
+            button.click()
+            device.waitForIdle()
+        }
+    }
+
+    private fun signOut() {
+        tab("Me")
+        assertNotNull("Me didn't load; on screen: ${screen()}", scrollTo("Sign out"))
+        // Tap the row once the list has stopped moving (a swipe's fling can carry it away from a tap), and again if
+        // the confirmation didn't open.
+        repeat(3) {
+            device.waitForIdle()
+            find(By.text("Sign out"), 2_000)?.click()
+            if (find(By.text("Sign out?"), 5_000) != null) {
+                device.findObjects(By.text("Sign out")).last().click()
+                return
+            }
+        }
+        need("Sign out?")
+    }
+
+    /** What's on screen, for a failure message. */
+    private fun screen(): String {
+        val out = java.io.ByteArrayOutputStream()
+        device.dumpWindowHierarchy(out)
+        return Regex("""(?:text|content-desc)="([^"]+)"""").findAll(out.toString()).map { it.groupValues[1] }
+            .distinct().joinToString(" | ")
     }
 
     private fun find(selector: BySelector, timeout: Long = 20_000): UiObject2? = device.wait(Until.findObject(selector), timeout)
 
     private fun need(text: String, timeout: Long = 20_000): UiObject2 {
         val found = find(By.textContains(text), timeout)
-        assertNotNull("\"$text\" didn't appear", found)
+        assertNotNull("\"$text\" didn't appear; on screen: ${screen()}", found)
         return found!!
     }
 
@@ -67,14 +104,21 @@ class ReviewCodeE2ETest {
         repeat(8) {
             find(By.textContains(text), 1_500)?.let { return it }
             device.swipe(device.displayWidth / 2, device.displayHeight * 3 / 4, device.displayWidth / 2, device.displayHeight / 4, 20)
+            device.waitForIdle()
         }
         return find(By.textContains(text), 2_000)
     }
 
     private fun enterCode(code: String) {
         need("Have an App Review code?")
-        find(By.res("login.ageCheckbox"), 2_000)?.takeIf { !it.isChecked }?.click()
+        // The age confirmation: tick "I confirm I am 18 or older" (Compose test tags aren't resource IDs here), and
+        // answer the dialog that asks instead when it does.
+        find(By.checkable(true), 2_000)?.takeIf { !it.isChecked }?.click()
         need("Have an App Review code?").click()
+        find(By.text("I'm 18 or older"), 3_000)?.let { confirm ->
+            confirm.click()
+            if (find(By.clazz("android.widget.EditText"), 3_000) == null) need("Have an App Review code?").click()
+        }
         val field = find(By.clazz("android.widget.EditText"))
         assertNotNull("The review code dialog didn't open", field)
         field!!.text = code
@@ -100,10 +144,12 @@ class ReviewCodeE2ETest {
     @Test fun theReviewerJourney() {
         launch()
         enterCode(code)
-        // Signed in: the tabs.
-        assertNotNull("The review code didn't sign in", find(By.text("Venues"), 30_000))
+        // Signed in: the tabs, once the location (and notification) prompts are answered.
+        device.wait(Until.findObject(By.pkg("com.google.android.permissioncontroller")), 10_000)
+        answerSystemPrompts()
+        assertNotNull("The review code didn't sign in; on screen: ${screen()}", find(By.text("Venues"), 30_000))
         // An age confirmation can follow a code sign-in on a device that hasn't confirmed yet.
-        find(By.res("login.ageConfirm"), 2_000)?.click()
+        find(By.text("I'm 18 or older"), 2_000)?.click()
 
         tab("Now")
         need("Ping")
@@ -120,12 +166,7 @@ class ReviewCodeE2ETest {
         // The fixture's sample nights start tonight at The Test Bar.
         assertFalse("Events failed to load", device.hasObject(By.textContains("Something went wrong")))
 
-        tab("Me")
-        val signOut = scrollTo("Sign out")
-        assertNotNull("Me didn't load", signOut)
-        signOut!!.click()
-        need("Sign out?")
-        device.findObjects(By.text("Sign out")).last().click()
+        signOut()
         assertNotNull("Signing out didn't return to sign-in", find(By.textContains("Have an App Review code?"), 30_000))
     }
 }
