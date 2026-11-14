@@ -689,10 +689,62 @@ class HotMessApi(val client: AudienceKitClient) {
         return SafetyState(termsAccepted = me.termsAcceptedAt != null, blockedUsers = me.blockedUsers)
     }
 
-    /** Records that the user agreed to the terms of use, which chat and Pings need first. */
-    suspend fun acceptTerms() {
+    /**
+     * Records that the user agreed to the terms of use, which chat and Pings need first. With [adult], it also sends
+     * the app's 18+ confirmation so the account keeps it; an API from before it took that refuses the document, so
+     * the plain one is the fallback.
+     */
+    suspend fun acceptTerms(adult: Boolean = false) {
+        if (adult) {
+            try {
+                mutate(Documents.ACCEPT_TERMS_AS_ADULT, JsonObject.serializer())
+                return
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // An older API: fall through to the plain document.
+            }
+        }
         mutate(Documents.ACCEPT_TERMS, JsonObject.serializer())
     }
+
+    /**
+     * Where the user stands with the proof of age their country asks for, or null signed out. An API from before age
+     * checks refuses the document, which reads as nothing being asked.
+     */
+    suspend fun ageCheck(): AgeCheck? =
+        try {
+            query(Documents.AGE_CHECK, AgeCheckResponse.serializer()).me?.ageCheck
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: ApiError) {
+            null
+        }
+
+    /** Tells the API the Play store's country ([country] as Play Billing gives it); returns where they stand. */
+    suspend fun reportStoreCountry(country: String): AgeCheck =
+        ageCheckMutation(Documents.REPORT_STORE_COUNTRY, graphQLVariables("country" to country))
+
+    /** Sends the age check purchase for the API to check with Google Play; afterwards the check can start. */
+    suspend fun recordAgeCheckPurchase(purchaseToken: String, productId: String): AgeCheck =
+        ageCheckMutation(
+            Documents.RECORD_AGE_CHECK_PURCHASE,
+            graphQLVariables("purchaseToken" to purchaseToken, "productId" to productId),
+        )
+
+    /** Opens the paid check with the age check company; [returnUrl] is where its page sends them afterwards. */
+    suspend fun startAgeCheck(returnUrl: String?): AgeCheckSession {
+        val payload = mutate(Documents.START_AGE_CHECK, AGE_CHECK_PAYLOADS, graphQLVariables("returnUrl" to returnUrl))
+            .values.firstOrNull() ?: throw failed(ApiError.Decoding("startAgeCheck"), "StartAgeCheck")
+        return AgeCheckSession(url = payload.url, provider = payload.provider.orEmpty(), ageCheck = payload.ageCheck)
+    }
+
+    /** Asks how the check they are waiting on went. */
+    suspend fun refreshAgeCheck(): AgeCheck = ageCheckMutation(Documents.REFRESH_AGE_CHECK, emptyMap())
+
+    private suspend fun ageCheckMutation(document: String, variables: Map<String, JsonElement>): AgeCheck =
+        mutate(document, AGE_CHECK_PAYLOADS, variables).values.firstOrNull()?.ageCheck
+            ?: throw failed(ApiError.Decoding("ageCheck"), operationName(document))
 
     /** Blocks someone by user id; returns everyone the user now blocks. The audience's admins are told. */
     suspend fun block(userId: String): List<BlockedUser> =
@@ -1325,6 +1377,16 @@ private data class PairUpPayload(val pairUp: PairUpState? = null)
 // Nullable: a refused mutation comes back as `{"errors":[…],"data":{"joinPairUp":null}}`, and decoding a null payload
 // would hide the refusal ("Agree to the community terms…") behind a decoding failure.
 private val PAIR_UP_PAYLOADS = MapSerializer(String.serializer(), PairUpPayload.serializer().nullable)
+
+@Serializable
+private data class AgeCheckResponse(val me: Me? = null) {
+    @Serializable data class Me(val ageCheck: AgeCheck? = null)
+}
+
+@Serializable
+private data class AgeCheckPayload(val ageCheck: AgeCheck, val url: String? = null, val provider: String? = null)
+
+private val AGE_CHECK_PAYLOADS = MapSerializer(String.serializer(), AgeCheckPayload.serializer().nullable)
 
 private val SAFETY_ALERT_PAYLOADS = MapSerializer(String.serializer(), SafetyAlertPayload.serializer().nullable)
 

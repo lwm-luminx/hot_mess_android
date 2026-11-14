@@ -57,7 +57,7 @@ class AppGraph(context: Context, val configuration: AppConfiguration = AppConfig
     val location = LocationProvider(context, api, configuration, scope, geofences)
 
     /** Terms of use, blocking and reporting, as the API keeps them for the signed-in user. */
-    val safety = SafetyStore(api)
+    val safety = SafetyStore(api) { social.hotmess.android.session.AgeGate.isConfirmed(context) }
 
     /** The venues and talent the signed-in user manages, so Me offers Velvet or Backstage. */
     val listings = ListingsStore(api)
