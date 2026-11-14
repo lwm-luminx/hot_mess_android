@@ -417,6 +417,45 @@ object Documents {
         }
     """.trimIndent()
 
+    private const val AGE_CHECK_FIELDS = "required region state productIds enforced explainer { title body points }"
+
+    /** Where the signed-in user stands with the proof of age the United Kingdom and Australia ask for. */
+    val AGE_CHECK: String = """
+        query AgeCheck {
+          me { ageCheck { $AGE_CHECK_FIELDS } }
+        }
+    """.trimIndent()
+
+    /** Tells the API which country the user's Play store is in. */
+    val REPORT_STORE_COUNTRY: String = """
+        mutation ReportStoreCountry(${'$'}country: String!) {
+          reportStoreCountry(input: { country: ${'$'}country }) { ageCheck { $AGE_CHECK_FIELDS } }
+        }
+    """.trimIndent()
+
+    /** Sends the one-time age check purchase for the API to check with Google Play. */
+    val RECORD_AGE_CHECK_PURCHASE: String = """
+        mutation RecordAgeCheckPurchase(${'$'}purchaseToken: String!, ${'$'}productId: String!) {
+          recordAgeCheckPurchase(input: { purchaseToken: ${'$'}purchaseToken, productId: ${'$'}productId }) {
+            ageCheck { $AGE_CHECK_FIELDS }
+          }
+        }
+    """.trimIndent()
+
+    /** Opens the paid check with the age check company. */
+    val START_AGE_CHECK: String = """
+        mutation StartAgeCheck(${'$'}returnUrl: String) {
+          startAgeCheck(input: { returnUrl: ${'$'}returnUrl }) { url provider ageCheck { $AGE_CHECK_FIELDS } }
+        }
+    """.trimIndent()
+
+    /** Asks the age check company how the check went, on coming back from it. */
+    val REFRESH_AGE_CHECK: String = """
+        mutation RefreshAgeCheck {
+          refreshAgeCheck(input: {}) { ageCheck { $AGE_CHECK_FIELDS } }
+        }
+    """.trimIndent()
+
     val BLOCK_USER: String = """
         mutation BlockUser(${'$'}userId: ID!) {
           blockUser(input: { userId: ${'$'}userId }) { blockedUsers { id name avatarUrl } }
