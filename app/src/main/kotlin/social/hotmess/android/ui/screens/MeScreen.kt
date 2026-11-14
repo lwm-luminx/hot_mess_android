@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.BugReport
+import androidx.compose.material.icons.rounded.Checklist
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ConfirmationNumber
@@ -464,6 +465,13 @@ fun MeScreen(navigator: Navigator) {
             item {
                 DetailSection("Feedback") {
                     YourSuggestionsRow(navigator::openYourSuggestions)
+                    RowDivider()
+                    InfoRow(
+                        "Check the app",
+                        icon = Icons.Rounded.Checklist,
+                        onClick = navigator::openCheckTheApp,
+                        trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                    )
                     RowDivider()
                     InfoRow(
                         "Report a problem",

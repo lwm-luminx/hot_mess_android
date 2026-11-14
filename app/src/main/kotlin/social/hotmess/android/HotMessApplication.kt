@@ -6,6 +6,7 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import social.hotmess.android.updates.AppUpdates
+import com.audiencekit.GraphQLOperationLog
 import com.audiencekit.android.AudienceKitClient
 import com.newrelic.agent.android.NewRelic
 import kotlinx.coroutines.CoroutineScope
@@ -45,7 +46,9 @@ import social.hotmess.core.StringSetStorage
 /** The app's services, built once. Screens reach them through [LocalAppGraph][social.hotmess.android.ui.LocalAppGraph]. */
 class AppGraph(context: Context, val configuration: AppConfiguration = AppConfiguration()) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    val audienceKit = AudienceKitClient(context, configuration.audienceKit)
+    /** Recent GraphQL operations, for Me › Check the app's failed requests. */
+    val operations = GraphQLOperationLog()
+    val audienceKit = AudienceKitClient(context, configuration.audienceKit, monitor = operations)
     val api = HotMessApi(audienceKit)
     val brand = BrandStore(audienceKit, scope)
     val push = PushRegistrar(context, api, scope)
