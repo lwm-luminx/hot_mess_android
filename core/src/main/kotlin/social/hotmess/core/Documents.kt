@@ -410,6 +410,13 @@ object Documents {
         }
     """.trimIndent()
 
+    /** [ACCEPT_TERMS] with the app's 18+ confirmation, for an API that keeps it on the account. */
+    val ACCEPT_TERMS_AS_ADULT: String = """
+        mutation AcceptTermsAsAdult {
+          acceptTerms(input: { adult: true, ageSource: SELF_DECLARED }) { termsAcceptedAt }
+        }
+    """.trimIndent()
+
     val BLOCK_USER: String = """
         mutation BlockUser(${'$'}userId: ID!) {
           blockUser(input: { userId: ${'$'}userId }) { blockedUsers { id name avatarUrl } }

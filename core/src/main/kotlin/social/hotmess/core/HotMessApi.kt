@@ -689,8 +689,22 @@ class HotMessApi(val client: AudienceKitClient) {
         return SafetyState(termsAccepted = me.termsAcceptedAt != null, blockedUsers = me.blockedUsers)
     }
 
-    /** Records that the user agreed to the terms of use, which chat and Pings need first. */
-    suspend fun acceptTerms() {
+    /**
+     * Records that the user agreed to the terms of use, which chat and Pings need first. With [adult], it also sends
+     * the app's 18+ confirmation so the account keeps it; an API from before it took that refuses the document, so
+     * the plain one is the fallback.
+     */
+    suspend fun acceptTerms(adult: Boolean = false) {
+        if (adult) {
+            try {
+                mutate(Documents.ACCEPT_TERMS_AS_ADULT, JsonObject.serializer())
+                return
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // An older API: fall through to the plain document.
+            }
+        }
         mutate(Documents.ACCEPT_TERMS, JsonObject.serializer())
     }
 
