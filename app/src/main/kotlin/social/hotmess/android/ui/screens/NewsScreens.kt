@@ -151,7 +151,7 @@ fun rememberOpenArticle(article: Article, navigator: Navigator): () -> Unit {
 /**
  * The one-time note before a reader's first Soapbox story: the publisher chooses and answers for the ads in its
  * stories so it can keep paying writers, Hot Mess takes no cut, its own sponsored spots are separate and marked
- * Promoted, and no data goes to a publisher's advertisers.
+ * Sponsored, and no data goes to a publisher's advertisers.
  */
 @Composable
 fun PublisherAdsDialog(onAccept: () -> Unit, onDecline: () -> Unit) {
