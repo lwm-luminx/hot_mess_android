@@ -937,12 +937,37 @@ fun String.initialsForDisplay(): String =
 /** The first word of a name. */
 fun String.firstNameForDisplay(): String = split(' ').firstOrNull { it.isNotEmpty() } ?: this
 
+/** `deviceAttestation` in `GET /v1/token/methods`: `mode` is `off`, `report` or `enforce`. */
+@Serializable
+data class DeviceAttestationPolicy(val mode: String = "off", val required: Boolean? = null, val warning: String? = null) {
+    /** Whether a sign-in without a good device check is refused. */
+    val blocksSignIn: Boolean get() = required ?: (mode == "enforce")
+}
+
 /**
  * `GET /v1/token/methods`: `facebook`, `apple`, `google` and, only while App Review codes work, `review_code`, with
  * the warning to show (with Cancel and Continue) before each method that has one.
  */
 @Serializable
-data class SignInMethods(val methods: List<String> = emptyList(), val warnings: Map<String, String> = emptyMap()) {
+data class SignInMethods(
+    val methods: List<String> = emptyList(),
+    val warnings: Map<String, String> = emptyMap(),
+    /** Whether the audience checks that sign-ins come from the real app on a genuine device; null from an older API. */
+    val deviceAttestation: DeviceAttestationPolicy? = null,
+) {
+    /**
+     * What the login screen says when this app can't pass the audience's device check, or null for nothing.
+     * [canAttest] is whether this build sends a Play Integrity proof with sign-ins. A build that can't is told only
+     * when the audience refuses sign-ins without one: then signing in will fail, so it says so up front instead of
+     * failing without a reason.
+     */
+    fun deviceCheckWarning(canAttest: Boolean): String? {
+        val policy = deviceAttestation ?: return null
+        if (canAttest || !policy.blocksSignIn) return null
+        return "This version of the app can't complete the device check that's required to sign in, so sign-in is " +
+            "blocked for now. Update the app, or try again later."
+    }
+
     val facebook: Boolean get() = "facebook" in methods
     val google: Boolean get() = "google" in methods
     val apple: Boolean get() = "apple" in methods
