@@ -114,7 +114,8 @@ fun LocalNewsSection(title: String, localeId: String, navigator: Navigator) {
 /**
  * Opens an article: the reader, or for a teaser (a publication that isn't on Soapbox yet links out) the piece on the
  * publication's own site, where its ads and traffic are. The first time, the reader acknowledges that the publisher
- * runs its own ads ([PublisherAdsDialog]) before either opens.
+ * runs its own ads ([PublisherAdsDialog]) before either opens, unless they tipped the publication to read it without
+ * ads.
  */
 @Composable
 fun rememberOpenArticle(article: Article, navigator: Navigator): () -> Unit {
@@ -140,7 +141,7 @@ fun rememberOpenArticle(article: Article, navigator: Navigator): () -> Unit {
         )
     }
     return {
-        if (graph.publisherAds.isAcknowledged(userId)) {
+        if (graph.publisherAds.isAcknowledged(userId) || article.showsWithoutAds) {
             open()
         } else {
             asking = true
@@ -227,7 +228,16 @@ fun ArticleScreen(id: String, navigator: Navigator) {
     val uriHandler = LocalUriHandler.current
     // Reached without the note (a push or a link): ask first, and back out on "Not now".
     val userId = rememberUserId()
-    var askingAboutAds by rememberSaveable { mutableStateOf(!graph.publisherAds.isAcknowledged(userId)) }
+    // Asked once the story loads: a reader who tipped its publication to read it without ads has nothing to acknowledge.
+    var askedAboutAds by rememberSaveable { mutableStateOf(false) }
+    var askingAboutAds by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(state) {
+        val loaded = (state as? LoadState.Loaded)?.value ?: return@LaunchedEffect
+        if (!askedAboutAds) {
+            askedAboutAds = true
+            askingAboutAds = !graph.publisherAds.isAcknowledged(userId) && !loaded.showsWithoutAds
+        }
+    }
     if (askingAboutAds) {
         PublisherAdsDialog(
             onAccept = {
@@ -270,6 +280,15 @@ fun ArticleScreen(id: String, navigator: Navigator) {
                     item(key = "disclosure") {
                         Surface(color = tokens.surfaceRaised, shape = RoundedCornerShape(12.dp), modifier = Modifier.testTag("article.disclosure")) {
                             Text(disclosure, style = HotMessType.bodySmall, color = tokens.inkMuted, modifier = Modifier.padding(Space.s3))
+                        }
+                    }
+                }
+                if (article.showsWithoutAds) {
+                    item(key = "adFree") { AdFreeThanks(article.publication.name) }
+                } else if (!article.teaser) {
+                    item(key = "adFreeTip") {
+                        AdFreeTipButton(article.publication.id, article.publication.name, article.publication.adFreeOffered) {
+                            loader.load(id, refresh = true, quiet = true, fetch = fetch)
                         }
                     }
                 }
@@ -352,6 +371,15 @@ fun PublicationScreen(id: String, navigator: Navigator) {
                                     modifier = Modifier.clickable(role = Role.Button) { uriHandler.openUri(url) },
                                 )
                             }
+                        }
+                    }
+                }
+                if (publication.viewerAdFree == true) {
+                    item(key = "adFree") { AdFreeThanks(publication.name, publication.viewerAdFreeUntil) }
+                } else {
+                    item(key = "adFreeTip") {
+                        AdFreeTipButton(publication.id, publication.name, publication.adFreeOffered) {
+                            loader.load(id, refresh = true, quiet = true, fetch = fetch)
                         }
                     }
                 }
