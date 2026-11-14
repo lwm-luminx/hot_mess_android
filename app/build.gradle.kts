@@ -116,7 +116,7 @@ android {
         minSdk = 28
         targetSdk = 36
         versionCode = buildNumber
-        versionName = "2.5"
+        versionName = "2.7"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // The Facebook sign-in test's test user, from the environment (scripts/facebook-signin-test.sh
@@ -275,6 +275,10 @@ dependencies {
     implementation(libs.googleid)
     // Google's AuthorizationClient, for the scope that reads a Google account's other emails.
     implementation(libs.play.services.auth)
+    // Whether a newer build is on Google Play, for Me › About.
+    implementation(libs.play.app.update.ktx)
+    // Venue geofences (VenueGeofences.kt).
+    implementation(libs.play.services.location)
     // Sign-in through the Facebook app. Facebook Login brings an old Fragment; the Activity Result API needs 1.3
     // or later.
     implementation(libs.facebook.login)

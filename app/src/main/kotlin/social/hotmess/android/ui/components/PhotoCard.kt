@@ -302,12 +302,20 @@ fun VenueCard(
  * Interested only), and the name with when and where at the bottom. Featured events are taller.
  */
 @Composable
-fun EventCard(event: Event, onClick: () -> Unit, modifier: Modifier = Modifier, photoUrl: String? = null) {
+fun EventCard(
+    event: Event,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    photoUrl: String? = null,
+    // Shown as featured (taller, larger title), e.g. in the Events tab's Featured section; null goes by the event's flag.
+    featured: Boolean? = null,
+) {
+    val tall = featured ?: event.isFeatured
     PhotoCard(
         url = photoUrl ?: event.bannerUrl,
         onClick = onClick,
         modifier = modifier,
-        minHeight = if (event.isFeatured) Sizes.photoCardFeatured else Sizes.photoCard,
+        minHeight = if (tall) Sizes.photoCardFeatured else Sizes.photoCard,
         topClearance = 68.dp,
         leading = {
             GlassPill(
@@ -325,7 +333,7 @@ fun EventCard(event: Event, onClick: () -> Unit, modifier: Modifier = Modifier, 
             RsvpBadge(event.rsvp)
         },
     ) {
-        Text(event.name, style = if (event.isFeatured) FeaturedCardTitle else CardTitle, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(event.name, style = if (tall) FeaturedCardTitle else CardTitle, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Text(Formatting.eventSubtitle(event), style = CardDetail, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }

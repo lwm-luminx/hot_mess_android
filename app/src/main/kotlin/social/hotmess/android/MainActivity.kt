@@ -283,6 +283,11 @@ class MainActivity : ComponentActivity(), GoogleAccounts {
         }
         val url = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.dataString ?: return
         if (graph.session.handleRedirect(url)) return
+        // hotmess://review?code=…: the sign-in screen opens "Have an App Review code?" with it filled in.
+        DeepLink.reviewCode(url)?.let {
+            graph.session.offerReviewCode(it)
+            return
+        }
         // A venue's short link (a TV's QR code): the site redirects it to the venue's chat, which opens here.
         ShortLink.url(url)?.let { short ->
             lifecycleScope.launch {

@@ -1,11 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- As backup_rules.xml: everything but the session token, so the cards the user turned off
-     (com.audiencekit.cards.xml) come back on a new phone. -->
+     (com.audiencekit.cards.xml) come back on a new phone. The 18+ confirmation (hotmess.age.xml)
+     stays behind too. -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="com.audiencekit.session.xml" />
+        <exclude domain="sharedpref" path="hotmess.age.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="com.audiencekit.session.xml" />
+        <exclude domain="sharedpref" path="hotmess.age.xml" />
     </device-transfer>
 </data-extraction-rules>

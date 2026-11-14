@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.Check
@@ -31,6 +30,7 @@ import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -80,6 +80,7 @@ import social.hotmess.android.ui.theme.Radius
 import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.ApiError
+import social.hotmess.core.EmergencyNumber
 import social.hotmess.core.HelpVenue
 import social.hotmess.core.HotMessApi
 import social.hotmess.core.RidePickup
@@ -88,6 +89,7 @@ import social.hotmess.core.SafetyAlertDraft
 import social.hotmess.core.SafetyAlertState
 import social.hotmess.core.SafetyConcern
 import social.hotmess.core.SafetyPlace
+import social.hotmess.core.Venue
 import social.hotmess.core.SupportLine
 import social.hotmess.core.SupportResources
 import social.hotmess.core.SupportRide
@@ -234,11 +236,92 @@ class SafetyAlertController(private val api: HotMessApi, private val scope: Coro
         }
 }
 
-/** The quiet way in on a venue the user is at: `ink-muted` with a shield, not a red SOS. */
+/**
+ * Whether the app places the user at [venueId], so Safety shows: staff can only help people who are there. Its own
+ * request, so an API without safety alerts still shows the screen; false for no venue, while it loads, and on errors.
+ */
 @Composable
-fun GetHelpRow(onClick: () -> Unit) {
-    DetailSection(null) {
-        InfoRow("Get help", icon = Icons.Rounded.Shield, onClick = onClick, trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight)
+fun rememberCanGetHelp(venueId: String?): Boolean {
+    val graph = LocalAppGraph.current
+    var canGetHelp by remember(venueId) { mutableStateOf(false) }
+    LaunchedEffect(venueId) {
+        canGetHelp = venueId != null && try {
+            graph.api.venueSafety(venueId)?.canSendSafetyAlert == true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
+        }
+    }
+    return canGetHelp
+}
+
+/** [venue] as Get help names it, with its point for a ride's pickup. */
+fun helpVenueOf(venue: Venue): HelpVenue {
+    val at = venue.coordinate
+    return HelpVenue(venue.id, venue.name, venue.address, at?.latitude, at?.longitude)
+}
+
+/**
+ * Safety, big and labelled with the shield on the accent: the way into Get help while the app places the user at a
+ * venue, in Now's top bar and the venue heroes (as on iOS, where it replaced the quiet "Get help" row).
+ */
+@Composable
+fun SafetyButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        onClick = onClick,
+        shape = CircleShape,
+        color = tokens.accent,
+        contentColor = tokens.onAccent,
+        modifier = modifier.heightIn(min = 40.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Space.s1),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+        ) {
+            Icon(Icons.Rounded.Shield, contentDescription = null, modifier = Modifier.size(20.dp))
+            Text("Safety", style = HotMessType.label)
+        }
+    }
+}
+
+/**
+ * The hero's actions at a venue the user is at: Ping, Safety and (on Now) the room, in place of the address. Ping and
+ * Chat sit on a pill of the hero's own text colour, so they read on any photo; Safety alone carries the accent.
+ */
+@Composable
+fun HeroVenueActions(onPing: () -> Unit, onSafety: () -> Unit, onChat: (() -> Unit)? = null) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(Space.s2),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(top = Space.s2),
+    ) {
+        HeroPill("Ping", Icons.AutoMirrored.Rounded.Send, onPing)
+        SafetyButton(onSafety)
+        onChat?.let { HeroPill("Chat", Icons.Rounded.Forum, it) }
+    }
+}
+
+@Composable
+private fun HeroPill(text: String, icon: ImageVector, onClick: () -> Unit) {
+    val ink = LocalContentColor.current
+    Surface(
+        onClick = onClick,
+        shape = CircleShape,
+        color = ink.copy(alpha = 0.18f),
+        contentColor = ink,
+        border = BorderStroke(1.dp, ink.copy(alpha = 0.35f)),
+        modifier = Modifier.heightIn(min = 40.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Space.s1),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+        ) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+            Text(text, style = HotMessType.label)
+        }
     }
 }
 
@@ -369,9 +452,9 @@ private fun Context.shareText(text: String) {
     startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 }
 
-/** "In danger right now? Call 911": the one red thing, always last. */
+/** "In danger right now? Call 911" (or the local number): the one red thing, always last. */
 @Composable
-private fun EmergencySection(number: String = "911") {
+private fun EmergencySection(number: String = EmergencyNumber.current) {
     val context = LocalContext.current
     DetailSection("In danger right now?", footer = { Footnote("Hot Mess isn't a crisis service. In an emergency, call $number.") }) {
         Surface(color = tokens.dangerSoft, modifier = Modifier.fillMaxWidth()) {
@@ -504,7 +587,7 @@ private fun AlertStatus(controller: SafetyAlertController, alert: SafetyAlert, o
                         Footnote(
                             if (acknowledged) "Stay where you are if you can. They know where you said you'd be."
                             else "Stay where you feel safest. You'll feel a buzz, with no sound, when someone picks it up. " +
-                                "If nobody does in 2 minutes, we'll help you reach a friend, a ride or 911.",
+                                "If nobody does in 2 minutes, we'll help you reach a friend, a ride or ${EmergencyNumber.current}.",
                         )
                     },
                 ) {

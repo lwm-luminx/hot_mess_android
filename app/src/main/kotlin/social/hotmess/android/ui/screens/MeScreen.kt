@@ -11,23 +11,31 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ViewAgenda
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
-import androidx.compose.material.icons.rounded.NotificationsActive
-import androidx.compose.material.icons.rounded.Shield
-import androidx.compose.material.icons.rounded.Favorite
-import androidx.compose.material.icons.rounded.ConfirmationNumber
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.BugReport
+import androidx.compose.material.icons.rounded.Checklist
 import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.ConfirmationNumber
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Email
 import androidx.compose.material.icons.rounded.Face
+import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.Link
+import androidx.compose.material.icons.rounded.LocationCity
 import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.PrivacyTip
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.rounded.Shop
+import androidx.compose.material.icons.rounded.SystemUpdate
+import androidx.compose.material.icons.rounded.ViewAgenda
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -39,6 +47,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,18 +59,20 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.audiencekit.StaffApp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import social.hotmess.android.BuildConfig
 import social.hotmess.android.AppConfiguration
 import social.hotmess.android.location.LocationAccess
+import social.hotmess.android.location.LocationProblem
 import social.hotmess.android.session.LocalGoogleAccounts
 import social.hotmess.android.ui.LocalAppGraph
 import social.hotmess.android.ui.Navigator
 import social.hotmess.android.ui.ScreenScaffold
-import social.hotmess.android.ui.StaffApp
-import social.hotmess.android.ui.openStaffApp
 import social.hotmess.android.ui.components.Avatar
 import social.hotmess.android.ui.components.ChatBubble
+import social.hotmess.android.ui.components.CityPickerSheet
 import social.hotmess.android.ui.components.DangerRow
 import social.hotmess.android.ui.components.DetailInset
 import social.hotmess.android.ui.components.DetailRowPadding
@@ -70,16 +81,21 @@ import social.hotmess.android.ui.components.Feed
 import social.hotmess.android.ui.components.InfoRow
 import social.hotmess.android.ui.components.RowDivider
 import social.hotmess.android.ui.components.TinyAvatarSize
-import social.hotmess.android.ui.openAppSettings
+import social.hotmess.android.ui.components.actionLabel
+import social.hotmess.android.ui.components.rememberLocationProblem
+import social.hotmess.android.ui.components.rememberTurnOnLocation
+import social.hotmess.android.ui.components.PlatformCreditFooter
+import social.hotmess.android.ui.openStaffApp
 import social.hotmess.android.ui.openUrl
 import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.Radius
 import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
+import social.hotmess.android.updates.AppUpdates
 import social.hotmess.core.ApiError
 import social.hotmess.core.CalendarFeed
-import social.hotmess.core.ManagedListings
 import social.hotmess.core.LegalLinks
+import social.hotmess.core.ManagedListings
 import social.hotmess.core.initialsForDisplay
 
 private enum class Confirm { RESET, SIGN_OUT, DELETE }
@@ -95,6 +111,7 @@ fun MeScreen(navigator: Navigator) {
     val user by graph.session.user.collectAsStateWithLifecycle()
     val locale by graph.location.locale.collectAsStateWithLifecycle()
     val access by graph.location.access.collectAsStateWithLifecycle()
+    var choosingCity by rememberSaveable { mutableStateOf(false) }
     val safety by graph.safety.state.collectAsStateWithLifecycle()
     // "Your tribes", shown once the API answers with them (hidden signed out, or on an older API).
     val tribes by graph.tribes.choices.collectAsStateWithLifecycle()
@@ -108,6 +125,9 @@ fun MeScreen(navigator: Navigator) {
     // Pushes about rooms they just left (me.recentChatPush); null until known, and the row stays hidden
     // when the server can't say (signed out, or an older API).
     var recentChatPush by remember { mutableStateOf<Boolean?>(null) }
+    // Quickie pushes (me.pairUpPush): paired, revealed, met, and invites to join someone's Quickie where you are.
+    // Hidden, like the other push setting, until known.
+    var pairUpPush by remember { mutableStateOf<Boolean?>(null) }
     // "Use my initials instead" in chat rooms (me.chatInitials); hidden, like the push setting, until known.
     var chatInitials by remember { mutableStateOf<Boolean?>(null) }
     // Connect Google, offered while the account has no Google sign-in (me.self.signedInWithGoogle is false).
@@ -138,6 +158,16 @@ fun MeScreen(navigator: Navigator) {
         if (!graph.session.isSignedIn) return@LaunchedEffect
         recentChatPush = try {
             graph.api.recentChatPush()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+    }
+    LaunchedEffect(Unit) {
+        if (!graph.session.isSignedIn) return@LaunchedEffect
+        pairUpPush = try {
+            graph.api.pairUpPush()
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -201,6 +231,20 @@ fun MeScreen(navigator: Navigator) {
         }
     }
 
+    fun setPairUpPush(enabled: Boolean) {
+        val before = pairUpPush
+        pairUpPush = enabled
+        scope.launch {
+            pairUpPush = try {
+                graph.api.setPairUpPush(enabled)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                before
+            }
+        }
+    }
+
     fun setChatInitials(enabled: Boolean) {
         val before = chatInitials
         chatInitials = enabled
@@ -245,20 +289,36 @@ fun MeScreen(navigator: Navigator) {
             }
             item {
                 DetailSection("Location") {
+                    val problem = rememberLocationProblem()
+                    val turnOn = rememberTurnOnLocation()
+                    val cityChosen by graph.location.cityChosen.collectAsStateWithLifecycle()
                     InfoRow(
                         "Location access",
-                        when (access) {
-                            LocationAccess.ALLOWED -> "On"
-                            LocationAccess.DENIED -> "Off"
-                            LocationAccess.NOT_REQUESTED -> "Not asked yet"
+                        when {
+                            access == LocationAccess.NOT_REQUESTED -> "Not asked yet"
+                            access == LocationAccess.DENIED -> "Off"
+                            problem == LocationProblem.SERVICES_OFF -> "Off on this phone"
+                            else -> "On"
                         },
                         icon = Icons.Rounded.LocationOn,
                     )
-                    if (access == LocationAccess.DENIED) {
+                    if (problem != null && problem != LocationProblem.WAITING) {
                         RowDivider()
-                        InfoRow("Open settings", onClick = context::openAppSettings, trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight)
+                        InfoRow(problem.actionLabel(), onClick = turnOn, trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight)
+                    }
+                    // Without a position of its own, Hot Mess uses a city picked here.
+                    if (problem != null || cityChosen) {
+                        RowDivider()
+                        InfoRow(
+                            "City",
+                            locale?.name ?: "Choose",
+                            icon = Icons.Rounded.LocationCity,
+                            onClick = { choosingCity = true },
+                            trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        )
                     }
                 }
+                if (choosingCity) CityPickerSheet(onDismiss = { choosingCity = false })
             }
             if (googleAccounts?.available == true && user?.signedInWithGoogle == false) {
                 item {
@@ -285,18 +345,18 @@ fun MeScreen(navigator: Navigator) {
                     DetailSection("Your pages") {
                         if (listings.venues.isNotEmpty()) {
                             InfoRow(
-                                "Open ${StaffApp.VELVET.title}",
+                                "Open ${StaffApp.VELVET.appName}",
                                 value = listingNames(listings.venues),
-                                onClick = { context.openStaffApp(StaffApp.VELVET) },
+                                onClick = { context.openStaffApp(StaffApp.VELVET, staffAppLink(StaffApp.VELVET, listings.venues)) },
                                 trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                             )
                         }
                         if (listings.venues.isNotEmpty() && listings.people.isNotEmpty()) RowDivider()
                         if (listings.people.isNotEmpty()) {
                             InfoRow(
-                                "Open ${StaffApp.BACKSTAGE.title}",
+                                "Open ${StaffApp.BACKSTAGE.appName}",
                                 value = listingNames(listings.people),
-                                onClick = { context.openStaffApp(StaffApp.BACKSTAGE) },
+                                onClick = { context.openStaffApp(StaffApp.BACKSTAGE, staffAppLink(StaffApp.BACKSTAGE, listings.people)) },
                                 trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                             )
                         }
@@ -356,16 +416,28 @@ fun MeScreen(navigator: Navigator) {
                     }
                 }
             }
-            recentChatPush?.let { enabled ->
+            if (recentChatPush != null || pairUpPush != null) {
                 item {
                     DetailSection("Notifications") {
-                        SwitchRow(
-                            "Rooms you just left",
-                            "Get a push when people keep talking in a chat room you left in the last 30 minutes.",
-                            checked = enabled,
-                            icon = Icons.Rounded.Notifications,
-                            onCheckedChange = ::setRecentChatPush,
-                        )
+                        recentChatPush?.let { enabled ->
+                            SwitchRow(
+                                "Rooms you just left",
+                                "Get a push when people keep talking in a chat room you left in the last 30 minutes.",
+                                checked = enabled,
+                                icon = Icons.Rounded.Notifications,
+                                onCheckedChange = ::setRecentChatPush,
+                            )
+                        }
+                        if (recentChatPush != null && pairUpPush != null) RowDivider()
+                        pairUpPush?.let { enabled ->
+                            SwitchRow(
+                                "Quickie",
+                                "Get a push when you're paired, and when someone where you are wants a Quickie.",
+                                checked = enabled,
+                                icon = Icons.Rounded.Notifications,
+                                onCheckedChange = ::setPairUpPush,
+                            )
+                        }
                     }
                 }
             }
@@ -431,6 +503,15 @@ fun MeScreen(navigator: Navigator) {
             }
             item {
                 DetailSection("Feedback") {
+                    YourSuggestionsRow(navigator::openYourSuggestions)
+                    RowDivider()
+                    InfoRow(
+                        "Check the app",
+                        icon = Icons.Rounded.Checklist,
+                        onClick = navigator::openCheckTheApp,
+                        trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                    )
+                    RowDivider()
                     InfoRow(
                         "Report a problem",
                         icon = Icons.Rounded.BugReport,
@@ -456,6 +537,7 @@ fun MeScreen(navigator: Navigator) {
                 DetailSection("About") {
                     InfoRow("Version", "${configuration.versionName} (${configuration.versionCode})")
                     RowDivider()
+                    AboutUpdateRows(graph.updates)
                     InfoRow("Facebook", configuration.facebookEnvironment)
                     RowDivider()
                     val server = configuration.apiServer
@@ -482,6 +564,8 @@ fun MeScreen(navigator: Navigator) {
                     }
                 }
             }
+            // Powered by AudienceKit, a Love Wins Media product: AudienceKit's policies and "Bring AudienceKit to your venue".
+            item { PlatformCreditFooter() }
         }
     }
 
@@ -644,7 +728,74 @@ private fun SwitchRow(title: String, detail: String, checked: Boolean, icon: Ima
 }
 
 /** "The Wildrose", or "The Wildrose +2" for someone managing more than one. */
+/** The page itself when they manage one, the app's home for several. */
+private fun staffAppLink(app: StaffApp, listings: List<ManagedListings.Listing>): String? {
+    val id = listings.singleOrNull()?.id ?: return null
+    val audienceId = BuildConfig.AUDIENCE_ID.takeIf { it.isNotEmpty() }
+    return if (app == StaffApp.VELVET) StaffApp.velvet(id, audienceId) else StaffApp.backstage(id, audienceId)
+}
+
 private fun listingNames(listings: List<ManagedListings.Listing>): String {
     val first = listings.firstOrNull()?.name.orEmpty()
     return if (listings.size > 1) "$first +${listings.size - 1}" else first
+}
+
+/**
+ * The update rows in Me › About, as iOS's AboutUpdateRows: where the build came from, whether a newer one is on
+ * Google Play, when we last looked, "Check for updates" and "Open on Google Play". A build that didn't come from
+ * Google Play shows none of them.
+ */
+@Composable
+private fun AboutUpdateRows(updates: AppUpdates) {
+    if (updates.source != AppUpdates.Source.GOOGLE_PLAY) return
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val state by updates.state.collectAsStateWithLifecycle()
+    InfoRow("Installed from", "Google Play")
+    RowDivider()
+    val status = state.status
+    InfoRow(
+        "Updates",
+        when (status) {
+            is AppUpdates.Status.Available -> "Update available (build ${status.versionCode})"
+            AppUpdates.Status.UpToDate -> "Up to date"
+            AppUpdates.Status.Failed -> "Couldn't check"
+            AppUpdates.Status.Unknown -> if (state.lastChecked != null) "Google Play didn't say" else "Not checked yet"
+        },
+        icon = if (status is AppUpdates.Status.Available) Icons.Rounded.SystemUpdate else Icons.Rounded.CheckCircle,
+    )
+    RowDivider()
+    InfoRow("Last checked", state.lastChecked?.let(::lastCheckedText) ?: "Not yet")
+    RowDivider()
+    if (state.checking) {
+        Row(Modifier.fillMaxWidth().padding(Space.s4), horizontalArrangement = Arrangement.Center) {
+            CircularProgressIndicator(color = tokens.accent, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+        }
+    } else {
+        InfoRow("Check for updates", icon = Icons.Rounded.Refresh, onClick = { scope.launch { updates.check() } })
+    }
+    if (status is AppUpdates.Status.Available) {
+        RowDivider()
+        InfoRow(
+            "Open on Google Play",
+            icon = Icons.Rounded.Shop,
+            onClick = { updates.openStore(context) },
+            trailing = Icons.AutoMirrored.Rounded.OpenInNew,
+        )
+    }
+    RowDivider()
+}
+
+/** "Mon 9:14pm" within the last week, "Oct 12" before that. */
+private fun lastCheckedText(instant: java.time.Instant, now: java.time.Instant = java.time.Instant.now()): String {
+    val zone = java.time.ZoneId.systemDefault()
+    val date = instant.atZone(zone)
+    val days = java.time.temporal.ChronoUnit.DAYS.between(date.toLocalDate(), now.atZone(zone).toLocalDate())
+    val locale = java.util.Locale.getDefault()
+    return if (days in 0..6) {
+        val time = java.time.format.DateTimeFormatter.ofPattern("h:mma", locale).format(date).lowercase(locale)
+        "${date.dayOfWeek.getDisplayName(java.time.format.TextStyle.SHORT, locale)} $time"
+    } else {
+        java.time.format.DateTimeFormatter.ofPattern("MMM d", locale).format(date)
+    }
 }

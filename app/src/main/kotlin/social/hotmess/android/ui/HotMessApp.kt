@@ -57,9 +57,18 @@ import androidx.navigation.toRoute
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.Serializable
 import social.hotmess.android.location.LocationAccess
+import social.hotmess.android.ui.components.BackgroundLocationPrompt
 import social.hotmess.android.session.AuthState
+import social.hotmess.android.ui.screens.ArticleScreen
 import social.hotmess.android.ui.screens.EventScreen
+import social.hotmess.android.ui.screens.PublicationScreen
 import social.hotmess.android.ui.screens.GetHelpScreen
+import social.hotmess.android.ui.screens.FixTarget
+import social.hotmess.android.ui.screens.SuggestListingScreen
+import social.hotmess.android.ui.screens.SuggestFixScreen
+import social.hotmess.android.ui.screens.FixDetailScreen
+import social.hotmess.android.ui.screens.CheckTheAppScreen
+import social.hotmess.android.ui.screens.YourSuggestionsScreen
 import social.hotmess.android.ui.screens.CardsYouSeeScreen
 import social.hotmess.android.ui.screens.GettingHelpScreen
 import social.hotmess.android.ui.screens.SafetyAlertsScreen
@@ -67,6 +76,7 @@ import social.hotmess.android.ui.screens.SupportScreen
 import social.hotmess.android.ui.screens.TribePickerScreen
 import social.hotmess.android.ui.screens.EventsScreen
 import social.hotmess.android.ui.screens.LaunchScreen
+import social.hotmess.android.ui.screens.LocaleScreen
 import social.hotmess.android.ui.screens.LoginScreen
 import social.hotmess.android.ui.screens.MeScreen
 import social.hotmess.android.ui.screens.NowScreen
@@ -108,6 +118,9 @@ import social.hotmess.core.postsSubject
 /** [kind] is the [PostsSubject]'s: venue, event, person or locale. */
 @Serializable data class PostsRoute(val kind: String, val id: String, val title: String)
 @Serializable data class UpdatesRoute(val localeId: String, val localeName: String)
+@Serializable data class LocaleRoute(val id: String, val name: String)
+@Serializable data class ArticleRoute(val id: String)
+@Serializable data class PublicationRoute(val id: String)
 @Serializable data object PassesRoute
 /** Get help at a venue the user is at ([address] for a friend or a ride). */
 @Serializable data class HelpRoute(
@@ -127,6 +140,12 @@ import social.hotmess.core.postsSubject
 @Serializable data object CardsYouSeeRoute
 /** "Your tribes", from Me. */
 @Serializable data object TribesRoute
+@Serializable data class SuggestListingRoute(val event: Boolean, val venueId: String = "", val venueName: String = "")
+@Serializable data class SuggestFixRoute(val venue: Boolean, val id: String, val name: String)
+@Serializable data class FixDetailRoute(val venue: Boolean, val id: String, val name: String)
+@Serializable data object YourSuggestionsRoute
+/** Me › "Check the app". */
+@Serializable data object CheckTheAppRoute
 
 private val AppTab.route: Any
     get() = when (this) {
@@ -173,6 +192,16 @@ interface Navigator {
     /** Me > Cards you see: the promoted-card categories to show. */
     fun openCardsYouSee()
     fun openTribes()
+    /** "Suggest a venue" or "Suggest an event"; an event from a venue's page names that venue. */
+    fun openSuggestListing(event: Boolean, venueId: String? = null, venueName: String? = null)
+    /** "Suggest a fix" for a venue or event. */
+    fun openSuggestFix(target: FixTarget)
+    fun openFixDetail(target: FixTarget)
+    fun openYourSuggestions()
+    /** Me › "Check the app". */
+    fun openCheckTheApp()
+    /** Back out of every suggestion screen, to the page the member started from. */
+    fun closeSuggestion()
     fun back()
 }
 
@@ -251,6 +280,9 @@ private fun MainShell(links: Flow<AppRoute>) {
                     is AppRoute.PostDetail -> PostRoute(route.id)
                     is AppRoute.Posts -> PostsRoute(route.subject.kind, route.subject.id, route.title)
                     is AppRoute.Updates -> UpdatesRoute(route.localeId, route.localeName)
+                    is AppRoute.LocaleDetail -> LocaleRoute(route.id, route.name)
+                    is AppRoute.ArticleDetail -> ArticleRoute(route.id)
+                    is AppRoute.PublicationDetail -> PublicationRoute(route.id)
                     is AppRoute.SafetyAlertHelp -> SafetyAlertRoute(route.id)
                 },
             )
@@ -307,6 +339,33 @@ private fun MainShell(links: Flow<AppRoute>) {
             navController.navigate(TribesRoute) { launchSingleTop = true }
         }
 
+        override fun openSuggestListing(event: Boolean, venueId: String?, venueName: String?) {
+            navController.navigate(SuggestListingRoute(event, venueId.orEmpty(), venueName.orEmpty()))
+        }
+
+        override fun openSuggestFix(target: FixTarget) {
+            navController.navigate(SuggestFixRoute(target.isVenue, target.id, target.name)) { launchSingleTop = true }
+        }
+
+        override fun openFixDetail(target: FixTarget) {
+            navController.navigate(FixDetailRoute(target.isVenue, target.id, target.name))
+        }
+
+        override fun openYourSuggestions() {
+            navController.navigate(YourSuggestionsRoute) { launchSingleTop = true }
+        }
+
+        override fun openCheckTheApp() {
+            navController.navigate(CheckTheAppRoute) { launchSingleTop = true }
+        }
+
+        override fun closeSuggestion() {
+            val suggestionRoutes = listOf(SuggestListingRoute::class, SuggestFixRoute::class, FixDetailRoute::class)
+            while (suggestionRoutes.any { navController.currentDestination?.hasRoute(it) == true }) {
+                if (!navController.popBackStack()) break
+            }
+        }
+
         override fun back() {
             navController.popBackStack()
         }
@@ -327,6 +386,7 @@ private fun MainShell(links: Flow<AppRoute>) {
     }
 
     AskForPermissions()
+    BackgroundLocationPrompt()
 
     if (linkExpired) {
         AlertDialog(
@@ -399,10 +459,30 @@ private fun MainShell(links: Flow<AppRoute>) {
                 composable<GettingHelpRoute> { GettingHelpScreen(navigator) }
                 composable<CardsYouSeeRoute> { CardsYouSeeScreen(navigator) }
                 composable<TribesRoute> { TribePickerScreen(navigator) }
+                composable<SuggestListingRoute> {
+                    val route = it.toRoute<SuggestListingRoute>()
+                    SuggestListingScreen(route.event, route.venueId.ifBlank { null }, route.venueName.ifBlank { null }, navigator)
+                }
+                composable<SuggestFixRoute> {
+                    val route = it.toRoute<SuggestFixRoute>()
+                    SuggestFixScreen(FixTarget(route.venue, route.id, route.name), navigator)
+                }
+                composable<FixDetailRoute> {
+                    val route = it.toRoute<FixDetailRoute>()
+                    FixDetailScreen(FixTarget(route.venue, route.id, route.name), navigator)
+                }
+                composable<YourSuggestionsRoute> { YourSuggestionsScreen(navigator) }
+                composable<CheckTheAppRoute> { CheckTheAppScreen(navigator) }
                 composable<UpdatesRoute> {
                     val route = it.toRoute<UpdatesRoute>()
                     UpdatesScreen(route.localeId, route.localeName, navigator)
                 }
+                composable<LocaleRoute> {
+                    val route = it.toRoute<LocaleRoute>()
+                    LocaleScreen(route.id, route.name, navigator)
+                }
+                composable<ArticleRoute> { ArticleScreen(it.toRoute<ArticleRoute>().id, navigator) }
+                composable<PublicationRoute> { PublicationScreen(it.toRoute<PublicationRoute>().id, navigator) }
             }
         }
     }

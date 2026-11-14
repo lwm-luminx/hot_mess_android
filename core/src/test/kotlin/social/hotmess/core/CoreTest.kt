@@ -155,6 +155,8 @@ class ListingTest {
         )
 
         assertEquals(listOf("featured", "upcoming"), listing.sections.map { it.id })
+        // Featured cards are sized by the section, not each event's own featured flag.
+        assertEquals(listOf(true, false), listing.sections.map { it.isFeatured })
         assertEquals(listOf("a", "c"), listing.sections[0].events.map { it.id })
         assertEquals(listOf("b", "d"), listing.sections[1].events.map { it.id })
         assertEquals(listOf("a", "b", "c", "d"), listing.allEvents.map { it.id })
@@ -200,6 +202,21 @@ class ListingTest {
         assertEquals(listOf("3", "5"), groups.first().venues.map { it.id })
         assertEquals(listOf("Austin", "Portland", "Seattle", "Elsewhere"), venues.byCity(null).map { it.city })
     }
+
+    @Test
+    fun listsTheVenuesCitiesToChooseFrom() {
+        val seattle = "b0f8b66a-e636-495d-9475-0f5317ea08e0"
+        val austin = "c1f8b66a-e636-495d-9475-0f5317ea08e1"
+        val venues = listOf(
+            Venue(id = "1", name = "Pony", locale = LocaleSummary(seattle, name = "Seattle")),
+            Venue(id = "2", name = "Oilcan", locale = LocaleSummary(austin.uppercase(), label = "Austin")),
+            Venue(id = "3", name = "Cuff", locale = LocaleSummary(seattle, name = "Seattle")),
+            Venue(id = "4", name = "Nowhere"),
+            Venue(id = "5", name = "Unnamed", locale = LocaleSummary("d1f8b66a-e636-495d-9475-0f5317ea08e2")),
+        )
+
+        assertEquals(listOf(AppLocale(austin, "Austin"), AppLocale(seattle, "Seattle")), venues.cities())
+    }
 }
 
 class DeepLinkTest {
@@ -212,6 +229,17 @@ class DeepLinkTest {
         assertEquals(AppRoute.PersonDetail(id), DeepLink.route("https://hotmess.social/people/$id"))
         assertEquals(AppRoute.NowPing(id), DeepLink.route("https://hotmess.social/pings/$id"), "a push's url")
         assertEquals(AppTab.EVENTS, AppRoute.EventDetail(id).tab)
+    }
+
+    @Test
+    fun aReviewLinkCarriesItsCodeAndRoutesNowhere() {
+        assertEquals("ABCD-1234-EFGH-5678", DeepLink.reviewCode("hotmess://review?code=ABCD-1234-EFGH-5678"))
+        assertEquals("ABCD 1234", DeepLink.reviewCode("hotmess://review?code=%20ABCD%201234%20"), "decoded and trimmed")
+        assertNull(DeepLink.reviewCode("hotmess://review"))
+        assertNull(DeepLink.reviewCode("hotmess://review?code="))
+        assertNull(DeepLink.reviewCode("https://hotmess.social/review?code=ABCD"), "only the app's own scheme")
+        assertNull(DeepLink.reviewCode("hotmess://venues/$id?code=ABCD"))
+        assertNull(DeepLink.route("hotmess://review?code=ABCD"))
     }
 
     @Test

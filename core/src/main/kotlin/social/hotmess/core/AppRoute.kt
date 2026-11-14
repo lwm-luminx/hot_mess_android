@@ -30,6 +30,15 @@ sealed interface AppRoute {
     /** A locale's updates feed, from Now. */
     data class Updates(val localeId: String, val localeName: String) : AppRoute
 
+    /** A locale's own page from the Venues tab's Everywhere view: some of its events and its venues. */
+    data class LocaleDetail(val id: String, val name: String) : AppRoute
+
+    /** A Soapbox article, by its id. */
+    data class ArticleDetail(val id: String) : AppRoute
+
+    /** A Soapbox publication's page: its articles and "Write an op-ed". */
+    data class PublicationDetail(val id: String) : AppRoute
+
     /** One of the user's safety alerts, from a push about it (`/safety-alerts/<id>`); it opens over Me. */
     data class SafetyAlertHelp(val id: String) : AppRoute
 
@@ -39,7 +48,7 @@ sealed interface AppRoute {
     /** Which tab the route opens in. */
     val tab: AppTab
         get() = when (this) {
-            is VenueDetail -> AppTab.VENUES
+            is VenueDetail, is LocaleDetail -> AppTab.VENUES
             is EventDetail -> AppTab.EVENTS
             is PersonDetail -> AppTab.PEOPLE
             is NowPing -> AppTab.NOW
@@ -48,6 +57,8 @@ sealed interface AppRoute {
             is Chat -> if (room.kind == ChatRoom.Kind.VENUE) AppTab.VENUES else AppTab.NOW
             // A post opens wherever it's linked from; a link from outside lands on Now.
             is PostDetail, is Updates -> AppTab.NOW
+            // News opens wherever it's linked from; a link from outside lands on Now.
+            is ArticleDetail, is PublicationDetail -> AppTab.NOW
             // Me lists the user's safety alerts, so Back from one lands there.
             is SafetyAlertHelp -> AppTab.ME
             is Posts -> when (subject) {
@@ -76,6 +87,17 @@ object DeepLink {
      * URL in `url`, which is what the app routes on (a `recent_chat` push carries its room's).
      */
     fun route(url: String): AppRoute? = link(url)?.route
+
+    /**
+     * The code in `hotmess://review?code=<code>`, which opens "Have an App Review code?" with the code filled in
+     * (`adb shell am start -d 'hotmess://review?code=…'` on an emulator). It never signs in by itself: the person
+     * still taps Sign in, so a link can't quietly swap someone's account. Null for any other link.
+     */
+    fun reviewCode(url: String): String? {
+        val uri = runCatching { URI(url) }.getOrNull() ?: return null
+        if (uri.scheme != "hotmess" || uri.host != "review") return null
+        return query(uri, "code")?.trim()?.takeIf { it.isNotEmpty() }
+    }
 
     /** [route], with the link's host, path and `e` (`?e=<token>`) for checking a share link. */
     fun link(url: String): Link? {

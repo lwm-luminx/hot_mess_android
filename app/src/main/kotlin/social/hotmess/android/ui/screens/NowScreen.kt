@@ -13,31 +13,26 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.Campaign
 import androidx.compose.material.icons.rounded.LocationOff
+import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.material.icons.rounded.Campaign
-import androidx.compose.material3.Icon
-import androidx.compose.material3.TextButton
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import social.hotmess.core.PostsSubject
-import social.hotmess.core.RecordId
-import social.hotmess.core.ApiError
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -51,6 +46,14 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import com.audiencekit.CardKind
+import com.audiencekit.LayoutCard
+import com.audiencekit.LayoutScreen
+import com.audiencekit.SoapboxCopy
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import social.hotmess.android.location.LocationProblem
 import social.hotmess.android.payments.CoverCheckout
 import social.hotmess.android.payments.CoverCheckoutFailure
 import social.hotmess.android.payments.rememberCoverCheckout
@@ -60,6 +63,7 @@ import social.hotmess.android.ui.components.Avatar
 import social.hotmess.android.ui.components.ChatPeek
 import social.hotmess.android.ui.components.ChatPeekParticipant
 import social.hotmess.android.ui.components.ChatThreadMessage
+import social.hotmess.android.ui.components.CoatCheckCard
 import social.hotmess.android.ui.components.DetailInset
 import social.hotmess.android.ui.components.DetailSection
 import social.hotmess.android.ui.components.EmptyRow
@@ -73,20 +77,26 @@ import social.hotmess.android.ui.components.LoadStateView
 import social.hotmess.android.ui.components.OnNowSection
 import social.hotmess.android.ui.components.PassCard
 import social.hotmess.android.ui.components.Presence
+import social.hotmess.android.ui.components.RowDivider
 import social.hotmess.android.ui.components.SkipTheLineCard
 import social.hotmess.android.ui.components.VenueCard
+import social.hotmess.android.ui.components.actionLabel
 import social.hotmess.android.ui.components.cardSection
 import social.hotmess.android.ui.components.friendNames
 import social.hotmess.android.ui.components.presenceOf
 import social.hotmess.android.ui.components.rememberHeroCollapsed
+import social.hotmess.android.ui.components.rememberLocationProblem
+import social.hotmess.android.ui.components.rememberTurnOnLocation
 import social.hotmess.android.ui.openUrl
 import social.hotmess.android.ui.rememberLoader
 import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.Sizes
 import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
+import social.hotmess.core.ApiError
 import social.hotmess.core.AppRoute
 import social.hotmess.core.ChatLine
+import social.hotmess.core.CoatCheckOffer
 import social.hotmess.core.CoverAction
 import social.hotmess.core.CoverOffer
 import social.hotmess.core.Event
@@ -99,12 +109,11 @@ import social.hotmess.core.PhotoTone
 import social.hotmess.core.Ping
 import social.hotmess.core.PingPick
 import social.hotmess.core.PlanChangeCheck
+import social.hotmess.core.PostsSubject
+import social.hotmess.core.RecordId
 import social.hotmess.core.RoomLineup
 import social.hotmess.core.Venue
 import java.time.Instant
-import com.audiencekit.CardKind
-import com.audiencekit.LayoutCard
-import com.audiencekit.LayoutScreen
 
 /** How often Now reloads while it's showing. */
 private const val NOW_REFRESH_MS = 60_000L
@@ -116,7 +125,7 @@ private const val NOW_REFRESH_MS = 60_000L
  */
 private val NOW_FALLBACK_CARDS = listOf(
     CardKind.NOW_STAGE, CardKind.NOW_CHAT, CardKind.POSTS_TONIGHT, CardKind.NOW_SMALL_TALK, CardKind.EVENTS_UPCOMING,
-    CardKind.POSTS_LOCALE, CardKind.VENUES_NEARBY, CardKind.VENUES_FRIENDS, CardKind.PINGS,
+    CardKind.ARTICLES_LOCALE, CardKind.POSTS_LOCALE, CardKind.VENUES_NEARBY, CardKind.VENUES_FRIENDS, CardKind.PINGS,
 )
 private val NOW_CARD_KINDS = NOW_FALLBACK_CARDS + listOf(CardKind.WEB, CardKind.PROMO_SLOT)
 
@@ -242,16 +251,29 @@ fun NowScreen(navigator: Navigator) {
         navigator.openPass(pass.id)
     }
     val checkoutState by checkout.state.collectAsStateWithLifecycle()
+    val payingCoatCheck by checkout.coatCheck.collectAsStateWithLifecycle()
 
     val listState = rememberLazyListState()
     val scrolled by rememberHeroCollapsed(listState)
     var heroTone by remember { mutableStateOf(PhotoTone.PLACEHOLDER) }
     val title = state.valueOrNull?.title?.takeIf { it.isNotBlank() } ?: "Now"
+    // The venue Now is about, when it places the user there (not a list of nearby ones), and whether Safety shows.
+    val helpAt = state.valueOrNull?.takeIf { it.venues == null }?.venue
+    val canGetHelp = rememberCanGetHelp(helpAt?.id)
+    // At a venue, tonight as its page shows it: the host, the lineup strip, karaoke signups and song requests.
+    val lineupModel = helpAt?.let { rememberTonightLineup(it.id) }
+    val lineup = lineupModel?.lineup?.collectAsStateWithLifecycle()?.value?.takeIf { !it.isEmpty }
+    val lineupLoaded = lineupModel?.loaded?.collectAsStateWithLifecycle()?.value ?: true
+    val viewerName = graph.session.user.collectAsStateWithLifecycle().value?.name
     HeroScaffold(
         title = title,
         tone = heroTone,
         collapsed = state.valueOrNull == null || scrolled,
         actions = {
+            // At a venue, Safety sits by Ping, big and labelled, so it's in reach as you scroll.
+            if (canGetHelp && helpAt != null) {
+                SafetyButton(onClick = { navigator.openHelp(helpVenueOf(helpAt)) })
+            }
             // In the bar's own colour (the photo's, until it turns solid), like the icons beside it: accent pink
             // disappeared on some photos and on the bar's gradient.
             TextButton(onClick = { sheetOpen = true }, colors = ButtonDefaults.textButtonColors(contentColor = LocalContentColor.current)) {
@@ -293,6 +315,14 @@ fun NowScreen(navigator: Navigator) {
                                     }
                                 }
                             }
+                            // At the venue: Ping, Safety and its room, as on iOS.
+                            if (canGetHelp && helpAt != null) {
+                                HeroVenueActions(
+                                    onPing = { openPingSheet() },
+                                    onSafety = { navigator.openHelp(helpVenueOf(helpAt)) },
+                                    onChat = { navigator.openChat(helpAt.id, event?.name ?: helpAt.name) },
+                                )
+                            }
                         }
                     },
                 ) {
@@ -308,10 +338,23 @@ fun NowScreen(navigator: Navigator) {
                     cardLayout.cards.forEach { card ->
                         when (card.kind) {
                             CardKind.NOW_STAGE -> {
-                                // Who's on.
-                                if (now.onNow.isNotEmpty()) {
-                                    item(key = "on-now") {
-                                        OnNowSection(now.onNow) { navigator.open(AppRoute.PersonDetail(it.person.id)) }
+                                if (lineupModel != null && lineup != null) {
+                                    item(key = "tonight") {
+                                        TonightLineupSection(lineupModel, lineup, viewerName) { navigator.open(AppRoute.PersonDetail(it)) }
+                                    }
+                                } else {
+                                    // Until the lineup loads, or from an API without it: who's on, and the event's
+                                    // karaoke session (held back while loading, so its pointer doesn't flash first).
+                                    if (now.onNow.isNotEmpty()) {
+                                        item(key = "on-now") {
+                                            OnNowSection(now.onNow) { navigator.open(AppRoute.PersonDetail(it.person.id)) }
+                                        }
+                                    }
+                                    val karaoke = now.event?.karaoke
+                                    if (karaoke != null && now.venues == null && lineupLoaded) {
+                                        item(key = "karaoke") {
+                                            EventKaraokeSection(karaoke, now.event?.venue ?: now.venue) { navigator.open(AppRoute.VenueDetail(it)) }
+                                        }
                                     }
                                 }
                                 // At a venue: its photos, led by the camera; what you take goes on the stage's pages too.
@@ -356,6 +399,13 @@ fun NowScreen(navigator: Navigator) {
                                     EventCard(event, onClick = { navigator.open(AppRoute.EventDetail(event.id)) })
                                 }
                             }
+                            // A few articles from the locale's publishers; a teaser opens the publisher's site.
+                            CardKind.ARTICLES_LOCALE -> (card.localeId ?: now.locale?.id)?.let { localeId ->
+                                val name = now.locale?.name.orEmpty()
+                                item(key = "local-news") {
+                                    LocalNewsSection(if (name.isBlank()) SoapboxCopy.NEWS else "News in $name", localeId, navigator)
+                                }
+                            }
                             // Away from venues, the locale's updates.
                             CardKind.POSTS_LOCALE -> now.locale?.takeIf { now.venue == null }?.let { locale ->
                                 val name = locale.name.orEmpty()
@@ -373,7 +423,7 @@ fun NowScreen(navigator: Navigator) {
                             CardKind.VENUES_FRIENDS ->
                                 if (now.venue == null && cardLayout.card(CardKind.PINGS) == null) whereFriendsAre(now.friendVenues, navigator)
                             CardKind.PINGS -> {
-                                coverCards(now, checkout, checkoutState, navigator)
+                                coverCards(now, checkout, checkoutState, payingCoatCheck, navigator)
                                 val askAbout = planCheck.venueToAsk(now.myPing, Instant.now())
                                     ?.let { id -> now.venue?.takeIf { RecordId.same(it.id, id) } }
                                 tonight(
@@ -398,7 +448,7 @@ fun NowScreen(navigator: Navigator) {
                         }
                     }
                     // Passes and the cover depend on this device, so they aren't cards: they go just above pings.
-                    if (cardLayout.card(CardKind.PINGS) == null) coverCards(now, checkout, checkoutState, navigator)
+                    if (cardLayout.card(CardKind.PINGS) == null) coverCards(now, checkout, checkoutState, payingCoatCheck, navigator)
                 }
             }
         }
@@ -452,7 +502,7 @@ private fun LazyListScope.nearby(now: Now, card: LayoutCard, located: Boolean, n
     when {
         venues != null && venues.isEmpty() -> item { DetailSection("Venues near you") { EmptyRow("You aren't near any venues right now.") } }
         venues != null -> cardSection("nearby", "Venues near you", venues.take(3), key = { it.id }) { VenueCard(it, onClick = { open(it) }) }
-        !located -> item { DetailSection("Venues near you") { EmptyRow("Turn on location to see what's happening near you.") } }
+        !located -> item { DetailSection("Venues near you") { TurnOnLocationRows("Turn on location to see what's happening near you.") } }
     }
 }
 
@@ -461,11 +511,13 @@ private fun LazyListScope.coverCards(
     now: Now,
     checkout: CoverCheckout,
     checkoutState: CoverCheckout.State,
+    payingCoatCheck: Boolean,
     navigator: Navigator,
 ) {
     val venue = now.venue ?: return
     val offer = CoverOffer.of(venue)
     val pass = offer?.pass
+    val working = checkoutState == CoverCheckout.State.Working
     when {
         pass != null -> item(key = "pass") {
             val graph = LocalAppGraph.current
@@ -477,9 +529,24 @@ private fun LazyListScope.coverCards(
         offer != null && offer.action == CoverAction.PAY -> item(key = "cover") {
             SkipTheLineCard(
                 offer,
-                paying = checkoutState == CoverCheckout.State.Working,
+                paying = working && !payingCoatCheck,
                 onPay = { checkout.pay(venue.id, venue.name) },
             )
+        }
+    }
+    // Then the coat check: its pass once paid, else the way to pay it when it can be paid here.
+    val coatCheck = CoatCheckOffer.of(venue)
+    val coatPass = coatCheck?.pass
+    when {
+        coatPass != null -> item(key = "coat-check-pass") {
+            val graph = LocalAppGraph.current
+            PassCard(coatPass, venue.name) {
+                graph.passes.put(coatPass)
+                navigator.openPass(coatPass.id)
+            }
+        }
+        coatCheck != null && coatCheck.action == CoverAction.PAY -> item(key = "coat-check") {
+            CoatCheckCard(coatCheck, paying = working && payingCoatCheck, onPay = { checkout.payCoatCheck(venue.id, venue.name) })
         }
     }
 }
@@ -663,6 +730,7 @@ internal fun rememberPeekMessages(lines: List<ChatLine>): List<ChatThreadMessage
                 senderId = when {
                     line.isPostedAsAudience -> "audience"
                     line.postedAsPerson -> "person:${line.name}"
+                    line.isBot -> "bot:${line.userId.lowercase()}"
                     else -> line.userId.ifEmpty { line.id }.lowercase()
                 },
                 senderName = if (line.isFromListing) line.name else graph.api.friends.displayName(line.userId, line.name),
@@ -674,6 +742,7 @@ internal fun rememberPeekMessages(lines: List<ChatLine>): List<ChatThreadMessage
                 asPlace = line.postedAsVenue,
                 asAudience = line.isPostedAsAudience,
                 asListing = line.postedAsPerson,
+                asBot = line.isBot,
                 friend = !line.isFromListing && graph.api.friends.fullName(line.userId) != null,
                 // A preview doesn't carry the prompt, so an answer is labelled "Prompt".
                 promptLabel = line.promptId?.let { "Prompt" },
@@ -741,5 +810,21 @@ private fun LazyListScope.whereFriendsAre(entries: List<FriendVenue>, navigator:
             pill = if (entry.friendCount == 1) "1 friend" else "${entry.friendCount} friends",
             corner = { FriendFaces(entry.friends) },
         )
+    }
+}
+
+/** Why there's nothing nearby, and the one tap that fixes it (asks, or opens Settings when Android won't ask again). */
+@Composable
+private fun TurnOnLocationRows(text: String) {
+    val problem = rememberLocationProblem()
+    val turnOn = rememberTurnOnLocation()
+    when (problem) {
+        LocationProblem.SERVICES_OFF -> EmptyRow("Location is off on this phone. Turn it on to see what's happening near you.")
+        LocationProblem.WAITING -> EmptyRow("Finding where you are…")
+        else -> EmptyRow(text)
+    }
+    if (problem != null && problem != LocationProblem.WAITING) {
+        RowDivider()
+        InfoRow(problem.actionLabel(), icon = Icons.Rounded.MyLocation, onClick = turnOn)
     }
 }

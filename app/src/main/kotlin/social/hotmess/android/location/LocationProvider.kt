@@ -2,7 +2,10 @@ package social.hotmess.android.location
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
@@ -33,6 +36,18 @@ import social.hotmess.core.metersTo
 
 enum class LocationAccess { NOT_REQUESTED, ALLOWED, DENIED }
 
+/** Why the app has no position, for screens that explain it and offer the way back. */
+enum class LocationProblem {
+    /** Never asked: the button asks. */
+    NOT_ASKED,
+    /** Hot Mess may not use location; the button asks again, or opens the app's settings once Android won't. */
+    DENIED,
+    /** Allowed, but location is off for the whole device; the button opens the device's location settings. */
+    SERVICES_OFF,
+    /** Allowed and on, still waiting for the first fix. */
+    WAITING,
+}
+
 /**
  * Where the device is, which of the audience's locales that is, and which venue beacon is nearest.
  * Reports new positions to the API (`reportLocation`), as the iOS app does, at most once a minute
@@ -45,7 +60,11 @@ class LocationProvider(
     private val api: HotMessApi,
     configuration: AppConfiguration,
     private val scope: CoroutineScope,
+    private val geofences: VenueGeofences? = null,
 ) {
+    // First, since the flows below read it as they start.
+    private val manager = context.getSystemService(LocationManager::class.java)
+
     private val _coordinates = MutableStateFlow<Coordinates?>(null)
     val coordinates: StateFlow<Coordinates?> = _coordinates.asStateFlow()
 
@@ -54,6 +73,16 @@ class LocationProvider(
 
     private val _access = MutableStateFlow(currentAccess(asked = false))
     val access: StateFlow<LocationAccess> = _access.asStateFlow()
+
+    private val _servicesOn = MutableStateFlow(servicesEnabled())
+
+    /** Whether location is on for the device as a whole (Quick Settings' Location tile). */
+    val servicesOn: StateFlow<Boolean> = _servicesOn.asStateFlow()
+
+    private val _cityChosen = MutableStateFlow(preferences.getBoolean(LOCALE_CHOSEN_KEY, false))
+
+    /** Whether [locale] is a city picked by hand, rather than the one the device is in. */
+    val cityChosen: StateFlow<Boolean> = _cityChosen.asStateFlow()
 
     private val _simulatedVenue = MutableStateFlow<String?>(null)
 
@@ -70,20 +99,66 @@ class LocationProvider(
     private var localeLookup: Deferred<Unit>? = null
     private var localeLookedUpNear: Coordinates? = null
 
-    private val manager = context.getSystemService(LocationManager::class.java)
     private val beacons = configuration.beaconUuid?.let { BeaconScanner(context, it, ::onBeacon) }
     private var isMonitoring = false
 
     private val listener = LocationListener { location -> update(location) }
 
-    /** Starts following the device when it may; the screens ask for permission first. */
+    /** The device's location switch flipped (often from Quick Settings, with Hot Mess still in front). */
+    private val providersChanged = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val on = servicesEnabled()
+            if (on == _servicesOn.value) return
+            _servicesOn.value = on
+            // Picks a provider again: the one chosen while location was off was none.
+            if (on && isMonitoring) {
+                manager?.removeUpdates(listener)
+                beacons?.stop()
+                isMonitoring = false
+                beginMonitoring()
+            }
+        }
+    }
+    private var watchingProviders = false
+
+    /**
+     * Starts following the device when it may; the screens ask for permission first. Also reads the permission and the
+     * device's location switch again, since either can change in Settings while Hot Mess is in the background.
+     */
     fun start() {
-        if (!hasLocationPermission()) return
+        _servicesOn.value = servicesEnabled()
+        if (!hasLocationPermission()) {
+            if (_access.value == LocationAccess.ALLOWED) _access.value = LocationAccess.DENIED
+            return
+        }
         _access.value = LocationAccess.ALLOWED
         beginMonitoring()
     }
 
+    /** What's in the way of a position, or null when there is one. */
+    fun problem(access: LocationAccess, servicesOn: Boolean, coordinates: Coordinates?): LocationProblem? = when {
+        coordinates != null -> null
+        access == LocationAccess.NOT_REQUESTED -> LocationProblem.NOT_ASKED
+        access == LocationAccess.DENIED -> LocationProblem.DENIED
+        !servicesOn -> LocationProblem.SERVICES_OFF
+        else -> LocationProblem.WAITING
+    }
+
+    /**
+     * Uses [city] for Events, Venues and People until the device has a position of its own, for anyone who keeps
+     * location off. A real fix's city replaces it.
+     */
+    fun chooseCity(city: AppLocale) {
+        _locale.value = city
+        _cityChosen.value = true
+        persist(city, chosen = true)
+    }
+
     fun stop() {
+        if (watchingProviders) {
+            runCatching { context.unregisterReceiver(providersChanged) }
+            watchingProviders = false
+        }
         if (!isMonitoring) return
         manager?.removeUpdates(listener)
         beacons?.stop()
@@ -116,9 +191,10 @@ class LocationProvider(
             val resolved = api.closestLocale(position)
             localeLookedUpNear = position
             resolved ?: return
-            if (resolved.id == _locale.value?.id) return
+            if (resolved.id == _locale.value?.id && !_cityChosen.value) return
             _locale.value = resolved
-            persist(resolved)
+            _cityChosen.value = false
+            persist(resolved, chosen = false)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -156,6 +232,16 @@ class LocationProvider(
         if (isMonitoring) return
         val manager = manager ?: return
         isMonitoring = true
+        _servicesOn.value = servicesEnabled()
+        if (!watchingProviders) {
+            ContextCompat.registerReceiver(
+                context,
+                providersChanged,
+                IntentFilter(LocationManager.PROVIDERS_CHANGED_ACTION),
+                ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
+            watchingProviders = true
+        }
 
         // Like significant-change monitoring on iOS: a fix every few minutes or 100 metres.
         val provider = listOf(
@@ -174,12 +260,32 @@ class LocationProvider(
         }
 
         beacons?.start()
+        // Play Services forgets geofences when location is turned off and on again; hand the kept plan back.
+        geofences?.restore()
         scope.launch { refreshLocale() }
     }
 
     private fun update(location: Location) {
+        // Geofences follow the device, even while pretending to be elsewhere; the plan only changes once it's moved.
+        geofences?.let { fences -> scope.launch { fences.plan(Coordinates(location.latitude, location.longitude)) } }
         if (!tracker.deviceFix(location.latitude, location.longitude)) return
         reportWhenDue()
+    }
+
+    /**
+     * A venue geofence was crossed (or the re-center circle left), perhaps with Hot Mess closed: reports [location] at
+     * once, since arriving or leaving is what the API needs to hear, then plans the geofences again from there when
+     * [replan] (leaving the re-center circle means unwatched venues may be close now).
+     */
+    suspend fun reportCrossing(location: Location, replan: Boolean) {
+        tracker.deviceFix(location.latitude, location.longitude)
+        pendingReport?.cancel()
+        publish()
+        tracker.current?.let { position ->
+            throttle.sent(position, SystemClock.elapsedRealtime())
+            reportPosition(position)
+        }
+        geofences?.plan(Coordinates(location.latitude, location.longitude), force = replan)
     }
 
     private fun onBeacon(major: Int, minor: Int) {
@@ -249,6 +355,15 @@ class LocationProvider(
             ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
         }
 
+    private fun servicesEnabled(): Boolean {
+        val manager = manager ?: return false
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            runCatching { manager.isLocationEnabled }.getOrDefault(true)
+        } else {
+            listOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER).any { runCatching { manager.isProviderEnabled(it) }.getOrDefault(false) }
+        }
+    }
+
     private fun currentAccess(asked: Boolean): LocationAccess = when {
         hasLocationPermission() -> LocationAccess.ALLOWED
         asked || preferences.getBoolean(ASKED_KEY, false) -> LocationAccess.DENIED
@@ -264,8 +379,12 @@ class LocationProvider(
         return AppLocale(id, name)
     }
 
-    private fun persist(locale: AppLocale) {
-        preferences.edit().putString(LOCALE_ID_KEY, locale.id).putString(LOCALE_NAME_KEY, locale.name).apply()
+    private fun persist(locale: AppLocale, chosen: Boolean) {
+        preferences.edit()
+            .putString(LOCALE_ID_KEY, locale.id)
+            .putString(LOCALE_NAME_KEY, locale.name)
+            .putBoolean(LOCALE_CHOSEN_KEY, chosen)
+            .apply()
     }
 
     companion object {
@@ -273,6 +392,7 @@ class LocationProvider(
         private const val UPDATE_DISTANCE_M = 100f
         private const val LOCALE_ID_KEY = "localeId"
         private const val LOCALE_NAME_KEY = "localeName"
+        private const val LOCALE_CHOSEN_KEY = "localeChosen"
         private const val ASKED_KEY = "locationAsked"
     }
 }

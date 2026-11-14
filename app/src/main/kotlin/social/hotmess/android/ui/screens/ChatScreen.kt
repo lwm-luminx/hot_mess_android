@@ -9,8 +9,11 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Chat
 import androidx.compose.material.icons.rounded.OpenInFull
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -21,6 +24,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
@@ -35,6 +39,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.launch
 import social.hotmess.android.AppGraph
+import social.hotmess.android.location.LocationProblem
 import social.hotmess.android.ui.LocalAppGraph
 import social.hotmess.android.ui.Navigator
 import social.hotmess.android.ui.ScreenScaffold
@@ -51,6 +56,11 @@ import social.hotmess.android.ui.components.PromptBarState
 import social.hotmess.android.ui.components.RichContent
 import social.hotmess.android.ui.components.RoomBanner
 import social.hotmess.android.ui.components.RoomBannerKind
+import social.hotmess.android.ui.components.actionLabel
+import social.hotmess.android.ui.components.rememberLocationProblem
+import social.hotmess.android.ui.components.rememberTurnOnLocation
+import social.hotmess.android.ui.theme.HotMessType
+import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.ApiError
 import social.hotmess.core.AppRoute
 import social.hotmess.core.BlockedUser
@@ -59,6 +69,7 @@ import social.hotmess.core.ChatKind
 import social.hotmess.core.ChatMutes
 import social.hotmess.core.ChatPrompts
 import social.hotmess.core.ChatRoom
+import social.hotmess.core.ChatSenderKind
 import social.hotmess.core.FriendDirectory
 import social.hotmess.core.FriendState
 import social.hotmess.core.LineupFace
@@ -72,8 +83,8 @@ import social.hotmess.core.RoomLineup
 import social.hotmess.core.RoomPeople
 import social.hotmess.core.RoomPerson
 import social.hotmess.core.SharedTribe
-import social.hotmess.core.VenueChatConnection
 import social.hotmess.core.Venue
+import social.hotmess.core.VenueChatConnection
 import social.hotmess.core.VenueMessage
 import social.hotmess.core.VenueNight
 import social.hotmess.core.opensProfile
@@ -392,6 +403,25 @@ class VenueChatModel(private val graph: AppGraph, private val room: ChatRoom) : 
         }
     }
 
+    /**
+     * Takes back one of the viewer's own lines with `removeMyChatMessage`, then tells [onResult] whether it went.
+     * The room removes it for everyone (a ChatMessageRemoved), and it leaves this reader's copy at once.
+     */
+    fun delete(line: VenueMessage, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            val error = try {
+                graph.api.removeMyChatMessage(line.id)
+                _messages.value = _messages.value.filterNot { it.id == line.id }
+                null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                ApiError.of(e).message ?: "That didn't go through. Try again in a moment."
+            }
+            onResult(error)
+        }
+    }
+
     override fun onCleared() = disconnect()
 
     private companion object {
@@ -449,6 +479,9 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator, docked: 
     var draft by rememberSaveable { mutableStateOf("") }
     // Reporting and blocking from a long press on someone's line, and the terms asked before the first message.
     var acting by remember { mutableStateOf<VenueMessage?>(null) }
+    // Deleting one of the viewer's own lines, from a long press, and why it didn't go.
+    var deleting by remember { mutableStateOf<VenueMessage?>(null) }
+    var deleteError by remember { mutableStateOf<String?>(null) }
     var reporting by remember { mutableStateOf<ReportSubject?>(null) }
     var blocking by remember { mutableStateOf<BlockedUser?>(null) }
     var askingTerms by remember { mutableStateOf(false) }
@@ -514,16 +547,35 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator, docked: 
     ) {
         Column(Modifier.fillMaxSize().imePadding().navigationBarsPadding()) {
             if (status == VenueChatModel.Status.AWAY) {
+                val problem = rememberLocationProblem()
+                val turnOn = rememberTurnOnLocation()
+                // Location just came on (back from Settings, or the prompt): try the room again, once.
+                var hadProblem by remember { mutableStateOf(problem != null) }
+                LaunchedEffect(problem) {
+                    if (problem == null && hadProblem) {
+                        model.disconnect()
+                        model.connect()
+                    }
+                    hadProblem = problem != null
+                }
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     Message(
                         Icons.AutoMirrored.Rounded.Chat,
                         if (isLocale) "Only for people out in $venueName" else "Only for people at $venueName",
-                        if (isLocale) {
-                            "The room opens when you're out in $venueName and not at a venue. Venues have their own chat."
-                        } else {
-                            "The room opens when you're there. Your location has to be on so Hot Mess can tell."
+                        when {
+                            problem == LocationProblem.DENIED || problem == LocationProblem.NOT_ASKED ->
+                                "The room opens when you're there. Location is off for Hot Mess, so it can't tell. Turn it on, then try again."
+                            problem == LocationProblem.SERVICES_OFF ->
+                                "The room opens when you're there. Location is off on this phone, so Hot Mess can't tell. Turn it on, then try again."
+                            isLocale -> "The room opens when you're out in $venueName and not at a venue. Venues have their own chat."
+                            else -> "The room opens when you're there. Your location has to be on so Hot Mess can tell."
                         },
-                        action = "Try again" to { model.disconnect(); model.connect() },
+                        // Location off: the button fixes that first; once a position comes in, the room tries again.
+                        action = if (problem != null && problem != LocationProblem.WAITING) {
+                            problem.actionLabel() to turnOn
+                        } else {
+                            "Try again" to { model.disconnect(); model.connect() }
+                        },
                     )
                 }
                 return@Column
@@ -571,7 +623,15 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator, docked: 
                 presence = presence,
                 isLocale = isLocale,
                 onOpenEvent = { id -> navigator.open(AppRoute.EventDetail(RecordId.normalize(id) ?: id.lowercase())) },
-                onMessageActions = { line -> acting = shown.firstOrNull { it.id == line.id } },
+                onMessageActions = { line ->
+                    // The viewer's own line deletes; anyone else's reports or blocks.
+                    val sent = shown.firstOrNull { it.id == line.id }
+                    if (line.own) {
+                        deleting = sent
+                    } else {
+                        acting = sent
+                    }
+                },
                 onOpenProfile = { line ->
                     shown.firstOrNull { it.id == line.id }?.let { sent ->
                         friendError = null
@@ -639,6 +699,33 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator, docked: 
                 blocking = it
             },
             onDismiss = { acting = null },
+        )
+    }
+    deleting?.let { line ->
+        AlertDialog(
+            onDismissRequest = { deleting = null },
+            title = { Text("Delete this message?", style = HotMessType.heading) },
+            text = { Text("It's removed for everyone in the room.", style = HotMessType.body) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        deleting = null
+                        model.delete(line) { deleteError = it }
+                    },
+                    modifier = Modifier.testTag("chat.deleteConfirm"),
+                ) { Text("Delete", color = tokens.danger) }
+            },
+            dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel") } },
+            containerColor = tokens.surfaceRaised,
+        )
+    }
+    deleteError?.let { error ->
+        AlertDialog(
+            onDismissRequest = { deleteError = null },
+            title = { Text("Message not deleted", style = HotMessType.heading) },
+            text = { Text(error, style = HotMessType.body) },
+            confirmButton = { TextButton(onClick = { deleteError = null }) { Text("OK") } },
+            containerColor = tokens.surfaceRaised,
         )
     }
     if (seeingEveryone) {
@@ -740,16 +827,20 @@ private fun VenueMessage.threadMessage(
     senderId = when {
         isPostedAsAudience -> "audience"
         personId != null -> "person:$personId"
+        // A private line groups on its own, so it keeps its name and its "Only you can see this".
+        sender == ChatSenderKind.BOT -> (if (isPrivate) "private:" else "") + "bot:${userId.lowercase()}"
         else -> userId.lowercase()
     },
     senderName = if (isFromListing) name else friends.displayName(userId, name),
     avatarUrl = if (isPostedAsAudience) null else avatarUrl,
-    text = prompt?.text ?: body,
+    // A bot says plain words: Glam's lines arrive as announcements, drawn as their text, never as a card.
+    text = prompt?.text ?: if (sender == ChatSenderKind.BOT) caption ?: body else body,
     sentAt = sentAt,
     own = !isPostedAsAudience && isOutgoing(viewerId),
     role = if (isPostedAsAudience) null else role,
     asPlace = isPostedAsVenue,
-    rich = if (kind.isRich && kind != ChatKind.PROMPT) {
+    // A bot's lines are never cards, pinned or not.
+    rich = if (kind.isRich && kind != ChatKind.PROMPT && sender != ChatSenderKind.BOT) {
         RichContent(kind, title = title, body = caption, photoUrl = photoUrl, event = event, endsAt = endsAt, pinned = pinned)
     } else {
         null
@@ -763,4 +854,7 @@ private fun VenueMessage.threadMessage(
     opensProfile = opensProfile(viewerId),
     // The viewer's own matches with a person posting as themselves; never on the viewer's own lines.
     sharedTribes = if (isFromListing || isOutgoing(viewerId)) emptyList() else sharedTribes[userId.lowercase()].orEmpty(),
+    asBot = sender == ChatSenderKind.BOT,
+    deletable = !isPostedAsAudience && isOutgoing(viewerId),
+    onlyYou = isPrivate,
 )

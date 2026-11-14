@@ -66,6 +66,10 @@ data class VenueMessage(
      * (it's only asked where the API has tribes). Never anyone's other tribes.
      */
     val sharedTribes: List<SharedTribe>? = null,
+    /** Who it's from as the server says (`sender { kind }`); null from a server that doesn't, when [sender] works it out. */
+    val senderKind: ChatSenderKind? = null,
+    /** Only the viewer sees it (`isPrivate`): a private nudge from the AI host, drawn with "Only you can see this". */
+    val isPrivate: Boolean = false,
 ) {
     fun isOutgoing(currentUserId: String?): Boolean = currentUserId != null && userId.equals(currentUserId, ignoreCase = true)
 
@@ -80,10 +84,45 @@ data class VenueMessage(
      * audience's prompts. It has no presence, never takes a friend's name, and groups apart from the sender's
      * own lines.
      */
-    val isFromListing: Boolean get() = isPostedAsVenue || personId != null || isPostedAsAudience
+    val isFromListing: Boolean get() = isPostedAsVenue || personId != null || isPostedAsAudience || senderKind == ChatSenderKind.BOT
+
+    /** Who it's from: what the server sent, else worked out from the older flags (an older server never sends a bot). */
+    val sender: ChatSenderKind get() = senderKind ?: when {
+        isPostedAsAudience -> ChatSenderKind.SYSTEM
+        isPostedAsVenue -> ChatSenderKind.VENUE
+        personId != null -> ChatSenderKind.PERSONA
+        else -> ChatSenderKind.MEMBER
+    }
 
     /** Whether the room still shows it: a special stops at its end time. */
     fun isShowing(at: Instant = Instant.now()): Boolean = !(kind == ChatKind.SPECIAL && endsAt != null && !endsAt.isAfter(at))
+}
+
+/**
+ * Who a chat line is from (the API's `ChatSenderKind`), which sets how it's drawn. More may come: one the app
+ * doesn't know reads as [MEMBER].
+ */
+enum class ChatSenderKind {
+    /** The room itself, like a prompt: the audience's mark, no presence. */
+    SYSTEM,
+
+    /** Software with a name, like Glam: its own art with no border or fill, a Bot tag, and plain words. */
+    BOT,
+
+    /** Someone posting as the venue: its name and photo in a rounded square. */
+    VENUE,
+
+    /** Someone posting as a listing, like a host: its name and photo. */
+    PERSONA,
+
+    /** Anyone as themself. */
+    MEMBER,
+    ;
+
+    companion object {
+        /** Any case; anything else reads as [MEMBER]. */
+        fun parse(raw: String?): ChatSenderKind? = raw?.let { value -> entries.firstOrNull { it.name.equals(value, ignoreCase = true) } ?: MEMBER }
+    }
 }
 
 /** Who someone is in a chat room, set by the server. Shown as a tag after their name. */
@@ -279,7 +318,7 @@ object ChatProtocol {
     /** A chat line's fields, as [message] reads them. */
     const val MESSAGE_FIELDS: String =
         "id message body name avatarUrl sentAt userId role kind title photoUrl event { id name startAt } endsAt pinned " +
-            "postedAsVenue postedAsPerson person { id } postedAsAudience promptId " +
+            "postedAsVenue postedAsPerson person { id } postedAsAudience promptId sender { kind } isPrivate " +
             "prompt { id kind text answer revealAt shownAs number total nextAt }"
 
     /**
@@ -360,6 +399,10 @@ object ChatProtocol {
         ChatRoom.Kind.VENUE -> if (sharedTribes) VENUE_ROOM_TRIBES_DOCUMENT else VENUE_ROOM_DOCUMENT
         ChatRoom.Kind.LOCALE -> if (sharedTribes) LOCALE_ROOM_TRIBES_DOCUMENT else LOCALE_ROOM_DOCUMENT
     }
+
+    /** Takes back one of your own lines; everyone in the room stops seeing it (a ChatMessageRemoved). */
+    const val REMOVE_OWN_MESSAGE: String =
+        "mutation RemoveMyChatMessage(\$messageId: ID!) { removeMyChatMessage(input: { messageId: \$messageId }) { deletedId } }"
 
     /**
      * Says something in a room as yourself; `$input` takes `venueId` or `localeId`, `message`, and `promptId`
@@ -639,6 +682,9 @@ object ChatProtocol {
         // Read on its own, so a malformed prompt drops only the prompt, never the line.
         val prompt: JsonElement? = null,
         val sharedTribes: JsonArray? = null,
+        // Read on its own, so an unexpected sender drops only the kind, never the line.
+        val sender: JsonElement? = null,
+        val isPrivate: Boolean? = null,
     ) {
         fun toMessage(): VenueMessage {
             val base = VenueMessage(body = message, userId = userId, avatarUrl = avatarUrl.blankToNull())
@@ -661,6 +707,8 @@ object ChatProtocol {
                 sharedTribes = sharedTribes?.mapNotNull { tribe ->
                     runCatching { json.decodeFromJsonElement(SharedTribe.serializer(), tribe) }.getOrNull()
                 },
+                senderKind = ChatSenderKind.parse((sender as? JsonObject)?.string("kind")),
+                isPrivate = isPrivate ?: false,
             )
         }
     }

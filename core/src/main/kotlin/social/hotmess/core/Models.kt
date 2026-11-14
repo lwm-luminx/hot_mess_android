@@ -77,6 +77,9 @@ data class Venue(
     /** The user's cover for tonight, paid or being paid; asked for alongside [coverCharge]. */
     val viewerAdmission: Admission? get() = cover?.viewerAdmission
 
+    /** The user's coat check for tonight, paid or being paid; asked for alongside [coverCharge]. */
+    val viewerCoatCheck: Admission? get() = cover?.viewerCoatCheck
+
     val coordinate: Coordinate? get() = point?.let(Coordinate::fromWkt)
 
     /** What goes under the name in a list row. */
@@ -105,6 +108,7 @@ data class VenueTicketsMixin(val cover: VenueCoverMixin? = null)
 data class VenueCoverMixin(
     val charge: CoverCharge? = null,
     val viewerAdmission: Admission? = null,
+    val viewerCoatCheck: Admission? = null,
 )
 
 /** An event's tickets mixin (`Event.tickets`), read for the cover mixin the cover module nests in it. */
@@ -144,7 +148,11 @@ data class ChatMixin(val open: Boolean = false, private val recentMessages: Conn
 data class EventPeopleMixin(
     private val lineup: Connection<Person>? = null,
     private val organizers: Connection<Person>? = null,
+    private val hosts: Connection<Person>? = null,
 ) {
+    /** Who hosts it ("Hosted by"). */
+    val hostedBy: List<Person> get() = hosts?.nodes.orEmpty().filterNotNull()
+
     val people: List<Person> get() = lineup?.nodes.orEmpty().filterNotNull()
 
     /** Who presents it, like a pride center putting it on at a bar. */
@@ -257,7 +265,28 @@ data class Person(
     val order: Int = 0,
     /** Their profile mixin, for the Facebook Page. Read through [facebookId] and [isLiked]. */
     private val profile: ListingProfile? = null,
+    /** On the People list: their home venue, the locales they're featured in and their events. */
+    @SerialName("venues") private val venuesMixin: PersonVenues? = null,
+    @SerialName("locales") private val localeRefs: List<LocaleRef>? = null,
+    @SerialName("events") private val gigsMixin: PersonGigs? = null,
 ) {
+    /** The locales they're based in: their home venue's, and every one they're featured in. */
+    val localeIds: Set<String>
+        get() = (listOfNotNull(venuesMixin?.home?.locale?.id) + localeRefs.orEmpty().map { it.id }).toSet()
+
+    /** Their gigs with a start time, soonest first. */
+    val gigs: List<Gig>
+        get() = gigsMixin?.involvements?.nodes.orEmpty().filterNotNull().mapNotNull { event ->
+            val date = event.startAt ?: return@mapNotNull null
+            Gig(date, event.venue?.venue?.locale?.id ?: event.locale?.id, event.venue?.venue?.name ?: event.venue?.name)
+        }.sortedBy { it.date }
+
+    /** Your friends at their home venue or a gig's venue right now, each once. */
+    val friendsOut: List<Friend>
+        get() = (listOfNotNull(venuesMixin?.home) + gigsMixin?.involvements?.nodes.orEmpty().mapNotNull { it?.venue?.venue })
+            .flatMap { it.friends }
+            .distinctBy { it.id }
+
     val facebookId: String? get() = profile?.facebook?.facebookId
 
     val isLiked: Boolean get() = profile?.facebook?.isLiked == true
@@ -430,6 +459,8 @@ data class Event(
     private val tickets: EventTicketsMixin? = null,
     /** Its ping mixin; read through [friendPings]. Only the event screen asks for it. */
     @SerialName("ping") private val pingFeed: PingFeedMixin? = null,
+    /** A karaoke night's partner and session; null for any other event. Only the event screen asks for it. */
+    val karaoke: KaraokeNight? = null,
 ) {
     /** Whether the signed-in user is going, from the rsvp mixin; undecided when the event wasn't asked for it. */
     val rsvp: Rsvp get() = rsvpMixin?.mine ?: Rsvp.UNSURE
@@ -442,6 +473,9 @@ data class Event(
 
     /** Who's hosting or playing; only the event screen asks for it. */
     val people: List<Person> get() = peopleMixin?.people.orEmpty()
+
+    /** Who hosts it ("Hosted by"); only the event screen asks for it. */
+    val hosts: List<Person> get() = peopleMixin?.hostedBy.orEmpty()
 
     /** Who presents it ("Presented by"); only the event screen asks for it. */
     val organizers: List<Person> get() = peopleMixin?.presenters.orEmpty()
@@ -520,6 +554,10 @@ data class FriendsMixin(
 @Serializable
 data class FriendVenue(val venue: Venue, val friendCount: Int = 0, val friends: List<Friend> = emptyList())
 
+/** A chat line's `sender { kind }`: GraphQL's ChatSenderKind. */
+@Serializable
+data class ChatLineSender(val kind: String? = null)
+
 /**
  * A line someone sent in a venue's or locale's chat room, as Now previews it. [message] is the line in
  * words, a rich message's summary included ("Shared an event: Sunset Social"), which is all a preview shows.
@@ -549,14 +587,19 @@ data class ChatLine(
     val postedAsAudience: Boolean = false,
     /** The prompt a text line answers, which labels its bubble "Prompt". */
     val promptId: String? = null,
+    /** Who it's from as the server says; read [isBot]. Null from a server that doesn't say. */
+    val sender: ChatLineSender? = null,
 ) {
     val role: ChatRole? get() = ChatRole.parse(roleName)
+
+    /** Software with a name, like Glam: its own art and a Bot tag. */
+    val isBot: Boolean get() = ChatSenderKind.parse(sender?.kind) == ChatSenderKind.BOT
 
     /** Posted as the audience: a prompt, even from a server that doesn't say so. */
     val isPostedAsAudience: Boolean get() = postedAsAudience || kind == ChatKind.PROMPT
 
     /** Posted as the venue, a person or the audience: a listing, so no presence and no friend's name for the sender. */
-    val isFromListing: Boolean get() = postedAsVenue || postedAsPerson || isPostedAsAudience
+    val isFromListing: Boolean get() = postedAsVenue || postedAsPerson || isPostedAsAudience || isBot
     val kind: ChatKind get() = ChatKind.parse(kindName)
 
     /** Whether the room still shows it: a special stops at its end time. */

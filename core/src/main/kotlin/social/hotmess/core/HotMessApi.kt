@@ -4,6 +4,7 @@ import com.audiencekit.APIRequest
 import com.audiencekit.Admission
 import com.audiencekit.AudienceKitClient
 import com.audiencekit.AudienceKitException
+import com.audiencekit.Coordinate
 import com.audiencekit.Coordinates
 import com.audiencekit.CoverPurchase
 import com.audiencekit.GraphQLError
@@ -25,6 +26,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlin.coroutines.ContinuationInterceptor
 import kotlin.coroutines.EmptyCoroutineContext
 
@@ -106,6 +108,15 @@ class HotMessApi(val client: AudienceKitClient) {
         return AppLocale(id = id, name = locale.displayName ?: "")
     }
 
+    /** The envelopes of the venues near [near], for venue geofences; venues without a point are left out. */
+    suspend fun venueFences(near: Coordinates): List<VenueFence> =
+        query(Documents.VENUE_FENCES, VenueFencesResponse.serializer(), mapOf("near" to near.toGraphQLValue()))
+            .venues?.list?.nodes.orEmpty().mapNotNull { node ->
+                val point = node.point?.let(Coordinate::fromWkt) ?: return@mapNotNull null
+                val id = RecordId.normalize(node.id) ?: return@mapNotNull null
+                VenueFence(id, point.latitude, point.longitude, node.distanceTolerance ?: return@mapNotNull null)
+            }
+
     /**
      * The audience's venues for the Venues tab: visible ones, those in [localeId] first, then in the
      * audience's order.
@@ -143,6 +154,35 @@ class HotMessApi(val client: AudienceKitClient) {
             upNextId = order.turnId(venue.people?.upNext?.id, LineupState.UPCOMING),
         )
     }
+
+    /**
+     * A venue's lineup tonight for its page: the running order with its karaoke singers, who runs its karaoke, and
+     * whether it takes signups and song requests (the viewer's own, and the song queue). Null when there's no venue.
+     */
+    suspend fun tonightLineup(venueId: String): VenueLineup? =
+        query(Lineups.VENUE_LINEUP, TonightLineupResponse.serializer(), graphQLVariables("id" to venueId)).lineup
+
+    /**
+     * Signs the viewer up to sing ([SongRequestKind.KARAOKE]) or asks for a song ([SongRequestKind.SONG]) at a venue.
+     * They must be there and it must be taking them; the server's refusal comes back worded for the room.
+     */
+    suspend fun requestSong(venueId: String, kind: SongRequestKind, draft: SongRequestDraft): SongRequest {
+        val variables = buildMap<String, Any?> {
+            put("venueId", venueId)
+            put("kind", kind.name)
+            put("title", draft.title.trim())
+            draft.artist?.trim()?.takeIf { it.isNotEmpty() }?.let { put("artist", it) }
+            if (kind == SongRequestKind.KARAOKE) draft.singer?.trim()?.takeIf { it.isNotEmpty() }?.let { put("singer", it) }
+            draft.note?.trim()?.takeIf { it.isNotEmpty() }?.let { put("note", it) }
+        }
+        return mutate(Lineups.REQUEST_SONG, RequestSongResponse.serializer(), graphQLVariables(*variables.toList().toTypedArray()))
+            .requestSong.request
+    }
+
+    /** Takes back one of the viewer's signups or song requests that hasn't been called up. */
+    suspend fun withdrawSongRequest(id: String): SongRequest =
+        mutate(Lineups.WITHDRAW_SONG_REQUEST, WithdrawSongRequestResponse.serializer(), graphQLVariables("id" to id))
+            .withdrawSongRequest.request
 
     // endregion
 
@@ -186,6 +226,9 @@ class HotMessApi(val client: AudienceKitClient) {
      */
     suspend fun buyCover(venueId: String): CoverPurchase = mutate { client.buyCover(venueId) }
 
+    /** Starts paying tonight's coat check at a venue for [quantity] coats; paid the same way as cover. */
+    suspend fun buyCoatCheck(venueId: String, quantity: Int = 1): CoverPurchase = mutate { client.buyCoatCheck(venueId, quantity) }
+
     /**
      * Pays a Square venue's cover with the nonce Square's card entry made ([sourceId]). The pass comes back
      * paid when Square took the payment.
@@ -215,6 +258,11 @@ class HotMessApi(val client: AudienceKitClient) {
         val data = mutate(ChatProtocol.SEND_MESSAGE, JsonObject.serializer(), mapOf("input" to ChatProtocol.sendInput(room, body, promptId)))
         val payload = data["sendMyChatMessage"] as? JsonObject
         return ChatProtocol.message(payload?.get("message"))
+    }
+
+    /** Takes back one of the signed-in user's own lines (`removeMyChatMessage`); the room removes it for everyone. */
+    suspend fun removeMyChatMessage(messageId: String) {
+        mutate(ChatProtocol.REMOVE_OWN_MESSAGE, JsonObject.serializer(), mapOf("messageId" to JsonPrimitive(messageId)))
     }
 
     // endregion
@@ -574,6 +622,17 @@ class HotMessApi(val client: AudienceKitClient) {
     /** Whether pushes about chat rooms the user left lately are on, or null when there's no signed-in user. */
     suspend fun recentChatPush(): Boolean? = query(Documents.RECENT_CHAT_PUSH, RecentChatPushResponse.serializer()).me?.recentChatPush
 
+    /**
+     * Whether Quickie pushes the user (`me.pairUpPush`): paired, revealed, met, and invites to join. Null when
+     * there's no signed-in user; throws on an API without the setting, which hides the row.
+     */
+    suspend fun pairUpPush(): Boolean? = query(Documents.PAIR_UP_PUSH, PairUpPushResponse.serializer()).me?.pairUpPush
+
+    /** Turns Quickie pushes on or off; returns the setting as it now is. */
+    suspend fun setPairUpPush(enabled: Boolean): Boolean =
+        mutate(Documents.SET_PAIR_UP_PUSH, SetPairUpPushResponse.serializer(), graphQLVariables("enabled" to enabled))
+            .setPairUpPush.pairUpPush
+
     /** The user's calendar subscription link (`me.calendarFeed`), or null before they made one. */
     suspend fun calendarFeed(): CalendarFeed? = query(Documents.CALENDAR_FEED, CalendarFeedResponse.serializer()).me?.calendarFeed
 
@@ -665,6 +724,37 @@ class HotMessApi(val client: AudienceKitClient) {
     /** Deletes the user's account and everything recorded about them, and ends every session. */
     suspend fun deleteAccount(): Boolean =
         mutate(Documents.DELETE_ACCOUNT, DeleteAccountResponse.serializer()).deleteAccount.deleted
+
+    // endregion
+
+    // region Suggestions
+
+    /**
+     * Sends a suggestion (`submitContribution`). A missing venue or event that's already listed files nothing and
+     * comes back as [SuggestionOutcome.AlreadyListed], unless the member said it's a different place (`notListed`).
+     */
+    suspend fun suggest(request: SuggestionRequest): SuggestionOutcome =
+        mutate(SuggestionDocuments.SUBMIT, SubmitContributionResponse.serializer(), graphQLVariables("input" to request.input))
+            .submitContribution.outcome ?: throw ApiError.Decoding("submitContribution")
+
+    /** The member's own suggestions, newest first. */
+    suspend fun mySuggestions(): List<SuggestionSummary> =
+        query(SuggestionDocuments.MINE, MySuggestionsResponse.serializer()).me?.submissions.orEmpty()
+
+    /** Whether the venue is reported closed, and its details as a fix starts from. Its own request. */
+    suspend fun venueSuggestionState(venueId: String): VenueSuggestionState? =
+        query(SuggestionDocuments.VENUE_STATE, VenueSuggestionStateResponse.serializer(), graphQLVariables("id" to venueId))
+            .venues?.venue
+
+    /** "It's still open", on a venue reported closed. Returns whether it's still reported closed afterwards. */
+    suspend fun reportVenueOpen(venueId: String, note: String? = null): Boolean {
+        val input = buildMap<String, Any?> {
+            put("venueId", venueId)
+            note?.trim()?.takeIf { it.isNotEmpty() }?.let { put("body", it) }
+        }
+        return mutate(SuggestionDocuments.REPORT_VENUE_OPEN, ReportVenueOpenResponse.serializer(), graphQLVariables("input" to input))
+            .reportVenueOpen.venue.reportedClosed
+    }
 
     // endregion
 
@@ -972,6 +1062,16 @@ private data class RecentChatPushResponse(val me: Me? = null) {
 }
 
 @Serializable
+private data class PairUpPushResponse(val me: Me? = null) {
+    @Serializable data class Me(val pairUpPush: Boolean? = null)
+}
+
+@Serializable
+private data class SetPairUpPushResponse(val setPairUpPush: Payload) {
+    @Serializable data class Payload(val pairUpPush: Boolean = true)
+}
+
+@Serializable
 private data class CalendarFeedResponse(val me: Me? = null) {
     @Serializable data class Me(val calendarFeed: CalendarFeed? = null)
 }
@@ -1014,6 +1114,13 @@ private data class SetChatInitialsResponse(val setChatInitials: Payload) {
 
 @Serializable
 private data class ClosestLocaleResponse(val closestLocale: LocaleSummary? = null)
+
+@Serializable
+private data class VenueFencesResponse(val venues: Venues? = null) {
+    @Serializable data class Venues(val list: Nodes<Node> = Nodes())
+
+    @Serializable data class Node(val id: String, val point: String? = null, val distanceTolerance: Double? = null)
+}
 
 @Serializable
 private data class VenuesResponse(@SerialName("venues") val venuesMixin: VenuesMixin? = null) {
@@ -1356,3 +1463,17 @@ private data class MutePostAuthorResponse(val mutePostAuthor: Payload) {
     @Serializable
     data class Payload(val muted: Boolean = true)
 }
+
+/**
+ * The cities the venues are in, by name, for choosing one by hand when location is off. Venues without a named
+ * locale are left out.
+ */
+fun List<Venue>.cities(): List<AppLocale> =
+    mapNotNull { venue ->
+        val locale = venue.locale ?: return@mapNotNull null
+        val id = RecordId.normalize(locale.id) ?: return@mapNotNull null
+        val name = locale.displayName?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+        AppLocale(id, name)
+    }
+        .distinctBy { it.id }
+        .sortedBy { it.name.lowercase() }

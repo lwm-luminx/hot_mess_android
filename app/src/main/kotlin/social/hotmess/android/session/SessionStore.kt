@@ -65,6 +65,21 @@ class SessionStore(
     private val _endedNotice = MutableStateFlow<String?>(null)
     val endedNotice: StateFlow<String?> = _endedNotice.asStateFlow()
 
+    /** A review code from a `hotmess://review` link, waiting for the sign-in screen to offer it (DeepLink.reviewCode). */
+    private val _offeredReviewCode = MutableStateFlow<String?>(null)
+    val offeredReviewCode: StateFlow<String?> = _offeredReviewCode.asStateFlow()
+
+    /** Keeps [code] for the sign-in screen; ignored once someone is signed in. */
+    fun offerReviewCode(code: String) {
+        if (_state.value == AuthState.SignedIn) return
+        _offeredReviewCode.value = code
+    }
+
+    /** The sign-in screen took the offered code. */
+    fun reviewCodeTaken() {
+        _offeredReviewCode.value = null
+    }
+
     /** The session token, needed outside the SDK only for the chat websocket. */
     val sessionToken: String? get() = audienceKit.sessionToken()
 

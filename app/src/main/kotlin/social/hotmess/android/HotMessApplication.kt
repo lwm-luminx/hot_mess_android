@@ -5,6 +5,8 @@ import android.content.Context
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
+import social.hotmess.android.updates.AppUpdates
+import com.audiencekit.GraphQLOperationLog
 import com.audiencekit.android.AudienceKitClient
 import com.newrelic.agent.android.NewRelic
 import kotlinx.coroutines.CoroutineScope
@@ -19,6 +21,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.maplibre.android.MapLibre
 import social.hotmess.android.location.LocationProvider
+import social.hotmess.android.location.VenueGeofences
 import social.hotmess.android.payments.SquareCardEntry
 import social.hotmess.android.push.HotMessMessagingService
 import social.hotmess.android.push.InAppNotifications
@@ -43,12 +46,15 @@ import social.hotmess.core.StringSetStorage
 /** The app's services, built once. Screens reach them through [LocalAppGraph][social.hotmess.android.ui.LocalAppGraph]. */
 class AppGraph(context: Context, val configuration: AppConfiguration = AppConfiguration()) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    val audienceKit = AudienceKitClient(context, configuration.audienceKit)
+    /** Recent GraphQL operations, for Me › Check the app's failed requests. */
+    val operations = GraphQLOperationLog()
+    val audienceKit = AudienceKitClient(context, configuration.audienceKit, monitor = operations)
     val api = HotMessApi(audienceKit)
     val brand = BrandStore(audienceKit, scope)
     val push = PushRegistrar(context, api, scope)
     val session = SessionStore(context, api, audienceKit, configuration, push, scope)
-    val location = LocationProvider(context, api, configuration, scope)
+    val geofences = VenueGeofences(context.applicationContext, api)
+    val location = LocationProvider(context, api, configuration, scope, geofences)
 
     /** Terms of use, blocking and reporting, as the API keeps them for the signed-in user. */
     val safety = SafetyStore(api)
@@ -70,6 +76,9 @@ class AppGraph(context: Context, val configuration: AppConfiguration = AppConfig
 
     /** The user's cover passes, kept so an opened pass still works with no signal at the door. */
     val passes = PassBook()
+
+    /** Whether a newer build is on Google Play (Me › About). */
+    val updates = AppUpdates(context.applicationContext, scope)
 
     /** Square's card entry, for Square venues' cover; MainActivity passes it card entry's result. */
     val squareCardEntry = SquareCardEntry()
@@ -115,6 +124,8 @@ class AppGraph(context: Context, val configuration: AppConfiguration = AppConfig
                         listings.clear()
                         tribes.clear()
                         cable.disconnect()
+                        // A signed-out app is never woken for a venue.
+                        geofences.stopAll()
                     }
                     AuthState.SignedIn -> {
                         if (isForeground) notifications.start()
@@ -170,6 +181,7 @@ class HotMessApplication : Application() {
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onStart(owner: LifecycleOwner) {
                 if (graph.session.isSignedIn) graph.location.start()
+                graph.updates.checkIfDue()
                 // Your notifications come over the cable while the app is in front (and signed in).
                 graph.setForeground(true)
             }

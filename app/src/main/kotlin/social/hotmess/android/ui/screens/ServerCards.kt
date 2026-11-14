@@ -52,6 +52,7 @@ import com.audiencekit.LayoutScreen
 import com.audiencekit.PromoCard
 import com.audiencekit.PromoViewRecorder
 import com.audiencekit.android.CardPreferences
+import com.audiencekit.android.StaffApps
 import com.audiencekit.cardCategories
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -107,23 +108,33 @@ class ScreenCards(
 
 /**
  * A screen's cards, loaded for where the device is and asked for again as the server says (`refreshAfter`) while the
- * screen shows.
+ * screen shows. With [forLocale] they're that locale's, wherever the device is (the LOCALE screen).
  */
 @Composable
-fun rememberScreenCards(screen: LayoutScreen, kinds: List<String>, fallback: List<String>): CardLayout {
+fun rememberScreenCards(
+    screen: LayoutScreen,
+    kinds: List<String>,
+    fallback: List<String>,
+    forLocale: String? = null,
+): CardLayout {
     val graph = LocalAppGraph.current
     val coordinates by graph.location.coordinates.collectAsStateWithLifecycle()
     val locale by graph.location.locale.collectAsStateWithLifecycle()
-    val cards = remember(screen) {
+    val cards = remember(screen, forLocale) {
         ScreenCards(graph.audienceKit, screen, kinds, fallback, graph.configuration.versionName)
     }
-    LaunchedEffect(coordinates, locale?.id) { cards.load(coordinates, locale?.id, force = true) }
+    val position = coordinates.takeIf { forLocale == null }
+    LaunchedEffect(position, forLocale ?: locale?.id) { cards.load(position, forLocale ?: locale?.id, force = true) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(lifecycle) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
                 delay(cards.layout.value.refreshAfter * 1_000L)
-                cards.load(graph.location.coordinates.value, graph.location.locale.value?.id)
+                if (forLocale != null) {
+                    cards.load(null, forLocale)
+                } else {
+                    cards.load(graph.location.coordinates.value, graph.location.locale.value?.id)
+                }
             }
         }
     }
@@ -136,6 +147,7 @@ fun rememberScreenCards(screen: LayoutScreen, kinds: List<String>, fallback: Lis
  * anywhere, with the audience's published categories to name them.
  */
 class CardSettings(context: Context, private val client: AudienceKitClient, scope: CoroutineScope) {
+    private val appContext = context.applicationContext
     private val preferences = CardPreferences(context)
     private val loaded = MutableStateFlow<List<CardCategory>?>(null)
 
@@ -147,7 +159,9 @@ class CardSettings(context: Context, private val client: AudienceKitClient, scop
     /** Says which promoted cards were seen, for the fair rotation. */
     val views = PromoViewRecorder(client, scope)
 
-    fun filter(hidden: Set<String>, categories: List<CardCategory>?): CardFilter = CardFilter(hidden, categories)
+    /** AudienceKit's cards about getting Velvet or Backstage are skipped when the phone has it (checked here only). */
+    fun filter(hidden: Set<String>, categories: List<CardCategory>?): CardFilter =
+        CardFilter(hidden, categories, installedStaffApps = StaffApps.installed(appContext))
 
     fun setHidden(key: String, hide: Boolean) = preferences.setHidden(key, hide)
 
@@ -204,7 +218,8 @@ fun PromoSlotView(card: LayoutCard, layoutId: String?, navigator: Navigator) {
         badge = promo.label,
         route = route(promo),
         navigator = navigator,
-        menu = { close ->
+        // AudienceKit's own cards are part of the app: no menu to hide or explain them.
+        menu = if (promo.category == "audiencekit") null else { close ->
             if (category?.hideable != false) {
                 DropdownMenuItem(text = { Text("Don't show me $categoryName") }, onClick = {
                     close()

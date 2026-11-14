@@ -17,6 +17,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import com.audiencekit.StaffApp
+import com.audiencekit.android.StaffApps
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -52,23 +54,26 @@ fun Context.addToCalendar(entry: CalendarEntry): Boolean {
     }
 }
 
-/** The staff apps Me sends managers to: Velvet for a venue's, Backstage for talent's. Hot Mess doesn't manage posts. */
-enum class StaffApp(val title: String, val packageName: String) {
-    VELVET("Velvet", "com.audiencekit.Velvet"),
-    BACKSTAGE("Backstage", "com.audiencekit.Backstage"),
-}
-
-/** Opens [app] when it's installed (the manifest's `<queries>` lists them), its Play listing otherwise. */
-fun Context.openStaffApp(app: StaffApp) {
-    val launch = packageManager.getLaunchIntentForPackage(app.packageName)
-    if (launch == null) {
-        openUrl("https://play.google.com/store/apps/details?id=${app.packageName}")
-        return
+/**
+ * Opens [app], on [link] (`StaffApp.velvet(venueId, audienceId)` and the like) when there is one, when the phone has it
+ * (the manifest's `<queries>` lists the packages); its page on audiencekit.com otherwise, which sends Android to Play
+ * (or Velvet's beta).
+ */
+fun Context.openStaffApp(app: StaffApp, link: String? = null) {
+    if (StaffApps.isInstalled(this, app)) {
+        val intent = link?.let { Intent(Intent.ACTION_VIEW, Uri.parse(it)) }
+            ?: listOf(app.androidPackage, "${app.androidPackage}.next").firstNotNullOfOrNull {
+                packageManager.getLaunchIntentForPackage(it)
+            }
+        if (intent != null) {
+            try {
+                startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                return
+            } catch (_: ActivityNotFoundException) {
+            }
+        }
     }
-    try {
-        startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-    } catch (_: ActivityNotFoundException) {
-    }
+    openUrl(app.downloadUrl(source = packageName, campaign = "open_in_staff_app"))
 }
 
 fun Context.share(url: String, title: String) {

@@ -28,6 +28,8 @@ enum class ReportReason(val label: String) {
     SPAM("Spam"),
     HARASSMENT("Harassment or hate"),
     SEXUAL("Sexual content"),
+    /** Goes to AudienceKit's child safety team too, which withholds the content and reports CSAM to NCMEC. */
+    CHILD_SAFETY("Child safety"),
     DANGER("Threats or danger"),
     OTHER("Something else"),
 }

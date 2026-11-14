@@ -26,7 +26,7 @@ object Documents {
 
     /** A chat line as a preview shows it: rich messages in words (`message`), with the sender's role and presence. */
     const val CHAT_LINE_FIELDS: String =
-        "id message name userId avatarUrl sentAt presence role kind endsAt postedAsVenue postedAsPerson postedAsAudience promptId"
+        "id message name userId avatarUrl sentAt presence role kind endsAt postedAsVenue postedAsPerson postedAsAudience promptId sender { kind }"
 
     /**
      * A room's last few chat lines, oldest first, in the venue's or locale's chat mixin (`chat { ... }`); empty unless
@@ -36,7 +36,7 @@ object Documents {
 
     /** Tonight's cover at a venue and the user's pass for it, in the cover mixin inside the venue's tickets mixin. */
     const val VENUE_COVER_FIELDS: String =
-        "tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } viewerAdmission { ${Queries.ADMISSION_FIELDS} } } }"
+        "tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } viewerAdmission { ${Queries.ADMISSION_FIELDS} } viewerCoatCheck { ${Queries.ADMISSION_FIELDS} } } }"
 
     /** A person, with their Facebook Page under their profile mixin. */
     const val PERSON_FIELDS: String = "id name avatarUrl bannerUrl profile { facebook { facebookId isLiked link } }"
@@ -54,6 +54,9 @@ object Documents {
     /** Who's on at a venue right now, in its people mixin. */
     const val ON_NOW_FIELDS: String = "people { onNow { nodes { id role startsAt endsAt person { id name avatarUrl } } } }"
 
+    /** A karaoke night's session (`IKaraokeNight`): the partner's to join, or AudienceKit's own. */
+    const val KARAOKE_FIELDS: String = "karaoke { provider providerName sessionCode ownSessionCode joinUrl }"
+
     /**
      * A lineup entry as a chat room shows it: who, as what, where it is in the night, and its set when it has a hard
      * start; an act's scenes and a break's scene before it, which the room lists in turn.
@@ -67,6 +70,12 @@ object Documents {
     /** Friends out now, with whether they can be reached (in chat, or by push). */
     const val FRIEND_OUT_FIELDS: String = "$FRIEND_FIELDS presence"
 
+    /** Where a person is local, for the People tab: home venue, featured locales and events, with friends out there. */
+    private const val PERSON_PLACE_FIELDS: String = "name locale { id } friends { list { nodes { $FRIEND_OUT_FIELDS } } }"
+    const val PERSON_LOCAL_FIELDS: String =
+        "venues { home { $PERSON_PLACE_FIELDS } } locales { id } " +
+            "events { involvements { nodes { startAt locale { id } venue { name venue { $PERSON_PLACE_FIELDS } } } } }"
+
     /** A Ping with its picks and who's in. Picks carry enough of the venue or event for a row. */
     const val PING_FIELDS: String =
         "id note createdAt expiresAt isMine joined reach user { $FRIEND_FIELDS } via { $FRIEND_FIELDS } " +
@@ -77,7 +86,7 @@ object Documents {
     val REPORT_LOCATION: String = """
         mutation ReportLocation(${'$'}position: CoordinatesInput!) {
           reportLocation(input: { position: ${'$'}position }) {
-            event { $EVENT_FIELDS }
+            event { $EVENT_FIELDS $KARAOKE_FIELDS }
             venue {
               $VENUE_FIELDS chat { $RECENT_MESSAGES } $VENUE_COVER_FIELDS
               $ON_NOW_FIELDS
@@ -119,6 +128,19 @@ object Documents {
     val RECENT_CHAT_PUSH: String = """
         query RecentChatPush {
           me { recentChatPush }
+        }
+    """.trimIndent()
+
+    /** Whether Quickie pushes the signed-in user (paired, revealed, met, invites to join). On until they turn it off. */
+    val PAIR_UP_PUSH: String = """
+        query PairUpPush {
+          me { pairUpPush }
+        }
+    """.trimIndent()
+
+    val SET_PAIR_UP_PUSH: String = """
+        mutation SetPairUpPush(${'$'}enabled: Boolean!) {
+          setPairUpPush(input: { enabled: ${'$'}enabled }) { pairUpPush }
         }
     """.trimIndent()
 
@@ -175,6 +197,13 @@ object Documents {
         }
     """.trimIndent()
 
+    /** The venues near a position with their envelopes (point and distance tolerance), for venue geofences. */
+    val VENUE_FENCES: String = """
+        query VenueFences(${'$'}near: CoordinatesInput!) {
+          venues { list(near: ${'$'}near) { nodes { id point distanceTolerance } } }
+        }
+    """.trimIndent()
+
     val VENUES: String = """
         query Venues {
           venues { list { nodes { $VENUE_FIELDS hidden order locale { id name label } } } }
@@ -188,7 +217,7 @@ object Documents {
               $VENUE_FIELDS
               bannerPhotos { url }
               chat { open $RECENT_MESSAGES }
-              tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } viewerAdmission { ${Queries.ADMISSION_FIELDS} } } }
+              tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } viewerAdmission { ${Queries.ADMISSION_FIELDS} } viewerCoatCheck { ${Queries.ADMISSION_FIELDS} } } }
               $ON_NOW_FIELDS
               events { upcoming { nodes { $EVENT_FIELDS } } }
               $PROFILE_SOCIAL_LINKS
@@ -217,7 +246,7 @@ object Documents {
 
     val PEOPLE: String = """
         query People {
-          people { list { nodes { $PERSON_FIELDS order } } }
+          people { list { nodes { $PERSON_FIELDS order $PERSON_LOCAL_FIELDS } } }
         }
     """.trimIndent()
 
@@ -249,7 +278,8 @@ object Documents {
               $EVENT_FIELDS
               tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } } }
               venue { venue { id $VENUE_COVER_FIELDS } }
-              people { lineup { nodes { $PERSON_FIELDS } } organizers { nodes { $PERSON_FIELDS } } }
+              people { lineup { nodes { $PERSON_FIELDS } } organizers { nodes { $PERSON_FIELDS } } hosts { nodes { $PERSON_FIELDS } } }
+              $KARAOKE_FIELDS
               ping { friendPings { $PING_FIELDS } }
             }
           }
