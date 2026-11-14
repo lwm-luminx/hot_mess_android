@@ -26,7 +26,7 @@ import java.util.Collections
  * stubbed gets an error reply and is remembered, and [unstubbed] lets a test fail on it; a request for any host but
  * the stub's is refused the same way.
  */
-class StubApi : HttpTransport {
+class StubApi(val cable: StubCable = StubCable()) : HttpTransport {
     class Request(val key: String, val operationName: String?, val variables: JSONObject, val url: String)
 
     sealed interface Reply {
@@ -100,19 +100,19 @@ class StubApi : HttpTransport {
         is Reply.Raw -> HttpResponse(reply.status, reply.body.toByteArray())
     }
 
-    /** An AppGraph signed in (in memory) to this stub. */
+    /** An AppGraph signed in (in memory) to this stub, its realtime socket on [cable]. */
     fun graph(signedIn: Boolean = true): AppGraph {
         val context = ApplicationProvider.getApplicationContext<Context>()
         // A test build, so "Pretend I'm here" (LocationProvider.simulate) works.
         val configuration = AppConfiguration(baseUrl = BASE_URL, audienceId = AUDIENCE_ID, isTestBuild = true)
-        return AppGraph(context, configuration) { log ->
+        return AppGraph(context, configuration, audienceKitClient = { log ->
             AudienceKitClient(
                 configuration.audienceKit,
                 InMemoryTokenStore(if (signedIn) "stub-token" else null, AUDIENCE_ID),
                 this,
                 monitor = log,
             )
-        }
+        }, cableSockets = cable)
     }
 
     companion object {

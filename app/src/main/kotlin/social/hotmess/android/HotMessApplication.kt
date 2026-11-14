@@ -37,6 +37,7 @@ import social.hotmess.android.support.ErrorReporter
 import social.hotmess.android.ui.screens.CardSettings
 import social.hotmess.core.AppRoute
 import social.hotmess.core.CableConnection
+import social.hotmess.core.CableSocketFactory
 import social.hotmess.core.ChatMutes
 import social.hotmess.core.GraphQLCable
 import social.hotmess.core.HotMessApi
@@ -52,6 +53,8 @@ class AppGraph(
      * pass one with an in-memory token and a stub transport, so screens can be shown without the network.
      */
     audienceKitClient: ((GraphQLOperationLog) -> com.audiencekit.AudienceKitClient)? = null,
+    /** Opens the realtime socket; OkHttp by default. Unit tests pass a stub, so chat rooms run without a server. */
+    cableSockets: CableSocketFactory? = null,
 ) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     /** Recent GraphQL operations, for Me › Check the app's failed requests. */
@@ -99,10 +102,11 @@ class AppGraph(
      * The one Action Cable socket every GraphQL subscription shares (chat rooms, your notifications). It's
      * open while something is subscribed: the app in front and signed in, or a chat room on screen.
      */
-    val cable = CableConnection(
-        url = checkNotNull(GraphQLCable.realtimeUrl(configuration.baseUrl)) { "No realtime URL for ${configuration.baseUrl}" },
-        token = { session.sessionToken },
-    )
+    val cable = checkNotNull(GraphQLCable.realtimeUrl(configuration.baseUrl)) { "No realtime URL for ${configuration.baseUrl}" }
+        .let { url ->
+            if (cableSockets != null) CableConnection(url, { session.sessionToken }, cableSockets)
+            else CableConnection(url = url, token = { session.sessionToken })
+        }
 
     /** Your notifications over the cable while the app is in front, shown in the app. */
     val notifications = InAppNotifications(
