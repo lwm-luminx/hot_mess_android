@@ -25,9 +25,9 @@ object PlayStorefront {
             .enablePendingPurchases(PendingPurchasesParams.newBuilder().enableOneTimeProducts().build())
             .build()
         return try {
-            withTimeoutOrNull(5_000) {
+            withTimeoutOrNull<String?>(5_000) {
                 if (!client.connect()) return@withTimeoutOrNull null
-                suspendCancellableCoroutine { continuation ->
+                suspendCancellableCoroutine<String?> { continuation ->
                     client.getBillingConfigAsync(GetBillingConfigParams.newBuilder().build()) { result, config ->
                         continuation.resume(config?.countryCode?.takeIf { result.responseCode == BillingClient.BillingResponseCode.OK })
                     }
