@@ -289,6 +289,8 @@ dependencies {
     implementation(libs.newrelic.android.agent)
     // Cover charge: Stripe's payment sheet or Square's card entry takes the payment.
     implementation(libs.stripe.android)
+    // Only to read the Play storefront's country (AdFreeTips: web checkout in US storefronts only); no purchases.
+    implementation(libs.play.billing.ktx)
     implementation(libs.square.card.entry)
     // Pair me up: scanning a match's QR code (decoded with the core module's ZXing reader).
     implementation(libs.androidx.camera.camera2)
