@@ -28,6 +28,11 @@ enum class ReportReason(val label: String) {
     SPAM("Spam"),
     HARASSMENT("Harassment or hate"),
     SEXUAL("Sexual content"),
+    /**
+     * An intimate image shared without the consent of the person in it. The API gives these 48 hours to be acted on
+     * (the Take It Down Act), so the label has to stay as the API reads it.
+     */
+    INTIMATE_IMAGE("Intimate image shared without consent"),
     /** Goes to AudienceKit's child safety team too, which withholds the content and reports CSAM to NCMEC. */
     CHILD_SAFETY("Child safety"),
     DANGER("Threats or danger"),

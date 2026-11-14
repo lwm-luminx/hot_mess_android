@@ -15,7 +15,11 @@ import social.hotmess.core.SafetyState
  * The signed-in user's safety settings: whether they agreed to the terms of use (chat and Pings ask first) and who
  * they block, which chat hides at once. Null until loaded, and when the API can't say; cleared on sign-out.
  */
-class SafetyStore(private val api: HotMessApi) {
+class SafetyStore(
+    private val api: HotMessApi,
+    /** Whether this device holds the 18+ confirmation (AgeGate), sent with the terms so the account keeps it. */
+    private val isAdultConfirmed: () -> Boolean = { false },
+) {
     private val _state = MutableStateFlow<SafetyState?>(null)
     val state: StateFlow<SafetyState?> = _state.asStateFlow()
 
@@ -34,7 +38,7 @@ class SafetyStore(private val api: HotMessApi) {
 
     /** Records their agreement. Throws when it didn't go. */
     suspend fun acceptTerms() {
-        api.acceptTerms()
+        api.acceptTerms(adult = isAdultConfirmed())
         _state.value = (_state.value ?: SafetyState()).copy(termsAccepted = true)
     }
 

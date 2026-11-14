@@ -585,7 +585,9 @@ private fun AlertStatus(controller: SafetyAlertController, alert: SafetyAlert, o
                     if (acknowledged) "Someone's on the way" else "Staff have your alert",
                     footer = {
                         Footnote(
-                            if (acknowledged) "Stay where you are if you can. They know where you said you'd be."
+                            // Staff work for the venue: the app only passes on that one of them tapped "I'm on it".
+                            if (acknowledged) "A staff member at the venue told us they're coming, and they know where you said you'd be. " +
+                                "Hot Mess can't confirm that or how long it will take. If you're in danger, call ${EmergencyNumber.current}."
                             else "Stay where you feel safest. You'll feel a buzz, with no sound, when someone picks it up. " +
                                 "If nobody does in 2 minutes, we'll help you reach a friend, a ride or ${EmergencyNumber.current}.",
                         )

@@ -1007,6 +1007,26 @@ class HotMessApiTest {
     }
 
     @Test
+    fun warnsOnlyWhenTheAudienceRequiresADeviceCheckThisBuildCannotPass() = runTest {
+        fun methods(mode: String, required: Boolean) = SignInMethods(
+            methods = listOf("google"),
+            deviceAttestation = DeviceAttestationPolicy(mode = mode, required = required),
+        )
+        val (api, _) = api(
+            "/v1/token/methods?host=hotmess.social" to
+                """{"methods":["google"],"deviceAttestation":{"mode":"enforce","required":true,"warning":"Blocked here."}}""",
+        )
+
+        val enforced = api.signInMethods("hotmess.social")!!
+        assertTrue(enforced.deviceCheckWarning(canAttest = false)!!.contains("sign-in is blocked"))
+        assertNull(enforced.deviceCheckWarning(canAttest = true))
+        assertNull(methods("report", false).deviceCheckWarning(canAttest = false))
+        assertNull(methods("off", false).deviceCheckWarning(canAttest = false))
+        assertNull(SignInMethods(methods = listOf("google")).deviceCheckWarning(canAttest = false))
+        assertTrue(DeviceAttestationPolicy(mode = "enforce").blocksSignIn)
+    }
+
+    @Test
     fun readsTheWarningsShownBeforeSignInMethods() = runTest {
         val (api, _) = api(
             "/v1/token/methods?host=hotmess.social" to

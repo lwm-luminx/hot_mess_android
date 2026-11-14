@@ -44,11 +44,20 @@ import social.hotmess.core.PassBook
 import social.hotmess.core.StringSetStorage
 
 /** The app's services, built once. Screens reach them through [LocalAppGraph][social.hotmess.android.ui.LocalAppGraph]. */
-class AppGraph(context: Context, val configuration: AppConfiguration = AppConfiguration()) {
+class AppGraph(
+    context: Context,
+    val configuration: AppConfiguration = AppConfiguration(),
+    /**
+     * Builds the AudienceKit client from the operation log; the app's own (Keystore token, HTTP) by default. Unit tests
+     * pass one with an in-memory token and a stub transport, so screens can be shown without the network.
+     */
+    audienceKitClient: ((GraphQLOperationLog) -> com.audiencekit.AudienceKitClient)? = null,
+) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     /** Recent GraphQL operations, for Me › Check the app's failed requests. */
     val operations = GraphQLOperationLog()
-    val audienceKit = AudienceKitClient(context, configuration.audienceKit, monitor = operations)
+    val audienceKit = audienceKitClient?.invoke(operations)
+        ?: AudienceKitClient(context, configuration.audienceKit, monitor = operations)
     val api = HotMessApi(audienceKit)
     val brand = BrandStore(audienceKit, scope)
     val push = PushRegistrar(context, api, scope)
@@ -57,7 +66,7 @@ class AppGraph(context: Context, val configuration: AppConfiguration = AppConfig
     val location = LocationProvider(context, api, configuration, scope, geofences)
 
     /** Terms of use, blocking and reporting, as the API keeps them for the signed-in user. */
-    val safety = SafetyStore(api)
+    val safety = SafetyStore(api) { social.hotmess.android.session.AgeGate.isConfirmed(context) }
 
     /** The venues and talent the signed-in user manages, so Me offers Velvet or Backstage. */
     val listings = ListingsStore(api)

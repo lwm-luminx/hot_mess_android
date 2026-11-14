@@ -186,6 +186,9 @@ android {
             // The UI tests' build: instrumentation tests run against unminified code.
             isMinifyEnabled = false
             isShrinkResources = false
+            // `-Photmess.coverage` measures the unit tests' line coverage of the app (JaCoCo):
+            // ./gradlew :app:createSignInTestUnitTestCoverageReport -Photmess.coverage
+            enableUnitTestCoverage = providers.gradleProperty("hotmess.coverage").isPresent
         }
     }
 
@@ -241,6 +244,8 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // The screen tests (src/test/.../ui) render Compose under Robolectric, which needs the merged resources.
+        unitTests.isIncludeAndroidResources = true
     }
 }
 
@@ -298,8 +303,27 @@ dependencies {
     implementation(libs.androidx.camera.view)
 
     testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.compose.ui.test.junit4)
+    testImplementation(libs.kotlinx.coroutines.test)
+    // The empty activity the Compose screen tests host screens in; unit tests build only for signInTest (testBuildType).
+    "signInTestImplementation"(libs.compose.ui.test.manifest)
 
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.junit)
     androidTestImplementation(libs.uiautomator)
+}
+
+// Robolectric loads the app's classes through its own class loader, which JaCoCo only counts with these.
+if (providers.gradleProperty("hotmess.coverage").isPresent) {
+    tasks.withType<Test>().configureEach {
+        // AGP sets the task's JaCoCo options as it runs, so these go on last.
+        doFirst {
+            extensions.findByType<JacocoTaskExtension>()?.apply {
+                isIncludeNoLocationClasses = true
+                excludes = listOf("jdk.internal.*")
+            }
+        }
+    }
 }
