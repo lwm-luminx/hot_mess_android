@@ -10,11 +10,13 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import social.hotmess.android.ui.StubApi
 import java.time.OffsetDateTime
 import java.util.Locale
 
 @RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35], application = android.app.Application::class)
 class FlyersTest {
     private val content = FlyersCardContent(
         disclosure = "Based on your city and the time, nothing else.",
