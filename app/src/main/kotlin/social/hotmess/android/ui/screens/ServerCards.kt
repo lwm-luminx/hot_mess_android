@@ -352,6 +352,7 @@ fun CardsYouSeeScreen(navigator: Navigator) {
                         modifier = Modifier.padding(horizontal = Space.s5),
                     )
                 }
+                item { FlyerCategoriesSection() }
                 val fixed = loaded.filterNot { it.hideable }
                 if (fixed.isNotEmpty()) {
                     item {
