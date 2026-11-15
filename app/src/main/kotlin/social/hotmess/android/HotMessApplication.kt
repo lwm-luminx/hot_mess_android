@@ -74,6 +74,9 @@ class AppGraph(
     /** Which promoted cards the user turned off (on this device only), and the reports of the ones they saw. */
     val cards = CardSettings(context.applicationContext, audienceKit, scope)
 
+    /** Digital flyers hidden on this phone, and the city's resource directory (api doc/DIGITAL_FLYERS.md). */
+    val flyers = social.hotmess.android.ui.screens.FlyerSettings(context.applicationContext, audienceKit, scope)
+
     /** The user's tribes and whether the API has them; chat shows who shares one only when it does. */
     val tribes = TribeStore(api)
 

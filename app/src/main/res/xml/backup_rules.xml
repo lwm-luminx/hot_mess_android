@@ -10,4 +10,6 @@
     <exclude domain="sharedpref" path="com.audiencekit.session.xml" />
     <!-- The 18+ confirmation belongs to this device; a new phone asks again. -->
     <exclude domain="sharedpref" path="hotmess.age.xml" />
+    <!-- Which digital flyers and kinds of help were hidden stays on this phone only. -->
+    <exclude domain="sharedpref" path="com.audiencekit.flyers.xml" />
 </full-backup-content>
