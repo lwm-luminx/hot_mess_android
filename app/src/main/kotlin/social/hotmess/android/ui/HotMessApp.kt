@@ -131,6 +131,8 @@ import social.hotmess.core.postsSubject
     val latitude: String = "",
     val longitude: String = "",
 )
+/** Get help away from a venue: a friend, a ride, support and 911, without telling staff. */
+@Serializable data object HelpAnywhereRoute
 /** One of the user's safety alerts, from a push or Me. */
 @Serializable data class SafetyAlertRoute(val id: String)
 /** "Need support?", with the note staff wrote when they shared it. */
@@ -185,6 +187,8 @@ interface Navigator {
     fun openPasses()
     /** Get help at the venue the user is at: tell staff, a friend, a ride, support. */
     fun openHelp(venue: HelpVenue)
+    /** Get help where there's no venue: a friend, a ride, support and 911. */
+    fun openHelpAnywhere()
     fun openSafetyAlert(id: String)
     fun openSupport(note: String?)
     fun openSafetyAlerts()
@@ -313,6 +317,10 @@ private fun MainShell(links: Flow<AppRoute>) {
                 venue.longitude?.toString().orEmpty(),
             )
             navController.navigate(route) { launchSingleTop = true }
+        }
+
+        override fun openHelpAnywhere() {
+            navController.navigate(HelpAnywhereRoute) { launchSingleTop = true }
         }
 
         override fun openSafetyAlert(id: String) {
@@ -453,6 +461,7 @@ private fun MainShell(links: Flow<AppRoute>) {
                     )
                     GetHelpScreen(venue, null, navigator)
                 }
+                composable<HelpAnywhereRoute> { GetHelpScreen(null, null, navigator) }
                 composable<SafetyAlertRoute> { GetHelpScreen(null, it.toRoute<SafetyAlertRoute>().id, navigator) }
                 composable<SupportRoute> { SupportScreen(it.toRoute<SupportRoute>().note.ifBlank { null }, navigator) }
                 composable<SafetyAlertsRoute> { SafetyAlertsScreen(navigator) }
