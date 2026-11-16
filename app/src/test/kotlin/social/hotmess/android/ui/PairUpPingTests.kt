@@ -85,11 +85,19 @@ class PairUpPingTests {
     @Test fun revealedShowsWhoToLookFor() {
         stub.data("VenuePairUp", pairUp(here = true, mine = state(PairUpStatus.REVEALED, match)))
         stub.data("ShowPairUpCode", """{"showPairUpCode":{"code":"HM-1234"}}""")
+        stub.data("QuickieChat", quickieChat)
         showSheet()
         compose.waitForText("Look for Jamie")
         compose.waitForText("Green hat")
         compose.waitForText("Worst song you'd still sing")
+        // Once both said yes they can talk, to find each other.
+        compose.waitForText("Chat to find each other")
+        compose.waitForText("By the DJ booth")
     }
+
+    private val quickieChat = """{"venues":{"venue":{"pairUp":{"mine":{"match":{"id":"m1","chat":{"id":"quickie-m1",
+        "closesAt":"2099-01-01T05:00:00Z","messages":[{"id":"quickie-m1.l1","chatId":"quickie-m1","body":"By the DJ booth",
+        "isMine":false,"sentAt":"2026-11-14T22:00:00Z","sender":{"id":"p1","name":"Jamie"}}]}}}}}}}"""
 
     @Test fun afterMeetingItOffersToShare() {
         val met = match.replace("\"metAt\":null", "\"metAt\":\"2026-11-14T22:00:00Z\"")
