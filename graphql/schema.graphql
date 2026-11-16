@@ -6130,7 +6130,8 @@ type ContactMatching {
 
   """
   Whether a code can be texted right now. False until the platform has a text
-  provider set up; apps hide the offer to turn matching on.
+  provider set up; apps hide the offer to turn matching on. True for a review
+  account that can prove a fictional number without a text.
   """
   textCodesAvailable: Boolean!
 }

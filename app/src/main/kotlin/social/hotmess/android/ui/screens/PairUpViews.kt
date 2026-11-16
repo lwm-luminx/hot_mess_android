@@ -85,6 +85,7 @@ import social.hotmess.core.PairUpState
 import social.hotmess.core.PairUpStatus
 import social.hotmess.core.PairUpTopic
 import social.hotmess.core.PassQr
+import social.hotmess.core.PrivateChatCopy
 import social.hotmess.core.ReportSubject
 import social.hotmess.core.ReportTarget
 import social.hotmess.core.VenuePairUp
@@ -491,7 +492,26 @@ private fun Revealed(
             icon = Icons.Rounded.QrCodeScanner,
             enabled = !controller.busy,
         )
+        QuickieChat(controller, match)
         CancelButton(controller, match)
+    }
+}
+
+/**
+ * The two of them can talk once both said yes, to find each other, until 30 minutes after they meet (or the pairing
+ * or the night ends). Nothing said is kept once it closes.
+ */
+@Composable
+private fun QuickieChat(controller: PairUpController, match: PairUpMatch) {
+    val api = LocalAppGraph.current.api
+    val chat = rememberPrivateChatController(match.id) { api.quickieChat(controller.venueId) }
+    Card {
+        Column(Modifier.padding(Space.s4), verticalArrangement = Arrangement.spacedBy(Space.s2)) {
+            Text(PrivateChatCopy.QUICKIE_TITLE, style = HotMessType.subheading)
+            Text(PrivateChatCopy.EPHEMERAL, style = HotMessType.caption, color = tokens.inkMuted)
+            LaunchedEffect(chat) { chat.run() }
+            PrivateChatBody(chat, waiting = PrivateChatCopy.CLOSED)
+        }
     }
 }
 
@@ -506,6 +526,7 @@ private fun Met(controller: PairUpController, state: PairUpState, onReport: (Pai
         state.match?.partner?.let { Text("Hope you and ${it.name} had a good chat.", style = HotMessType.body) }
         MetBadge(state.metCount)
         state.match?.let { ShareRow(controller, it) }
+        state.match?.takeIf { it.chatsAfterMeeting() }?.let { QuickieChat(controller, it) }
         PrimaryButton("Let's go again", onClick = { controller.join(null) }, modifier = Modifier.fillMaxWidth(), enabled = !controller.busy)
         SecondaryButton(
             "I'm done",

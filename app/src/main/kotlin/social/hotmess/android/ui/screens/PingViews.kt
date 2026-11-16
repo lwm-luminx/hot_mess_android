@@ -114,6 +114,7 @@ import social.hotmess.core.PingSelection
 import social.hotmess.core.PingStrip
 import social.hotmess.core.PingTarget
 import social.hotmess.core.PingText
+import social.hotmess.core.PrivateChatCopy
 import social.hotmess.core.RecordId
 import social.hotmess.core.ReportSubject
 import social.hotmess.core.ReportTarget
@@ -257,6 +258,7 @@ private fun PingTarget.subtitle(): String {
 @Composable
 fun MyPingCard(ping: Ping, onEdit: () -> Unit, onEnd: () -> Unit, ending: Boolean) {
     var confirming by remember { mutableStateOf(false) }
+    var chatting by remember { mutableStateOf(false) }
     DetailSection("Your ping") {
         Row(
             Modifier.fillMaxWidth().padding(Space.s4),
@@ -292,6 +294,7 @@ fun MyPingCard(ping: Ping, onEdit: () -> Unit, onEnd: () -> Unit, ending: Boolea
             verticalAlignment = Alignment.CenterVertically,
         ) {
             SecondaryButton("Edit", onEdit)
+            if (ping.canChat) SecondaryButton("Chat", { chatting = true })
             TextButton(onClick = { confirming = true }, enabled = !ending) {
                 Text("End", style = HotMessType.label, color = tokens.danger)
             }
@@ -311,6 +314,15 @@ fun MyPingCard(ping: Ping, onEdit: () -> Unit, onEnd: () -> Unit, ending: Boolea
             text = { Text("Your friends won't see it any more, and everyone who's in is let go.") },
         )
     }
+    if (chatting) PingChatSheet(ping.id) { chatting = false }
+}
+
+/** The chat with a ping's circle: the sender and everyone who's in, until the ping ends. */
+@Composable
+fun PingChatSheet(pingId: String, onDismiss: () -> Unit) {
+    val api = LocalAppGraph.current.api
+    val controller = rememberPrivateChatController(pingId) { api.pingChat(pingId) }
+    PrivateChatSheet(controller, PrivateChatCopy.PING_TITLE, PrivateChatCopy.PING_WAITING, onDismiss)
 }
 
 /** A friend's Ping on Now: who, via whom, their note, each pick with "I'm in", and a way out once you're in. */
@@ -320,6 +332,7 @@ fun FriendPingCard(ping: Ping, userId: String?, actions: PingActions, onOpenTarg
     var acting by remember { mutableStateOf(false) }
     var reporting by remember { mutableStateOf<ReportSubject?>(null) }
     var blocking by remember { mutableStateOf<BlockedUser?>(null) }
+    var chatting by remember { mutableStateOf(false) }
     val sender = BlockedUser(ping.user.id, ping.user.name, ping.user.avatarUrl)
     Card {
         Row(
@@ -376,6 +389,11 @@ fun FriendPingCard(ping: Ping, userId: String?, actions: PingActions, onOpenTarg
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (ping.canChat) {
+                    TextButton(onClick = { chatting = true }, modifier = Modifier.testTag("ping.chat")) {
+                        Text("Chat", style = HotMessType.label, color = tokens.accentInk)
+                    }
+                }
                 if (ping.joined) {
                     TextButton(onClick = { actions.leave(ping) }, enabled = !busy) {
                         Text("Leave", style = HotMessType.label, color = tokens.inkMuted)
@@ -402,6 +420,7 @@ fun FriendPingCard(ping: Ping, userId: String?, actions: PingActions, onOpenTarg
     }
     reporting?.let { ReportDialog(it) { reporting = null } }
     blocking?.let { BlockDialog(it) { blocking = null } }
+    if (chatting) PingChatSheet(ping.id) { chatting = false }
 }
 
 /**

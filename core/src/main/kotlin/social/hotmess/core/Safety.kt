@@ -21,7 +21,7 @@ data class SafetyState(
 }
 
 /** What a report is about: the API's `ReportTarget`, sent by name. */
-enum class ReportTarget { MESSAGE, PERSON, VENUE, PING, PHOTO, POST, POST_COMMENT }
+enum class ReportTarget { MESSAGE, PERSON, VENUE, PING, PHOTO, POST, POST_COMMENT, PRIVATE_MESSAGE }
 
 /** Why someone reports something. [label] is what the audience's admins read. */
 enum class ReportReason(val label: String) {
@@ -58,6 +58,7 @@ data class ReportSubject(
             ReportTarget.PHOTO -> "Why are you reporting this photo?"
             ReportTarget.POST -> "Why are you reporting this post?"
             ReportTarget.POST_COMMENT -> "Why are you reporting this comment?"
+            ReportTarget.PRIVATE_MESSAGE -> "Why are you reporting this message?"
         }
 }
 
