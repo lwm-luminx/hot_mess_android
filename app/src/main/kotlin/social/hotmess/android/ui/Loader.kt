@@ -33,14 +33,35 @@ class Loader<T> : ViewModel() {
     /**
      * Loads with [fetch] unless content for [key] is already showing. A [refresh] keeps the content
      * on screen while it reloads, and keeps it if the reload fails; a [quiet] one does so without the
-     * pull-to-refresh spinner, and leaves a load already in flight alone.
+     * pull-to-refresh spinner, and leaves a load already in flight alone. With nothing on screen yet, [cached]
+     * (the last answer kept on this phone) shows at once while [fetch] runs.
      */
-    fun load(key: Any?, refresh: Boolean = false, quiet: Boolean = false, fetch: suspend () -> T) {
+    fun load(
+        key: Any?,
+        refresh: Boolean = false,
+        quiet: Boolean = false,
+        cached: (suspend () -> T?)? = null,
+        fetch: suspend () -> T,
+    ) {
         if (!refresh && key == loadedKey && _state.value is LoadState.Loaded) return
         if (quiet && job?.isActive == true) return
         job?.cancel()
         job = viewModelScope.launch {
-            if (refresh) _isRefreshing.value = !quiet else if (_state.value !is LoadState.Loaded) _state.value = LoadState.Loading
+            if (refresh) {
+                _isRefreshing.value = !quiet
+            } else if (_state.value !is LoadState.Loaded || key != loadedKey) {
+                val kept = try {
+                    cached?.invoke()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
+                }
+                when {
+                    kept != null -> _state.value = LoadState.Loaded(kept)
+                    _state.value !is LoadState.Loaded -> _state.value = LoadState.Loading
+                }
+            }
             try {
                 _state.value = LoadState.Loaded(fetch())
                 loadedKey = key

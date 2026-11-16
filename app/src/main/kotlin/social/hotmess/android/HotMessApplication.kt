@@ -6,8 +6,11 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import social.hotmess.android.updates.AppUpdates
+import com.audiencekit.GraphQLCachePolicy
 import com.audiencekit.GraphQLOperationLog
 import com.audiencekit.android.AudienceKitClient
+import com.audiencekit.android.graphQLCache
+import com.audiencekit.android.visitedLocales
 import com.newrelic.agent.android.NewRelic
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -33,6 +36,7 @@ import social.hotmess.android.session.ListingsStore
 import social.hotmess.android.session.SafetyStore
 import social.hotmess.android.session.SessionStore
 import social.hotmess.android.session.TribeStore
+import social.hotmess.android.support.CacheRefresher
 import social.hotmess.android.support.ErrorReporter
 import social.hotmess.android.ui.screens.CardSettings
 import social.hotmess.core.AppRoute
@@ -56,8 +60,13 @@ class AppGraph(
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     /** Recent GraphQL operations, for Me › Check the app's failed requests. */
     val operations = GraphQLOperationLog()
+    // The app keeps the last good answer to each query on this phone, so a failing request shows it instead of an
+    // error (a week at most; refusals still throw). Unit tests' clients keep none.
     val audienceKit = audienceKitClient?.invoke(operations)
-        ?: AudienceKitClient(context, configuration.audienceKit, monitor = operations)
+        ?: AudienceKitClient(
+            context, configuration.audienceKit, monitor = operations,
+            cache = graphQLCache(context), defaultCachePolicy = GraphQLCachePolicy.NetworkFirst(),
+        )
     val api = HotMessApi(audienceKit)
     val brand = BrandStore(audienceKit, scope)
     val push = PushRegistrar(context, api, scope)
@@ -66,6 +75,11 @@ class AppGraph(
     }
     val geofences = VenueGeofences(context.applicationContext, api)
     val location = LocationProvider(context, api, configuration, scope, geofences)
+
+    /** Keeps the cities the person has been in fresh in the on-device cache (on this phone only). */
+    val cacheRefresher = CacheRefresher(
+        context.applicationContext, api, visitedLocales(context, configuration.audienceId ?: "hotmess"),
+    ) { session.isSignedIn }
 
     /** Terms of use, blocking and reporting, as the API keeps them for the signed-in user. */
     val safety = SafetyStore(api) { social.hotmess.android.session.AgeGate.isConfirmed(context) }
@@ -128,6 +142,7 @@ class AppGraph(
     }
 
     init {
+        location.onLocaleResolved = cacheRefresher::recordVisit
         // A socket the server refused as unauthorized ends the session as a 401 does.
         cable.onUnauthorized = { token -> scope.launch { session.sessionRejected(token) } }
         scope.launch {
@@ -143,11 +158,13 @@ class AppGraph(
                         cable.disconnect()
                         // A signed-out app is never woken for a venue.
                         geofences.stopAll()
+                        cacheRefresher.forget()
                     }
                     AuthState.SignedIn -> {
                         if (isForeground) notifications.start()
                         scope.launch { safety.refresh() }
                         scope.launch { listings.refresh() }
+                        cacheRefresher.schedule()
                     }
                     else -> Unit
                 }
@@ -199,6 +216,8 @@ class HotMessApplication : Application() {
             override fun onStart(owner: LifecycleOwner) {
                 if (graph.session.isSignedIn) graph.location.start()
                 graph.updates.checkIfDue()
+                // Fresh data for the cities visited lately, when the backoff allows.
+                graph.scope.launch { graph.cacheRefresher.refresh() }
                 // Your notifications come over the cable while the app is in front (and signed in).
                 graph.setForeground(true)
             }
