@@ -270,10 +270,11 @@ fun NowScreen(navigator: Navigator) {
         tone = heroTone,
         collapsed = state.valueOrNull == null || scrolled,
         actions = {
-            // At a venue, Safety sits by Ping, big and labelled, so it's in reach as you scroll.
-            if (canGetHelp && helpAt != null) {
-                SafetyButton(onClick = { navigator.openHelp(helpVenueOf(helpAt)) })
-            }
+            // Safety sits by Ping, big and labelled, so it's in reach as you scroll. At a venue the app places the user
+            // at it can tell staff; anywhere else it still reaches a friend, a ride, support and 911.
+            SafetyButton(onClick = {
+                if (canGetHelp && helpAt != null) navigator.openHelp(helpVenueOf(helpAt)) else navigator.openHelpAnywhere()
+            })
             // In the bar's own colour (the photo's, until it turns solid), like the icons beside it: accent pink
             // disappeared on some photos and on the bar's gradient.
             TextButton(onClick = { sheetOpen = true }, colors = ButtonDefaults.textButtonColors(contentColor = LocalContentColor.current)) {
