@@ -45,6 +45,8 @@ data class ReportSubject(
     val targetId: String,
     /** Who to offer to block as well; null for a venue, a listing, or a post as the venue. */
     val sender: BlockedUser? = null,
+    /** A moderation test line (`isTest`): the dialog offers "Send test report", which files nothing. */
+    val test: Boolean = false,
 ) {
     /** The reason picker's question. */
     val question: String
@@ -60,7 +62,7 @@ data class ReportSubject(
 }
 
 @Serializable
-data class ReportResult(val reported: Boolean = false, val blocked: Boolean = false)
+data class ReportResult(val reported: Boolean = false, val blocked: Boolean = false, val test: Boolean = false)
 
 /** The audience's legal pages, linked from Me, sign-in and the terms prompt. */
 object LegalLinks {

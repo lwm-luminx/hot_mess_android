@@ -485,6 +485,16 @@ object Documents {
         }
     """.trimIndent()
 
+    /**
+     * A test report on a chat message (`test: true`): checked like a real one, but the API files nothing and blocks
+     * nobody, so the moderators' queue never sees it.
+     */
+    val REPORT_TEST_CHAT_MESSAGE: String = """
+        mutation ReportTestChatMessage(${'$'}messageId: ID!, ${'$'}reason: String) {
+          reportChatMessage(input: { messageId: ${'$'}messageId, reason: ${'$'}reason, test: true }) { reported blocked test }
+        }
+    """.trimIndent()
+
     /** Deletes the signed-in user's account and everything recorded about them. It can't be undone. */
     val DELETE_ACCOUNT: String = """
         mutation DeleteAccount {

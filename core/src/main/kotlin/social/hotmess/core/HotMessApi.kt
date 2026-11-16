@@ -773,6 +773,14 @@ class HotMessApi(val client: AudienceKitClient) {
             graphQLVariables("targetType" to target.name, "targetId" to targetId, "reason" to reason, "block" to block),
         ).reportContent
 
+    /** Sends a test report on a chat message: nothing is filed, nobody is blocked, and the queue never sees it. */
+    suspend fun reportTest(messageId: String, reason: String?): ReportResult =
+        mutate(
+            Documents.REPORT_TEST_CHAT_MESSAGE,
+            ReportTestChatMessageResponse.serializer(),
+            graphQLVariables("messageId" to messageId, "reason" to reason),
+        ).reportChatMessage
+
     /** Deletes the user's account and everything recorded about them, and ends every session. */
     suspend fun deleteAccount(): Boolean =
         mutate(Documents.DELETE_ACCOUNT, DeleteAccountResponse.serializer()).deleteAccount.deleted
@@ -1347,6 +1355,9 @@ private data class SendFriendRequestResponse(val sendFriendRequest: Payload) {
 
 @Serializable
 private data class ReportContentResponse(val reportContent: ReportResult)
+
+@Serializable
+private data class ReportTestChatMessageResponse(val reportChatMessage: ReportResult)
 
 @Serializable
 private data class DeleteAccountResponse(val deleteAccount: Payload) {

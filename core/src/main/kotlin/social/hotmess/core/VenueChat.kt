@@ -70,6 +70,11 @@ data class VenueMessage(
     val senderKind: ChatSenderKind? = null,
     /** Only the viewer sees it (`isPrivate`): a private nudge from the AI host, drawn with "Only you can see this". */
     val isPrivate: Boolean = false,
+    /**
+     * A moderation test (`isTest`): a test phrase someone typed, or the AI host's answer to one. Drawn with a Test
+     * tag; reporting it offers a test report, which files nothing.
+     */
+    val isTest: Boolean = false,
 ) {
     fun isOutgoing(currentUserId: String?): Boolean = currentUserId != null && userId.equals(currentUserId, ignoreCase = true)
 
@@ -318,7 +323,7 @@ object ChatProtocol {
     /** A chat line's fields, as [message] reads them. */
     const val MESSAGE_FIELDS: String =
         "id message body name avatarUrl sentAt userId role kind title photoUrl event { id name startAt } endsAt pinned " +
-            "postedAsVenue postedAsPerson person { id } postedAsAudience promptId sender { kind } isPrivate " +
+            "postedAsVenue postedAsPerson person { id } postedAsAudience promptId sender { kind } isPrivate isTest " +
             "prompt { id kind text answer revealAt shownAs number total nextAt }"
 
     /**
@@ -685,6 +690,7 @@ object ChatProtocol {
         // Read on its own, so an unexpected sender drops only the kind, never the line.
         val sender: JsonElement? = null,
         val isPrivate: Boolean? = null,
+        val isTest: Boolean? = null,
     ) {
         fun toMessage(): VenueMessage {
             val base = VenueMessage(body = message, userId = userId, avatarUrl = avatarUrl.blankToNull())
@@ -709,6 +715,7 @@ object ChatProtocol {
                 },
                 senderKind = ChatSenderKind.parse((sender as? JsonObject)?.string("kind")),
                 isPrivate = isPrivate ?: false,
+                isTest = isTest ?: false,
             )
         }
     }
