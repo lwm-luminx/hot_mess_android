@@ -107,6 +107,7 @@ private enum class Confirm { RESET, SIGN_OUT, DELETE }
 @Composable
 fun MeScreen(navigator: Navigator) {
     val graph = LocalAppGraph.current
+    LaunchedEffect(graph.contactFriends) { graph.contactFriends.load() }
     val context = LocalContext.current
     val user by graph.session.user.collectAsStateWithLifecycle()
     val locale by graph.location.locale.collectAsStateWithLifecycle()
@@ -417,6 +418,10 @@ fun MeScreen(navigator: Navigator) {
                         )
                     }
                 }
+            }
+            // Friends from contacts; draws nothing where the API can't text a code yet.
+            if (graph.contactFriends.state?.let { it.enabled || it.canOffer } == true) {
+                item { ContactsSection(graph.contactFriends) }
             }
             if (recentChatPush != null || pairUpPush != null) {
                 item {

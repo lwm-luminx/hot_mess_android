@@ -63,6 +63,7 @@ import social.hotmess.android.ui.screens.ArticleScreen
 import social.hotmess.android.ui.screens.EventScreen
 import social.hotmess.android.ui.screens.PublicationScreen
 import social.hotmess.android.ui.screens.GetHelpScreen
+import social.hotmess.android.ui.screens.FindFriendsSheet
 import social.hotmess.android.ui.screens.FixTarget
 import social.hotmess.android.ui.screens.SuggestListingScreen
 import social.hotmess.android.ui.screens.SuggestFixScreen
@@ -265,7 +266,7 @@ private fun MainShell(links: Flow<AppRoute>) {
                     is AppRoute.EventDetail -> EventRoute(route.id)
                     is AppRoute.PersonDetail -> PersonRoute(route.id)
                     // A tab of its own, not a screen to push: getting to the tab is all it needs.
-                    is AppRoute.NowPing -> return
+                    is AppRoute.NowPing, is AppRoute.Friends -> return
                     // Venues, where it says the link expired, is all it opens: never the record.
                     AppRoute.LinkExpired -> {
                         linkExpired = true
@@ -387,6 +388,11 @@ private fun MainShell(links: Flow<AppRoute>) {
 
     AskForPermissions()
     BackgroundLocationPrompt()
+    // Find friends from contacts, opened from Now's card, Me or a link.
+    val contactFriends = LocalAppGraph.current.contactFriends
+    if (contactFriends.sheetOpen) {
+        FindFriendsSheet(contactFriends, onDismiss = { contactFriends.sheetOpen = false })
+    }
 
     if (linkExpired) {
         AlertDialog(

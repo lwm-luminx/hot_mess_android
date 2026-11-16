@@ -52,6 +52,14 @@ object Fixtures {
         {"id":"$VENUE_ID","name":"Nyne","hidden":false,"order":1,"photoUrl":null,"bannerUrl":null,"locale":{"id":"$LOCALE_ID","name":"Spokane","label":"spokane"}},
         {"id":"2b3c4d5e-6f70-4182-9a3b-4c5d6e7f8091","name":"The Globe","hidden":false,"order":2,"photoUrl":null,"bannerUrl":null,"locale":{"id":"$LOCALE_ID","name":"Spokane","label":"spokane"}}]}}}"""
 
+    const val CONTACT_MATCHING_OFF =
+        """{"me":{"contactMatching":{"enabled":false,"phoneVerified":false,"contactsChecked":0,"textCodesAvailable":false,"matches":[],"incomingRequests":[]}}}"""
+
+    /** Matching off and a code can be texted: Now offers the card. */
+    const val CONTACT_MATCHING_OFFERED =
+        """{"me":{"contactMatching":{"enabled":false,"phoneVerified":false,"contactsChecked":0,"textCodesAvailable":true,"matches":[],"incomingRequests":[
+        {"id":"r-1","status":"PENDING","createdAt":null,"user":{"id":"7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d","name":"Jordan P.","avatarUrl":null},"friend":{"id":"11111111-2222-4333-8444-555555555555","name":"Test Person","avatarUrl":null}}]}}}"""
+
     const val SIGN_IN_METHODS = """{"methods":["facebook","apple","google","review_code"],"warnings":{}}"""
 }
 
@@ -62,6 +70,8 @@ fun StubApi.stubBasics() {
     error("Layout", "No layout in the stub")
     data("Safety", Fixtures.SAFETY)
     data("Me", Fixtures.ME)
+    // Friends from contacts: texting isn't set up in the stub, so Now and Me show nothing unless a test says otherwise.
+    data("ContactMatching", Fixtures.CONTACT_MATCHING_OFF)
 }
 
 /** A venue page's side loads, each answered as not there: no pair-up, no safety alerts, no lineup, no posts. */
