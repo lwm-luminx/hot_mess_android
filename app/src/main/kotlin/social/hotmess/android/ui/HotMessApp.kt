@@ -40,6 +40,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -61,7 +62,9 @@ import social.hotmess.android.ui.components.BackgroundLocationPrompt
 import social.hotmess.android.session.AuthState
 import social.hotmess.android.ui.screens.ArticleScreen
 import social.hotmess.android.ui.screens.EventScreen
+import social.hotmess.android.ui.screens.PingChatSheet
 import social.hotmess.android.ui.screens.PublicationScreen
+import social.hotmess.android.ui.screens.QuickieChatSheet
 import social.hotmess.android.ui.screens.GetHelpScreen
 import social.hotmess.android.ui.screens.FindFriendsSheet
 import social.hotmess.android.ui.screens.FixTarget
@@ -239,6 +242,9 @@ private fun MainShell(links: Flow<AppRoute>) {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val destination = backStackEntry?.destination
     var linkExpired by rememberSaveable { mutableStateOf(false) }
+    // A Ping or Quickie chat opened from the push about a new line in it, over Now or the venue.
+    var privateChat by remember { mutableStateOf<AppRoute?>(null) }
+    val signedIn = LocalAppGraph.current.session.isSignedIn
 
     // Coming back to a tab's root (e.g. with Back) selects that tab.
     LaunchedEffect(destination) {
@@ -267,6 +273,14 @@ private fun MainShell(links: Flow<AppRoute>) {
                     is AppRoute.PersonDetail -> PersonRoute(route.id)
                     // A tab of its own, not a screen to push: getting to the tab is all it needs.
                     is AppRoute.NowPing, is AppRoute.Friends -> return
+                    is AppRoute.PingChat -> {
+                        if (signedIn) privateChat = route
+                        return
+                    }
+                    is AppRoute.QuickieChat -> {
+                        if (signedIn) privateChat = route
+                        VenueRoute(route.venueId)
+                    }
                     // Venues, where it says the link expired, is all it opens: never the record.
                     AppRoute.LinkExpired -> {
                         linkExpired = true
@@ -392,6 +406,12 @@ private fun MainShell(links: Flow<AppRoute>) {
     val contactFriends = LocalAppGraph.current.contactFriends
     if (contactFriends.sheetOpen) {
         FindFriendsSheet(contactFriends, onDismiss = { contactFriends.sheetOpen = false })
+    }
+
+    when (val chat = privateChat) {
+        is AppRoute.PingChat -> PingChatSheet(chat.pingId) { privateChat = null }
+        is AppRoute.QuickieChat -> QuickieChatSheet(chat.venueId) { privateChat = null }
+        else -> Unit
     }
 
     if (linkExpired) {

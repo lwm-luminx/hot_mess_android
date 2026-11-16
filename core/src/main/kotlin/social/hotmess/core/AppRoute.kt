@@ -48,16 +48,22 @@ sealed interface AppRoute {
      */
     data class Friends(val requests: Boolean) : AppRoute
 
+    /** A Ping's chat (`/pings/<id>/chat`, what a push about a new line in it carries): over Now. */
+    data class PingChat(val pingId: String) : AppRoute
+
+    /** The Quickie chat at a venue (`/venues/<id>/quickie`, what a push about a new line carries): over the venue. */
+    data class QuickieChat(val venueId: String) : AppRoute
+
     /** A share link that has expired: Venues, which says so, in place of the record it named. */
     data object LinkExpired : AppRoute
 
     /** Which tab the route opens in. */
     val tab: AppTab
         get() = when (this) {
-            is VenueDetail, is LocaleDetail -> AppTab.VENUES
+            is VenueDetail, is LocaleDetail, is QuickieChat -> AppTab.VENUES
             is EventDetail -> AppTab.EVENTS
             is PersonDetail -> AppTab.PEOPLE
-            is NowPing, is Friends -> AppTab.NOW
+            is NowPing, is Friends, is PingChat -> AppTab.NOW
             LinkExpired -> AppTab.VENUES
             // A venue's room over its page; a locale's is reached from Now.
             is Chat -> if (room.kind == ChatRoom.Kind.VENUE) AppTab.VENUES else AppTab.NOW
@@ -140,9 +146,11 @@ object DeepLink {
             return when (segments[0]) {
                 "venues" -> AppRoute.Chat(ChatRoom.venue(id))
                 "locales" -> AppRoute.Chat(ChatRoom.locale(id))
+                "pings" -> AppRoute.PingChat(id)
                 else -> null
             }
         }
+        if (segments.size == 3 && segments[0] == "venues" && segments[2] == "quickie") return AppRoute.QuickieChat(id)
 
         return when (segments[0]) {
             "venues" -> AppRoute.VenueDetail(id)
