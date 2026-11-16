@@ -41,8 +41,8 @@ jobs:
       # The app's GraphQL documents (core/ and app/, with the SDK's fragments they interpolate) against
       # graphql/schema.graphql: the API's consumer schema this app is built and tested against (a copy of
       # audience_kit_api's contracts/schema/schema.graphql from its `next`). When the app starts using something new,
-      # copy the API's dump in with the change. PRs into `main` also check that production serves all of that copy
-      # (production-api.yml).
+      # copy the API's dump in with the change. PRs into `next` and `main` also check that the matching deployed API
+      # serves all of that copy (deployed-api.yml).
       - name: GraphQL documents match the schema the app is built against
         run: |
           npm install --silent --no-save --no-package-lock --prefix .graphql-check graphql@16
