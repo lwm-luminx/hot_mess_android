@@ -228,6 +228,9 @@ class DeepLinkTest {
         assertEquals(AppRoute.EventDetail(id), DeepLink.route("https://hotmess.social/events/${id.uppercase()}"))
         assertEquals(AppRoute.PersonDetail(id), DeepLink.route("https://hotmess.social/people/$id"))
         assertEquals(AppRoute.NowPing(id), DeepLink.route("https://hotmess.social/pings/$id"), "a push's url")
+        assertEquals(AppRoute.PingChat(id), DeepLink.route("https://hotmess.social/pings/$id/chat"), "a chat push's url")
+        assertEquals(AppRoute.QuickieChat(id), DeepLink.route("https://hotmess.social/venues/$id/quickie"))
+        assertEquals(AppRoute.VenueDetail(id), DeepLink.route("https://hotmess.social/venues/$id/quickie/x"))
         assertEquals(AppTab.EVENTS, AppRoute.EventDetail(id).tab)
     }
 

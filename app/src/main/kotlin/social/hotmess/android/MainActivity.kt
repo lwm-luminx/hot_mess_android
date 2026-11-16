@@ -338,6 +338,7 @@ class MainActivity : ComponentActivity(), GoogleAccounts {
             ?: PingPush.parse(data)?.let { AppRoute.NowPing(it.pingId) }
             ?: return false
         if (route is AppRoute.NowPing) graph.pingUpdated(route.pingId)
+        if (route is AppRoute.PingChat) graph.pingUpdated(route.pingId)
         if (route is AppRoute.Friends) graph.contactFriends.opened(sheet = !route.requests && graph.session.isSignedIn)
         links.trySend(route)
         return true

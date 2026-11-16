@@ -325,6 +325,14 @@ fun PingChatSheet(pingId: String, onDismiss: () -> Unit) {
     PrivateChatSheet(controller, PrivateChatCopy.PING_TITLE, PrivateChatCopy.PING_WAITING, onDismiss)
 }
 
+/** The Quickie chat at [venueId] in a sheet of its own, for the push about a new line in it. */
+@Composable
+fun QuickieChatSheet(venueId: String, onDismiss: () -> Unit) {
+    val api = LocalAppGraph.current.api
+    val controller = rememberPrivateChatController(venueId) { api.quickieChat(venueId) }
+    PrivateChatSheet(controller, PrivateChatCopy.QUICKIE_TITLE, PrivateChatCopy.CLOSED, onDismiss)
+}
+
 /** A friend's Ping on Now: who, via whom, their note, each pick with "I'm in", and a way out once you're in. */
 @Composable
 fun FriendPingCard(ping: Ping, userId: String?, actions: PingActions, onOpenTarget: (PingTarget) -> Unit) {

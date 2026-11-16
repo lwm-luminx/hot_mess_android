@@ -39,6 +39,7 @@ class HotMessMessagingService : FirebaseMessagingService() {
             ?: return
         val graph = applicationContext.appGraph
         if (route is AppRoute.NowPing) graph.pingUpdated(route.pingId)
+        if (route is AppRoute.PingChat) graph.pingUpdated(route.pingId)
         if (graph.isForeground) return
         if (!graph.notifications.shouldPostSystemCopy(message.data[PushNotification.NOTIFICATION_ID])) return
         val notification = message.notification ?: return
