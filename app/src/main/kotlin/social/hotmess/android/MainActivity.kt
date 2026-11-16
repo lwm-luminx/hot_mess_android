@@ -313,6 +313,8 @@ class MainActivity : ComponentActivity(), GoogleAccounts {
         val route = link.route
         // A texted Ping link: Now shows its invitation.
         if (route is AppRoute.NowPing && route.invitation != null) graph.openPingInvitation(route)
+        // "A friend joined": Now, with the find-friends sheet over it. Requests are on Now itself.
+        if (route is AppRoute.Friends) graph.contactFriends.opened(sheet = !route.requests && graph.session.isSignedIn)
         val expiry = link.expiry
         if (expiry == null) {
             links.trySend(route)
@@ -336,6 +338,7 @@ class MainActivity : ComponentActivity(), GoogleAccounts {
             ?: PingPush.parse(data)?.let { AppRoute.NowPing(it.pingId) }
             ?: return false
         if (route is AppRoute.NowPing) graph.pingUpdated(route.pingId)
+        if (route is AppRoute.Friends) graph.contactFriends.opened(sheet = !route.requests && graph.session.isSignedIn)
         links.trySend(route)
         return true
     }

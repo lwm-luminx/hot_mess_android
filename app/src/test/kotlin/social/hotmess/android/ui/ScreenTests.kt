@@ -79,6 +79,13 @@ class ScreenTests {
         assertTrue(stub.count("MyPing") >= 1)
     }
 
+    @Test fun nowOffersFindingFriendsAndShowsRequests() {
+        stub.data("ContactMatching", Fixtures.CONTACT_MATCHING_OFFERED)
+        show { NowScreen(RecordingNavigator()) }
+        expectText("Find friends from your contacts")
+        expectText("Jordan P. wants to be friends")
+    }
+
     @Test fun nowAtAVenueLeadsWithTheVenue() {
         stub.data("ReportLocation", Fixtures.nowAtVenue)
         show(atVenue = true) { NowScreen(RecordingNavigator()) }
