@@ -5,6 +5,7 @@ import android.os.Build
 import android.util.Log
 import com.audiencekit.AppleWebSignIn
 import com.audiencekit.AudienceKitClient
+import com.audiencekit.Branding
 import com.audiencekit.DeviceDescription
 import com.audiencekit.SessionEvent
 import com.audiencekit.android.current
@@ -47,6 +48,8 @@ class SessionStore(
     private val configuration: AppConfiguration,
     private val push: PushRegistrar,
     private val scope: CoroutineScope,
+    /** The Facebook permissions AudienceKit's branding serves (`facebook_scopes`), once it has loaded. */
+    private val servedFacebookScopes: () -> Branding.FacebookScopes? = { null },
 ) {
     private val _state = MutableStateFlow<AuthState>(AuthState.Restoring)
     val state: StateFlow<AuthState> = _state.asStateFlow()
@@ -59,6 +62,10 @@ class SessionStore(
     val requiredVersion: StateFlow<VersionInfo?> = _requiredVersion.asStateFlow()
 
     val isSignedIn: Boolean get() = _state.value == AuthState.SignedIn
+
+    /** What sign-in asks Facebook for (see the companion's [Companion.permissions]). */
+    private val requestedPermissions: List<String>
+        get() = permissions(servedFacebookScopes(), asksForReviewedPermissions)
 
     /**
      * Why sign-in is showing, when the API ended the session rather than the person signing out. Cleared by the next
@@ -142,7 +149,7 @@ class SessionStore(
             signInFailed("Facebook sign-in isn't set up for this build yet.")
             return null
         }
-        val dialog = FacebookLoginDialog(appId, PERMISSIONS, context.packageName, configuration.facebookLoginConfigId)
+        val dialog = FacebookLoginDialog(appId, requestedPermissions, context.packageName, configuration.facebookLoginConfigId)
         val state = java.util.UUID.randomUUID().toString()
         pendingLogin = dialog to state
         return dialog.url(state)
@@ -151,7 +158,7 @@ class SessionStore(
     /** Starts sign-in through the Facebook app and returns the permissions to ask it for. */
     fun beginFacebookAppSignIn(): List<String> {
         _state.value = AuthState.SigningIn
-        return PERMISSIONS
+        return requestedPermissions
     }
 
     /** The Facebook app signed the person in: exchanges its access token for an AudienceKit session. */
@@ -442,6 +449,12 @@ class SessionStore(
                 prod.startsWith("sdk") || prod.contains("emulator") || prod.contains("simulator")
         }
 
-        private val PERMISSIONS: List<String> get() = permissions(asksForReviewedPermissions)
+        /**
+         * What sign-in asks Facebook for: the list branding serves for this kind of build ([Branding.FacebookScopes]:
+         * production for Play builds, non-production for debug and emulator builds), so it changes without a new
+         * build; the built-in [permissions] when branding has none.
+         */
+        fun permissions(served: Branding.FacebookScopes?, asksForReviewed: Boolean): List<String> =
+            served?.scopes(nonProduction = asksForReviewed)?.takeIf { it.isNotEmpty() } ?: permissions(asksForReviewed)
     }
 }
