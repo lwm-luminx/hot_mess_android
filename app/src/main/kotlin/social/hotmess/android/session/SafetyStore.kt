@@ -61,6 +61,10 @@ class SafetyStore(
         _state.value = current.copy(blockedUsers = api.unblock(userId))
     }
 
+    /** Sends a test report on a moderation test line: nothing is filed or blocked. Throws when it didn't go. */
+    suspend fun reportTest(subject: ReportSubject, reason: ReportReason?): ReportResult =
+        api.reportTest(subject.targetId, reason?.label)
+
     /** Files a report; when [block] blocked the sender too, they're hidden at once. Throws when it didn't go. */
     suspend fun report(subject: ReportSubject, reason: ReportReason, block: Boolean): ReportResult {
         val result = api.report(subject.target, subject.targetId, reason.label, block && subject.sender != null)

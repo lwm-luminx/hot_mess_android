@@ -115,26 +115,43 @@ fun ReportDialog(subject: ReportSubject, onDismiss: () -> Unit) {
     var block by remember { mutableStateOf(false) }
     var sending by remember { mutableStateOf(false) }
     var sent by remember { mutableStateOf(false) }
+    var sentTest by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<String?>(null) }
 
     if (sent) {
         AlertDialog(
             onDismissRequest = onDismiss,
             confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } },
-            title = { Text("Thanks for reporting it", style = HotMessType.heading) },
-            text = { Text("Our moderation team will review it within 24 hours.", style = HotMessType.body) },
+            title = { Text(if (sentTest) "Test report sent" else "Thanks for reporting it", style = HotMessType.heading) },
+            text = {
+                Text(
+                    if (sentTest) {
+                        "It went through every check. Nothing was filed, so the moderators' queue never saw it."
+                    } else {
+                        "Our moderation team will review it within 24 hours."
+                    },
+                    style = HotMessType.body,
+                )
+            },
             containerColor = tokens.surfaceRaised,
         )
         return
     }
 
-    fun send() {
-        val picked = reason ?: return
+    // A test report on a moderation test line files nothing; the API marks reports on test lines as tests anyway.
+    fun send(test: Boolean = false) {
+        val picked = reason
+        if (picked == null && !test) return
         sending = true
         failure = null
         scope.launch {
             try {
-                graph.safety.report(subject.copy(sender = sender), picked, block)
+                val result = if (test || picked == null) {
+                    graph.safety.reportTest(subject, picked)
+                } else {
+                    graph.safety.report(subject.copy(sender = sender), picked, block)
+                }
+                sentTest = result.test
                 sent = true
             } catch (e: CancellationException) {
                 throw e
@@ -153,6 +170,19 @@ fun ReportDialog(subject: ReportSubject, onDismiss: () -> Unit) {
         title = { Text(subject.question, style = HotMessType.heading) },
         text = {
             Column {
+                if (subject.test) {
+                    Text(
+                        "This is a moderation test. A test report goes through every check but nothing is filed, so " +
+                            "the moderators' queue never sees it.",
+                        style = HotMessType.bodySmall,
+                        color = tokens.inkMuted,
+                    )
+                    TextButton(
+                        onClick = { send(test = true) },
+                        enabled = !sending,
+                        modifier = Modifier.testTag("report.test"),
+                    ) { Text("Send test report") }
+                }
                 ReportReason.entries.forEach { option ->
                     Row(
                         Modifier
@@ -190,7 +220,7 @@ fun ReportDialog(subject: ReportSubject, onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
-            TextButton(onClick = ::send, enabled = reason != null && !sending, modifier = Modifier.testTag("report.submit")) {
+            TextButton(onClick = { send() }, enabled = reason != null && !sending, modifier = Modifier.testTag("report.submit")) {
                 Text(if (sending) "Sending…" else "Report")
             }
         },

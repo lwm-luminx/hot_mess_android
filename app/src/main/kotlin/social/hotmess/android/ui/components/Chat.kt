@@ -72,6 +72,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -226,6 +227,8 @@ data class ChatThreadMessage(
     val deletable: Boolean = false,
     /** Only the viewer sees it (a private nudge from the AI host): "Only you can see this" under it. */
     val onlyYou: Boolean = false,
+    /** A moderation test line (a test phrase, or the AI host's answer to one): a Test tag under it. */
+    val testLine: Boolean = false,
 ) {
     /** Whether the room still shows it: a special disappears at its end time. */
     fun isShowing(at: Instant): Boolean {
@@ -683,11 +686,33 @@ private fun BubbleRow(
                     onLabelClick = message.promptId?.let { id -> onOpenPrompt?.let { open -> { open(id) } } },
                 )
             }
-            if (message.onlyYou) {
-                PrivateLineNote(Modifier.padding(start = Space.s3, top = 2.dp))
+            if (message.onlyYou || message.testLine) {
+                Row(
+                    Modifier.padding(start = Space.s3, top = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(Space.s2),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (message.testLine) TestLineTag()
+                    if (message.onlyYou) PrivateLineNote()
+                }
             }
         }
     }
+}
+
+/** Under a moderation test line: it tripped a test path, and nothing went to the moderators' queue. */
+@Composable
+fun TestLineTag(modifier: Modifier = Modifier) {
+    Text(
+        "Test",
+        style = HotMessType.caption,
+        color = tokens.accent,
+        maxLines = 1,
+        modifier = modifier
+            .background(tokens.accent.copy(alpha = 0.15f), RoundedCornerShape(50))
+            .padding(horizontal = 6.dp, vertical = 1.dp)
+            .testTag("chat.testTag"),
+    )
 }
 
 /** Under a line only the viewer sees (a private nudge from the AI host): an eye with a slash and "Only you can see this". */

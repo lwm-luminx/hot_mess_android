@@ -692,7 +692,7 @@ fun VenueChatScreen(room: ChatRoom, name: String, navigator: Navigator, docked: 
             person = sender,
             onReport = {
                 acting = null
-                reporting = ReportSubject(ReportTarget.MESSAGE, line.id, sender)
+                reporting = ReportSubject(ReportTarget.MESSAGE, line.id, sender, test = line.isTest)
             },
             onBlock = {
                 acting = null
@@ -857,4 +857,5 @@ private fun VenueMessage.threadMessage(
     asBot = sender == ChatSenderKind.BOT,
     deletable = !isPostedAsAudience && isOutgoing(viewerId),
     onlyYou = isPrivate,
+    testLine = isTest,
 )
