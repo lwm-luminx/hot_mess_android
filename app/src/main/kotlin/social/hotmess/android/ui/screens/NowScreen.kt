@@ -172,6 +172,9 @@ fun NowScreen(navigator: Navigator) {
     }
 
     val cardLayout = rememberScreenCards(LayoutScreen.NOW, NOW_CARD_KINDS, NOW_FALLBACK_CARDS)
+    // Friends from contacts: requests waiting on an answer, and the offer to turn matching on.
+    val contactFriends = graph.contactFriends
+    LaunchedEffect(contactFriends) { contactFriends.load() }
     val userId = rememberUserId()
     val scope = rememberCoroutineScope()
     var sheetOpen by rememberSaveable { mutableStateOf(false) }
@@ -335,6 +338,12 @@ fun NowScreen(navigator: Navigator) {
                                 InfoRow("Stop pretending", icon = Icons.Rounded.LocationOff, onClick = { graph.location.stopSimulating() })
                             }
                         }
+                    }
+                    contactFriends.incomingRequests.forEach { request ->
+                        item(key = "friend-request-${request.id}") { FriendRequestCard(contactFriends, request) }
+                    }
+                    if (contactFriends.offersCard) {
+                        item(key = "find-friends") { FindFriendsCard(contactFriends) }
                     }
                     // The cards in the server's order (the built-in one when it can't be had); a kind this build
                     // doesn't draw was never asked for.

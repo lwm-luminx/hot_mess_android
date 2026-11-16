@@ -93,6 +93,11 @@ class AppGraph(
     /** Digital flyers hidden on this phone, and the city's resource directory (api doc/DIGITAL_FLYERS.md). */
     val flyers = social.hotmess.android.ui.screens.FlyerSettings(context.applicationContext, audienceKit, scope)
 
+    /** Friends from contacts: the person's matching as the API has it, and the saved names kept on this phone. */
+    val contactFriends = social.hotmess.android.ui.screens.ContactFriends(
+        context.applicationContext, audienceKit, configuration.audienceId ?: "hotmess", scope,
+    )
+
     /** The user's tribes and whether the API has them; chat shows who shares one only when it does. */
     val tribes = TribeStore(api)
 
@@ -155,6 +160,7 @@ class AppGraph(
                         safety.clear()
                         listings.clear()
                         tribes.clear()
+                        contactFriends.forget()
                         cable.disconnect()
                         // A signed-out app is never woken for a venue.
                         geofences.stopAll()

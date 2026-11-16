@@ -42,6 +42,12 @@ sealed interface AppRoute {
     /** One of the user's safety alerts, from a push about it (`/safety-alerts/<id>`); it opens over Me. */
     data class SafetyAlertHelp(val id: String) : AppRoute
 
+    /**
+     * Friends from contacts, over Now: the find-friends sheet (`/friends/contacts`, from "a friend joined") or the
+     * requests waiting on an answer (`/friends/requests`, when [requests]).
+     */
+    data class Friends(val requests: Boolean) : AppRoute
+
     /** A share link that has expired: Venues, which says so, in place of the record it named. */
     data object LinkExpired : AppRoute
 
@@ -51,7 +57,7 @@ sealed interface AppRoute {
             is VenueDetail, is LocaleDetail -> AppTab.VENUES
             is EventDetail -> AppTab.EVENTS
             is PersonDetail -> AppTab.PEOPLE
-            is NowPing -> AppTab.NOW
+            is NowPing, is Friends -> AppTab.NOW
             LinkExpired -> AppTab.VENUES
             // A venue's room over its page; a locale's is reached from Now.
             is Chat -> if (room.kind == ChatRoom.Kind.VENUE) AppTab.VENUES else AppTab.NOW
@@ -121,6 +127,13 @@ object DeepLink {
 
     private fun route(segments: List<String>, token: String?): AppRoute? {
         if (segments.size < 2) return null
+        if (segments[0] == "friends") {
+            return when (segments[1].takeIf { segments.size == 2 }) {
+                "contacts" -> AppRoute.Friends(requests = false)
+                "requests" -> AppRoute.Friends(requests = true)
+                else -> null
+            }
+        }
         val id = runCatching { java.util.UUID.fromString(segments[1]).toString() }.getOrNull() ?: return null
 
         if (segments.getOrNull(2) == "chat") {

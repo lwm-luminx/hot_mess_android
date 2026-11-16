@@ -2798,6 +2798,61 @@ Media titles stored in AudienceKit (MediaTitle).
 """
 type AudienceMediaView implements IAudienceMedia {
   """
+  A clip by its UUID; null when there is none.
+  """
+  clip(
+    """
+    Its UUID.
+    """
+    id: ID!
+  ): MediaClip
+
+  """
+  Every tag on a listed clip, most used first.
+  """
+  clipTags: [MediaLabel!]!
+
+  """
+  Listed clips by when their source came out, all of them: a few hundred at most. Filters narrow it; all must match.
+  """
+  clips(
+    """
+    Only clips in this collection.
+    """
+    collection: String
+
+    """
+    Only clips whose source is from these decades, e.g. 1990s.
+    """
+    decades: [String!]
+
+    """
+    Staff only: hidden ones too.
+    """
+    includeHidden: Boolean = false
+
+    """
+    Words in its song, performers or source title.
+    """
+    search: String
+
+    """
+    Only these sources.
+    """
+    sources: [MediaClipSource!]
+
+    """
+    Only clips with every one of these tags.
+    """
+    tags: [String!]
+
+    """
+    Only clips from this media title.
+    """
+    titleId: ID
+  ): [MediaClip!]!
+
+  """
   The list sections, most titles first.
   """
   collections: [MediaLabel!]!
@@ -5929,6 +5984,13 @@ Someone on the app the viewer has saved in their contacts, who has the viewer's 
 """
 type ContactMatch {
   """
+  Which of the hashes just sent found them, so the phone can show the name it
+  has them saved under. Only on the answer to checkContacts: hashes are not
+  kept, so it is null everywhere else.
+  """
+  contactHash: String
+
+  """
   The request between them while one is waiting for an answer, whichever of them sent it.
   """
   request: FriendRequest
@@ -6065,6 +6127,13 @@ type ContactMatching {
   Whether they proved their number by text.
   """
   phoneVerified: Boolean!
+
+  """
+  Whether a code can be texted right now. False until the platform has a text
+  provider set up; apps hide the offer to turn matching on. True for a review
+  account that can prove a fictional number without a text.
+  """
+  textCodesAvailable: Boolean!
 }
 
 """
@@ -6197,7 +6266,7 @@ type ContactsCheckPayload {
   contactMatching: ContactMatching!
 
   """
-  Everyone found, as contactMatching.matches.
+  Everyone found, as contactMatching.matches, each with the contactHash that found them.
   """
   matches: [ContactMatch!]!
 }
@@ -10347,10 +10416,66 @@ interface IAudienceKaraoke @mixin(extensionKey: "karaoke", field: "karaoke", nul
 
 """
 The media module's root lookups: films and television the audience recommends,
-each linked to its IMDb page, with the tags and collections to filter them by
-(doc/MEDIA.md). Load the whole list and filter on the phone.
+each linked to its IMDb page, with the tags and collections to filter them by,
+and the songs show-tune nights play from them (clips; doc/MEDIA.md). Load the
+whole list and filter on the phone.
 """
 interface IAudienceMedia @mixin(extensionKey: "media", field: "media", null: false, on: ["Audience"]) @endpoint(in: [AUDIENCE, STAFF]) {
+  """
+  A clip by its UUID; null when there is none.
+  """
+  clip(
+    """
+    Its UUID.
+    """
+    id: ID!
+  ): MediaClip
+
+  """
+  Every tag on a listed clip, most used first.
+  """
+  clipTags: [MediaLabel!]!
+
+  """
+  Listed clips by when their source came out, all of them: a few hundred at most. Filters narrow it; all must match.
+  """
+  clips(
+    """
+    Only clips in this collection.
+    """
+    collection: String
+
+    """
+    Only clips whose source is from these decades, e.g. 1990s.
+    """
+    decades: [String!]
+
+    """
+    Staff only: hidden ones too.
+    """
+    includeHidden: Boolean = false
+
+    """
+    Words in its song, performers or source title.
+    """
+    search: String
+
+    """
+    Only these sources.
+    """
+    sources: [MediaClipSource!]
+
+    """
+    Only clips with every one of these tags.
+    """
+    tags: [String!]
+
+    """
+    Only clips from this media title.
+    """
+    titleId: ID
+  ): [MediaClip!]!
+
   """
   The list sections, most titles first.
   """
@@ -15252,6 +15377,89 @@ type LocationReportPayload {
 }
 
 """
+A song a show-tune night plays on its screens, from one of the audience's media
+titles: a film, a series or a Tony Awards telecast. Only the catalog: url, when
+there is one, is an official page to watch it on.
+"""
+type MediaClip {
+  """
+  The list sections it's in, e.g. show-tunes.
+  """
+  collections: [String!]!
+
+  """
+  Its source's decade, the era to filter by: 1990s.
+  """
+  decade: String
+
+  """
+  Its UUID.
+  """
+  id: ID!
+
+  """
+  The curator's note; null for none.
+  """
+  note: String
+
+  """
+  Who sings it in the source, e.g. "Idina Menzel".
+  """
+  performers: String
+
+  """
+  The song, e.g. "Let It Go".
+  """
+  song: String!
+
+  """
+  Animated film, film, television or the Tony Awards.
+  """
+  source: MediaClipSource!
+
+  """
+  What it is, lowercase: belter, duet, ballad, villain-song, group-number,
+  sing-along-staple, diva, drag and the curator's own.
+  """
+  tags: [String!]!
+
+  """
+  The film, series or telecast it is from, with its IMDb page.
+  """
+  title: MediaTitle!
+
+  """
+  An official page to watch it on; null when there is none.
+  """
+  url: String
+}
+
+"""
+Where a media clip comes from (MediaClip#source).
+"""
+enum MediaClipSource {
+  """
+  An animated film: Disney and the rest.
+  """
+  ANIMATED
+
+  """
+  A live-action film, movie musicals mostly.
+  """
+  FILM
+
+  """
+  A series or a television special.
+  """
+  TELEVISION
+
+  """
+  A performance on a Tony Awards telecast.
+  """
+  TONY_AWARDS
+}
+
+"""
 What a media title is, as IMDb has it.
 """
 enum MediaKind {
@@ -15279,6 +15487,11 @@ enum MediaKind {
   A television series.
   """
   TV_SERIES
+
+  """
+  A one-off television broadcast, such as a Tony Awards telecast.
+  """
+  TV_SPECIAL
 }
 
 """
@@ -15300,6 +15513,11 @@ type MediaLabel {
 A film or television title the audience recommends, linked to its IMDb page. Open imdbUrl for its plot, cast and rating.
 """
 type MediaTitle {
+  """
+  The songs show-tune nights play from it, listed ones only.
+  """
+  clips: [MediaClip!]!
+
   """
   The list sections it's in, e.g. new-since-2018 (Audience.media.collections).
   """
@@ -15326,7 +15544,7 @@ type MediaTitle {
   imdbUrl: String!
 
   """
-  Film, short, TV movie, series or mini-series.
+  Film, short, TV movie, TV special, series or mini-series.
   """
   kind: MediaKind!
 
@@ -15334,6 +15552,12 @@ type MediaTitle {
   The curator's note, e.g. "Watch Paris Is Burning first"; null for none.
   """
   note: String
+
+  """
+  Who holds its public performance rights, as best known, e.g. "Disney (20th
+  Century)"; confirm it before licensing a screening.
+  """
+  studio: String
 
   """
   What it is, lowercase: gay, lesbian, bisexual, transgender, qpoc, drag,
