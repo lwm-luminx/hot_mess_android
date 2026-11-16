@@ -61,7 +61,9 @@ class AppGraph(
     val api = HotMessApi(audienceKit)
     val brand = BrandStore(audienceKit, scope)
     val push = PushRegistrar(context, api, scope)
-    val session = SessionStore(context, api, audienceKit, configuration, push, scope)
+    val session = SessionStore(context, api, audienceKit, configuration, push, scope) {
+        brand.branding.value?.facebookScopes
+    }
     val geofences = VenueGeofences(context.applicationContext, api)
     val location = LocationProvider(context, api, configuration, scope, geofences)
 

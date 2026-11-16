@@ -1,5 +1,6 @@
 package social.hotmess.android.session
 
+import com.audiencekit.Branding
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -16,6 +17,22 @@ class FacebookPermissionsTest {
         assertEquals(
             listOf("public_profile", "openid", "email", "user_friends"),
             SessionStore.permissions(asksForReviewed = true),
+        )
+    }
+
+    @Test
+    fun asksForWhatBrandingServesForTheBuild() {
+        val served = Branding.FacebookScopes(production = listOf("public_profile"), nonProduction = listOf("email"))
+        assertEquals(listOf("public_profile"), SessionStore.permissions(served, asksForReviewed = false))
+        assertEquals(listOf("email"), SessionStore.permissions(served, asksForReviewed = true))
+    }
+
+    @Test
+    fun fallsBackToTheBuiltInListsWithoutBranding() {
+        assertEquals(listOf("public_profile", "openid"), SessionStore.permissions(null, asksForReviewed = false))
+        assertEquals(
+            listOf("public_profile", "openid", "email", "user_friends"),
+            SessionStore.permissions(Branding.FacebookScopes(), asksForReviewed = true),
         )
     }
 
