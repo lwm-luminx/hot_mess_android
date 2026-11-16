@@ -520,6 +520,27 @@ class HotMessApi(val client: AudienceKitClient) {
 
     // endregion
 
+    // region Ping and Quickie chats
+
+    /** A ping's chat, when the user is in its circle and someone's in; null otherwise. */
+    suspend fun pingChat(pingId: String): PrivateChat? =
+        query(Documents.PING_CHAT, PingChatResponse.serializer(), graphQLVariables("id" to pingId)).node?.chat
+
+    /** The chat with the user's Quickie match at a venue, once both said yes; null otherwise. */
+    suspend fun quickieChat(venueId: String): PrivateChat? =
+        query(Documents.QUICKIE_CHAT, QuickieChatResponse.serializer(), graphQLVariables("id" to venueId))
+            .venues?.venue?.pairUp?.mine?.match?.chat
+
+    /** Says something in a Ping or Quickie chat. Throws when it has ended, the word list refuses it, or it's too fast. */
+    suspend fun sendPrivateChatMessage(chatId: String, body: String): PrivateChatMessage =
+        mutate(
+            Documents.SEND_PRIVATE_CHAT_MESSAGE,
+            SendPrivateChatMessageResponse.serializer(),
+            graphQLVariables("chatId" to chatId, "body" to body),
+        ).sendPrivateChatMessage.message
+
+    // endregion
+
     // region Pair me up
 
     /** Pair me up at a venue: null where the venue doesn't have it. */
@@ -1408,6 +1429,29 @@ private data class RegisterDeviceResponse(val registerDevice: Payload? = null) {
 }
 
 /** `venues { venue(id:) { pairUp } }`; a venue without it has no `pairUp`. */
+@Serializable
+private data class PingChatResponse(val node: Node? = null) {
+    @Serializable data class Node(val chat: PrivateChat? = null)
+}
+
+@Serializable
+private data class QuickieChatResponse(val venues: Venues? = null) {
+    @Serializable data class Venues(val venue: Venue? = null)
+
+    @Serializable data class Venue(val pairUp: PairUp? = null)
+
+    @Serializable data class PairUp(val mine: Mine? = null)
+
+    @Serializable data class Mine(val match: Match? = null)
+
+    @Serializable data class Match(val chat: PrivateChat? = null)
+}
+
+@Serializable
+private data class SendPrivateChatMessageResponse(val sendPrivateChatMessage: Payload) {
+    @Serializable data class Payload(val message: PrivateChatMessage)
+}
+
 @Serializable
 private data class VenuePairUpResponse(val venues: Venues? = null) {
     @Serializable data class Venues(val venue: Venue? = null)

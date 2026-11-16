@@ -479,6 +479,36 @@ object Documents {
     """.trimIndent()
 
     /** Files a report with the audience's admins, and blocks the person behind it when [block] is true and there is one. */
+    // region Ping and Quickie chats (PrivateChat.kt). Fetched on their own, so the Ping and Quickie queries don't need
+    // an API with chats.
+
+    const val PRIVATE_CHAT_MESSAGE_FIELDS: String = "id chatId body isMine sentAt sender { id name }"
+
+    const val PRIVATE_CHAT_FIELDS: String = "id closesAt messages { $PRIVATE_CHAT_MESSAGE_FIELDS }"
+
+    val PING_CHAT: String = """
+        query PingChat(${'$'}id: ID!) {
+          node(id: ${'$'}id) { ... on Ping { id chat { $PRIVATE_CHAT_FIELDS } } }
+        }
+    """.trimIndent()
+
+    val QUICKIE_CHAT: String = """
+        query QuickieChat(${'$'}id: ID!) {
+          venues { venue(id: ${'$'}id) { pairUp { mine { match { id chat { $PRIVATE_CHAT_FIELDS } } } } } }
+        }
+    """.trimIndent()
+
+    val SEND_PRIVATE_CHAT_MESSAGE: String = """
+        mutation SendPrivateChatMessage(${'$'}chatId: ID!, ${'$'}body: String!) {
+          sendPrivateChatMessage(input: { chatId: ${'$'}chatId, body: ${'$'}body }) { message { $PRIVATE_CHAT_MESSAGE_FIELDS } }
+        }
+    """.trimIndent()
+
+    const val PRIVATE_CHAT_SUBSCRIPTION: String =
+        "subscription PrivateChat { privateChat { chatId closed message { $PRIVATE_CHAT_MESSAGE_FIELDS } } }"
+
+    // endregion
+
     val REPORT_CONTENT: String = """
         mutation ReportContent(${'$'}targetType: ReportTarget!, ${'$'}targetId: ID!, ${'$'}reason: String, ${'$'}block: Boolean) {
           reportContent(input: { targetType: ${'$'}targetType, targetId: ${'$'}targetId, reason: ${'$'}reason, block: ${'$'}block }) { reported blocked }

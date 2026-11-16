@@ -1,6 +1,7 @@
 package social.hotmess.core
 
 import kotlinx.serialization.Serializable
+import java.time.Instant
 
 /** Pair me up to chat at a venue (`venue.pairUp`): whether the user can opt in now, and their pairing tonight. */
 @Serializable
@@ -58,6 +59,15 @@ data class PairUpMatch(
 ) {
     /** Both agreed, so the venue's chat says who met and what they talked about. */
     val isShared: Boolean get() = shared && partnerShared
+
+    /** Whether their chat may still be open after meeting: it closes [CHAT_AFTER_MEETING_SECONDS] after they met. */
+    fun chatsAfterMeeting(now: Instant = Instant.now()): Boolean =
+        metAt?.let(InstantSerializer::parse)?.let { now.isBefore(it.plusSeconds(CHAT_AFTER_MEETING_SECONDS)) } == true
+
+    companion object {
+        /** The API's PrivateChats::AFTER_MEETING. */
+        const val CHAT_AFTER_MEETING_SECONDS: Long = 30L * 60
+    }
 }
 
 @Serializable

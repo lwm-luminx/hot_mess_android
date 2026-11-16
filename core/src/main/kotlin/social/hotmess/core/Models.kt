@@ -635,6 +635,9 @@ data class Ping(
     /** The sender and everyone in, once each: whose faces the card shows. */
     val circle: List<Friend> get() = (listOf(user) + joins.map { it.user }).distinctBy { RecordId.normalize(it.id) ?: it.id }
 
+    /** Whether the viewer can chat with its circle: they sent it or are in, and someone besides the sender is in. */
+    val canChat: Boolean get() = (isMine || joined) && circle.size > 1
+
     /** "via Sam", when the viewer sees it through a circle member. */
     val viaText: String? get() = via?.let { "via ${it.firstName}" }
 
