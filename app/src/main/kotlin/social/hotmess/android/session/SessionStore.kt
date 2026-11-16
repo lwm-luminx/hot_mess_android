@@ -1,6 +1,7 @@
 package social.hotmess.android.session
 
 import android.content.Context
+import android.os.Build
 import android.util.Log
 import com.audiencekit.AppleWebSignIn
 import com.audiencekit.AudienceKitClient
@@ -14,6 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import social.hotmess.android.AppConfiguration
+import social.hotmess.android.BuildConfig
 import social.hotmess.android.push.PushRegistrar
 import social.hotmess.core.ApiError
 import social.hotmess.core.FacebookLoginDialog
@@ -407,17 +409,39 @@ class SessionStore(
         /** The app's own preferences (the remembered locale and the like). */
         const val PREFERENCES = "social.hotmess.preferences"
 
+        /** Permissions Meta's App Review approved for everyone on the production Hot Mess app. */
+        val APPROVED_PERMISSIONS = listOf("public_profile", "openid")
+
         /**
-         * Whether sign-in asks for email and user_friends (friends who also use the app at the same venue). Off while
-         * Meta's App Review has both pending on the Hot Mess Consumer app, so the betas ask only for public_profile;
-         * until it's back on, everyone's friends list is empty and no email is stored. Turn it back on once Meta
-         * approves them.
+         * Permissions App Review turned down on the production Hot Mess app (twice): email, and user_friends
+         * (friends who also use the app at the same venue). Without them everyone's friends list is empty and no
+         * email comes from Facebook.
          */
-        const val ASKS_FOR_REVIEWED_PERMISSIONS = true
+        val REVIEW_PENDING_PERMISSIONS = listOf("email", "user_friends")
+
+        /**
+         * Whether sign-in also asks for [REVIEW_PENDING_PERMISSIONS]: only debug builds and emulators, so the friends
+         * features can be worked on (and recorded for the next review) by the app's admins and testers. Play builds
+         * ask for [APPROVED_PERMISSIONS] alone until a review approves the rest.
+         */
+        val asksForReviewedPermissions: Boolean by lazy {
+            BuildConfig.DEBUG || isEmulator(Build.FINGERPRINT, Build.HARDWARE, Build.PRODUCT)
+        }
 
         /** What sign-in asks Facebook for. */
-        private val PERMISSIONS =
-            listOf("public_profile") +
-                if (ASKS_FOR_REVIEWED_PERMISSIONS) listOf("email", "user_friends") else emptyList()
+        fun permissions(asksForReviewed: Boolean): List<String> =
+            APPROVED_PERMISSIONS + if (asksForReviewed) REVIEW_PENDING_PERMISSIONS else emptyList()
+
+        /** Whether the device is the Android emulator, from its build fingerprint, hardware and product names. */
+        fun isEmulator(fingerprint: String?, hardware: String?, product: String?): Boolean {
+            val fp = fingerprint.orEmpty()
+            val hw = hardware.orEmpty()
+            val prod = product.orEmpty()
+            return fp.startsWith("generic") || fp.contains("emulator") || fp.contains("/sdk_gphone") ||
+                hw == "goldfish" || hw == "ranchu" ||
+                prod.startsWith("sdk") || prod.contains("emulator") || prod.contains("simulator")
+        }
+
+        private val PERMISSIONS: List<String> get() = permissions(asksForReviewedPermissions)
     }
 }
