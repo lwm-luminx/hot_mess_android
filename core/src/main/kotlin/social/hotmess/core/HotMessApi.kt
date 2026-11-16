@@ -7,6 +7,7 @@ import com.audiencekit.AudienceKitException
 import com.audiencekit.Coordinate
 import com.audiencekit.Coordinates
 import com.audiencekit.CoverPurchase
+import com.audiencekit.GraphQLCachePolicy
 import com.audiencekit.GraphQLError
 import com.audiencekit.RSVPState
 import com.audiencekit.graphQLVariables
@@ -62,10 +63,14 @@ class HotMessApi(val client: AudienceKitClient) {
         val dispatcher = currentCoroutineContext()[ContinuationInterceptor] ?: EmptyCoroutineContext
         val report = synchronized(reports) {
             reports[near] ?: shared.async(dispatcher) {
+                // The position changes with every report, so the answer is kept under one name: when the API
+                // fails, the last "Now" stands in for half an hour (where you are can change, so not longer).
                 query(
                     Documents.REPORT_LOCATION,
                     ReportLocationResponse.serializer(),
                     mapOf("position" to near.toGraphQLValue()),
+                    cachePolicy = GraphQLCachePolicy.NetworkFirst(NOW_MAX_AGE_MILLIS),
+                    cacheKey = NOW_CACHE_KEY,
                 ).reportLocation.now(json)
             }.also { request ->
                 reports[near] = request
@@ -74,6 +79,13 @@ class HotMessApi(val client: AudienceKitClient) {
         }
         return report.await().also(friends::record)
     }
+
+    /** The last "Now" the API sent, if it's recent, to show while a new one loads. */
+    suspend fun cachedNow(): Now? =
+        client.cachedGraphQL(
+            Documents.REPORT_LOCATION, ReportLocationResponse.serializer(), json = json,
+            maxAgeMillis = NOW_MAX_AGE_MILLIS, cacheKey = NOW_CACHE_KEY,
+        )?.value?.reportLocation?.now(json)
 
     /**
      * [now], or without a position just your Ping and your friends', which don't need one, so Now can
@@ -110,7 +122,8 @@ class HotMessApi(val client: AudienceKitClient) {
 
     /** The envelopes of the venues near [near], for venue geofences; venues without a point are left out. */
     suspend fun venueFences(near: Coordinates): List<VenueFence> =
-        query(Documents.VENUE_FENCES, VenueFencesResponse.serializer(), mapOf("near" to near.toGraphQLValue()))
+        // Every report is from a new spot; the last set still stands in.
+        query(Documents.VENUE_FENCES, VenueFencesResponse.serializer(), mapOf("near" to near.toGraphQLValue()), cacheKey = "VenueFences")
             .venues?.list?.nodes.orEmpty().mapNotNull { node ->
                 val point = node.point?.let(Coordinate::fromWkt) ?: return@mapNotNull null
                 val id = RecordId.normalize(node.id) ?: return@mapNotNull null
@@ -201,11 +214,19 @@ class HotMessApi(val client: AudienceKitClient) {
 
     // region Events
 
-    suspend fun events(localeId: String): EventListing {
-        val locale = query(Documents.LOCALE_EVENTS, LocaleEventsResponse.serializer(), graphQLVariables("id" to localeId)).locale
-            ?: throw ApiError.NotFound
+    /** A locale's upcoming events. A background refresh passes [GraphQLCachePolicy.Refresh] to see failures. */
+    suspend fun events(localeId: String, cachePolicy: GraphQLCachePolicy? = null): EventListing {
+        val locale = query(
+            Documents.LOCALE_EVENTS, LocaleEventsResponse.serializer(), graphQLVariables("id" to localeId),
+            cachePolicy = cachePolicy,
+        ).locale ?: throw ApiError.NotFound
         return EventListing.upcoming(locale.events)
     }
+
+    /** A locale's events as last loaded (here or by the background refresh), to show while they refresh. */
+    suspend fun cachedEvents(localeId: String): EventListing? =
+        client.cachedGraphQL(Documents.LOCALE_EVENTS, LocaleEventsResponse.serializer(), graphQLVariables("id" to localeId), json = json)
+            ?.value?.locale?.let { EventListing.upcoming(it.events) }
 
     suspend fun event(id: String): Event =
         query(Documents.EVENT, EventResponse.serializer(), graphQLVariables("id" to id)).event
@@ -881,11 +902,19 @@ class HotMessApi(val client: AudienceKitClient) {
 
     // endregion
 
+    /**
+     * Runs a query. It uses the client's cache policy (the last good answer when the API can't answer, set up in the
+     * app's AppGraph) unless [cachePolicy] says otherwise; [cacheKey] keeps the answer under a name of its own.
+     */
     private suspend fun <T> query(
         document: String,
         serializer: KSerializer<T>,
         variables: Map<String, JsonElement>? = null,
-    ): T = call(operationName(document)) { client.graphQL(document, serializer, variables, json = json) }
+        cachePolicy: GraphQLCachePolicy? = null,
+        cacheKey: String? = null,
+    ): T = call(operationName(document)) {
+        client.graphQL(document, serializer, variables, json = json, cachePolicy = cachePolicy, cacheKey = cacheKey)
+    }
 
     /**
      * [call] for the cover mutations. An error the API wrote for people ("The Wildrose doesn't take cover in
@@ -936,6 +965,10 @@ class HotMessApi(val client: AudienceKitClient) {
     }
 
     companion object {
+        /** The cache name the latest "Now" is kept under, and how long it stands in when the API fails. */
+        const val NOW_CACHE_KEY = "Now"
+        const val NOW_MAX_AGE_MILLIS = 30L * 60 * 1000
+
         /** Ignores fields the app doesn't know, so new API fields never break a shipped build. */
         val json: Json = Json {
             ignoreUnknownKeys = true

@@ -133,6 +133,12 @@
             </intent-filter>
         </receiver>
 
+        <!-- Background refreshes of the on-device data cache (support/CacheRefresher.kt). -->
+        <service
+            android:name=".support.CacheRefreshJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
         <service
             android:name=".push.HotMessMessagingService"
             android:exported="false">

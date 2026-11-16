@@ -143,7 +143,10 @@ fun NowScreen(navigator: Navigator) {
     val refreshing by loader.isRefreshing.collectAsStateWithLifecycle()
     val simulated by graph.location.simulatedVenue.collectAsStateWithLifecycle()
 
-    LaunchedEffect(coordinates) { loader.load(coordinates) { graph.api.nowOrPings(coordinates) } }
+    LaunchedEffect(coordinates) {
+        // The last "Now" (half an hour at most) shows while the position report goes out.
+        loader.load(coordinates, cached = { coordinates?.let { graph.api.cachedNow() } }) { graph.api.nowOrPings(coordinates) }
+    }
 
     // A Ping push arrived or was tapped: reload, keeping what's on screen meanwhile.
     val latestCoordinates by rememberUpdatedState(coordinates)

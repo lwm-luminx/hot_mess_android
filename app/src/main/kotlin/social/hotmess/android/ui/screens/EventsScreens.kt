@@ -134,7 +134,9 @@ fun EventsScreen(navigator: Navigator) {
             return@ScreenScaffold
         }
         var selectedNight by remember(current.id) { mutableStateOf<LocalDate?>(null) }
-        LaunchedEffect(current.id) { loader.load(current.id) { graph.api.events(current.id) } }
+        LaunchedEffect(current.id) {
+            loader.load(current.id, cached = { graph.api.cachedEvents(current.id) }) { graph.api.events(current.id) }
+        }
 
         LoadStateView(state, onRetry = { loader.load(current.id) { graph.api.events(current.id) } }) { listing ->
             PullToRefreshBox(refreshing, onRefresh = { loader.load(current.id, refresh = true) { graph.api.events(current.id) } }) {
