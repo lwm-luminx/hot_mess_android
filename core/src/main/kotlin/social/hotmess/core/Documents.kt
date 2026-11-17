@@ -410,6 +410,52 @@ object Documents {
         }
     """.trimIndent()
 
+    /** [ACCEPT_TERMS] with the app's 18+ confirmation, for an API that keeps it on the account. */
+    val ACCEPT_TERMS_AS_ADULT: String = """
+        mutation AcceptTermsAsAdult {
+          acceptTerms(input: { adult: true, ageSource: SELF_DECLARED }) { termsAcceptedAt }
+        }
+    """.trimIndent()
+
+    private const val AGE_CHECK_FIELDS = "required region state productIds enforced explainer { title body points }"
+
+    /** Where the signed-in user stands with the proof of age the United Kingdom and Australia ask for. */
+    val AGE_CHECK: String = """
+        query AgeCheck {
+          me { ageCheck { $AGE_CHECK_FIELDS } }
+        }
+    """.trimIndent()
+
+    /** Tells the API which country the user's Play store is in. */
+    val REPORT_STORE_COUNTRY: String = """
+        mutation ReportStoreCountry(${'$'}country: String!) {
+          reportStoreCountry(input: { country: ${'$'}country }) { ageCheck { $AGE_CHECK_FIELDS } }
+        }
+    """.trimIndent()
+
+    /** Sends the one-time age check purchase for the API to check with Google Play. */
+    val RECORD_AGE_CHECK_PURCHASE: String = """
+        mutation RecordAgeCheckPurchase(${'$'}purchaseToken: String!, ${'$'}productId: String!) {
+          recordAgeCheckPurchase(input: { purchaseToken: ${'$'}purchaseToken, productId: ${'$'}productId }) {
+            ageCheck { $AGE_CHECK_FIELDS }
+          }
+        }
+    """.trimIndent()
+
+    /** Opens the paid check with the age check company. */
+    val START_AGE_CHECK: String = """
+        mutation StartAgeCheck(${'$'}returnUrl: String) {
+          startAgeCheck(input: { returnUrl: ${'$'}returnUrl }) { url provider ageCheck { $AGE_CHECK_FIELDS } }
+        }
+    """.trimIndent()
+
+    /** Asks the age check company how the check went, on coming back from it. */
+    val REFRESH_AGE_CHECK: String = """
+        mutation RefreshAgeCheck {
+          refreshAgeCheck(input: {}) { ageCheck { $AGE_CHECK_FIELDS } }
+        }
+    """.trimIndent()
+
     val BLOCK_USER: String = """
         mutation BlockUser(${'$'}userId: ID!) {
           blockUser(input: { userId: ${'$'}userId }) { blockedUsers { id name avatarUrl } }
@@ -433,9 +479,49 @@ object Documents {
     """.trimIndent()
 
     /** Files a report with the audience's admins, and blocks the person behind it when [block] is true and there is one. */
+    // region Ping and Quickie chats (PrivateChat.kt). Fetched on their own, so the Ping and Quickie queries don't need
+    // an API with chats.
+
+    const val PRIVATE_CHAT_MESSAGE_FIELDS: String = "id chatId body isMine sentAt sender { id name }"
+
+    const val PRIVATE_CHAT_FIELDS: String = "id closesAt messages { $PRIVATE_CHAT_MESSAGE_FIELDS }"
+
+    val PING_CHAT: String = """
+        query PingChat(${'$'}id: ID!) {
+          node(id: ${'$'}id) { ... on Ping { id chat { $PRIVATE_CHAT_FIELDS } } }
+        }
+    """.trimIndent()
+
+    val QUICKIE_CHAT: String = """
+        query QuickieChat(${'$'}id: ID!) {
+          venues { venue(id: ${'$'}id) { pairUp { mine { match { id chat { $PRIVATE_CHAT_FIELDS } } } } } }
+        }
+    """.trimIndent()
+
+    val SEND_PRIVATE_CHAT_MESSAGE: String = """
+        mutation SendPrivateChatMessage(${'$'}chatId: ID!, ${'$'}body: String!) {
+          sendPrivateChatMessage(input: { chatId: ${'$'}chatId, body: ${'$'}body }) { message { $PRIVATE_CHAT_MESSAGE_FIELDS } }
+        }
+    """.trimIndent()
+
+    const val PRIVATE_CHAT_SUBSCRIPTION: String =
+        "subscription PrivateChat { privateChat { chatId closed message { $PRIVATE_CHAT_MESSAGE_FIELDS } } }"
+
+    // endregion
+
     val REPORT_CONTENT: String = """
         mutation ReportContent(${'$'}targetType: ReportTarget!, ${'$'}targetId: ID!, ${'$'}reason: String, ${'$'}block: Boolean) {
           reportContent(input: { targetType: ${'$'}targetType, targetId: ${'$'}targetId, reason: ${'$'}reason, block: ${'$'}block }) { reported blocked }
+        }
+    """.trimIndent()
+
+    /**
+     * A test report on a chat message (`test: true`): checked like a real one, but the API files nothing and blocks
+     * nobody, so the moderators' queue never sees it.
+     */
+    val REPORT_TEST_CHAT_MESSAGE: String = """
+        mutation ReportTestChatMessage(${'$'}messageId: ID!, ${'$'}reason: String) {
+          reportChatMessage(input: { messageId: ${'$'}messageId, reason: ${'$'}reason, test: true }) { reported blocked test }
         }
     """.trimIndent()
 

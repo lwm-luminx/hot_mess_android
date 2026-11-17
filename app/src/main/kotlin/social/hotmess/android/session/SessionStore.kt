@@ -1,9 +1,11 @@
 package social.hotmess.android.session
 
 import android.content.Context
+import android.os.Build
 import android.util.Log
 import com.audiencekit.AppleWebSignIn
 import com.audiencekit.AudienceKitClient
+import com.audiencekit.Branding
 import com.audiencekit.DeviceDescription
 import com.audiencekit.SessionEvent
 import com.audiencekit.android.current
@@ -14,6 +16,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import social.hotmess.android.AppConfiguration
+import social.hotmess.android.BuildConfig
 import social.hotmess.android.push.PushRegistrar
 import social.hotmess.core.ApiError
 import social.hotmess.core.FacebookLoginDialog
@@ -45,6 +48,8 @@ class SessionStore(
     private val configuration: AppConfiguration,
     private val push: PushRegistrar,
     private val scope: CoroutineScope,
+    /** The Facebook permissions AudienceKit's branding serves (`facebook_scopes`), once it has loaded. */
+    private val servedFacebookScopes: () -> Branding.FacebookScopes? = { null },
 ) {
     private val _state = MutableStateFlow<AuthState>(AuthState.Restoring)
     val state: StateFlow<AuthState> = _state.asStateFlow()
@@ -57,6 +62,10 @@ class SessionStore(
     val requiredVersion: StateFlow<VersionInfo?> = _requiredVersion.asStateFlow()
 
     val isSignedIn: Boolean get() = _state.value == AuthState.SignedIn
+
+    /** What sign-in asks Facebook for (see the companion's [Companion.permissions]). */
+    private val requestedPermissions: List<String>
+        get() = permissions(servedFacebookScopes(), asksForReviewedPermissions)
 
     /**
      * Why sign-in is showing, when the API ended the session rather than the person signing out. Cleared by the next
@@ -140,7 +149,7 @@ class SessionStore(
             signInFailed("Facebook sign-in isn't set up for this build yet.")
             return null
         }
-        val dialog = FacebookLoginDialog(appId, PERMISSIONS, context.packageName, configuration.facebookLoginConfigId)
+        val dialog = FacebookLoginDialog(appId, requestedPermissions, context.packageName, configuration.facebookLoginConfigId)
         val state = java.util.UUID.randomUUID().toString()
         pendingLogin = dialog to state
         return dialog.url(state)
@@ -149,7 +158,7 @@ class SessionStore(
     /** Starts sign-in through the Facebook app and returns the permissions to ask it for. */
     fun beginFacebookAppSignIn(): List<String> {
         _state.value = AuthState.SigningIn
-        return PERMISSIONS
+        return requestedPermissions
     }
 
     /** The Facebook app signed the person in: exchanges its access token for an AudienceKit session. */
@@ -407,17 +416,45 @@ class SessionStore(
         /** The app's own preferences (the remembered locale and the like). */
         const val PREFERENCES = "social.hotmess.preferences"
 
+        /** Permissions Meta's App Review approved for everyone on the production Hot Mess app. */
+        val APPROVED_PERMISSIONS = listOf("public_profile", "openid")
+
         /**
-         * Whether sign-in asks for email and user_friends (friends who also use the app at the same venue). Off while
-         * Meta's App Review has both pending on the Hot Mess Consumer app, so the betas ask only for public_profile;
-         * until it's back on, everyone's friends list is empty and no email is stored. Turn it back on once Meta
-         * approves them.
+         * Permissions App Review turned down on the production Hot Mess app (twice): email, and user_friends
+         * (friends who also use the app at the same venue). Without them everyone's friends list is empty and no
+         * email comes from Facebook.
          */
-        const val ASKS_FOR_REVIEWED_PERMISSIONS = true
+        val REVIEW_PENDING_PERMISSIONS = listOf("email", "user_friends")
+
+        /**
+         * Whether sign-in also asks for [REVIEW_PENDING_PERMISSIONS]: only debug builds and emulators, so the friends
+         * features can be worked on (and recorded for the next review) by the app's admins and testers. Play builds
+         * ask for [APPROVED_PERMISSIONS] alone until a review approves the rest.
+         */
+        val asksForReviewedPermissions: Boolean by lazy {
+            BuildConfig.DEBUG || isEmulator(Build.FINGERPRINT, Build.HARDWARE, Build.PRODUCT)
+        }
 
         /** What sign-in asks Facebook for. */
-        private val PERMISSIONS =
-            listOf("public_profile") +
-                if (ASKS_FOR_REVIEWED_PERMISSIONS) listOf("email", "user_friends") else emptyList()
+        fun permissions(asksForReviewed: Boolean): List<String> =
+            APPROVED_PERMISSIONS + if (asksForReviewed) REVIEW_PENDING_PERMISSIONS else emptyList()
+
+        /** Whether the device is the Android emulator, from its build fingerprint, hardware and product names. */
+        fun isEmulator(fingerprint: String?, hardware: String?, product: String?): Boolean {
+            val fp = fingerprint.orEmpty()
+            val hw = hardware.orEmpty()
+            val prod = product.orEmpty()
+            return fp.startsWith("generic") || fp.contains("emulator") || fp.contains("/sdk_gphone") ||
+                hw == "goldfish" || hw == "ranchu" ||
+                prod.startsWith("sdk") || prod.contains("emulator") || prod.contains("simulator")
+        }
+
+        /**
+         * What sign-in asks Facebook for: the list branding serves for this kind of build ([Branding.FacebookScopes]:
+         * production for Play builds, non-production for debug and emulator builds), so it changes without a new
+         * build; the built-in [permissions] when branding has none.
+         */
+        fun permissions(served: Branding.FacebookScopes?, asksForReviewed: Boolean): List<String> =
+            served?.scopes(nonProduction = asksForReviewed)?.takeIf { it.isNotEmpty() } ?: permissions(asksForReviewed)
     }
 }

@@ -21,13 +21,18 @@ data class SafetyState(
 }
 
 /** What a report is about: the API's `ReportTarget`, sent by name. */
-enum class ReportTarget { MESSAGE, PERSON, VENUE, PING, PHOTO, POST, POST_COMMENT }
+enum class ReportTarget { MESSAGE, PERSON, VENUE, PING, PHOTO, POST, POST_COMMENT, PRIVATE_MESSAGE }
 
 /** Why someone reports something. [label] is what the audience's admins read. */
 enum class ReportReason(val label: String) {
     SPAM("Spam"),
     HARASSMENT("Harassment or hate"),
     SEXUAL("Sexual content"),
+    /**
+     * An intimate image shared without the consent of the person in it. The API gives these 48 hours to be acted on
+     * (the Take It Down Act), so the label has to stay as the API reads it.
+     */
+    INTIMATE_IMAGE("Intimate image shared without consent"),
     /** Goes to AudienceKit's child safety team too, which withholds the content and reports CSAM to NCMEC. */
     CHILD_SAFETY("Child safety"),
     DANGER("Threats or danger"),
@@ -40,6 +45,8 @@ data class ReportSubject(
     val targetId: String,
     /** Who to offer to block as well; null for a venue, a listing, or a post as the venue. */
     val sender: BlockedUser? = null,
+    /** A moderation test line (`isTest`): the dialog offers "Send test report", which files nothing. */
+    val test: Boolean = false,
 ) {
     /** The reason picker's question. */
     val question: String
@@ -51,11 +58,12 @@ data class ReportSubject(
             ReportTarget.PHOTO -> "Why are you reporting this photo?"
             ReportTarget.POST -> "Why are you reporting this post?"
             ReportTarget.POST_COMMENT -> "Why are you reporting this comment?"
+            ReportTarget.PRIVATE_MESSAGE -> "Why are you reporting this message?"
         }
 }
 
 @Serializable
-data class ReportResult(val reported: Boolean = false, val blocked: Boolean = false)
+data class ReportResult(val reported: Boolean = false, val blocked: Boolean = false, val test: Boolean = false)
 
 /** The audience's legal pages, linked from Me, sign-in and the terms prompt. */
 object LegalLinks {

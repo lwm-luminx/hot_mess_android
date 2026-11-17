@@ -62,6 +62,9 @@ class LocationProvider(
     private val scope: CoroutineScope,
     private val geofences: VenueGeofences? = null,
 ) {
+    /** Told each time the API resolves the locale the device is in, changed or not (the cache refresher keeps it). */
+    var onLocaleResolved: ((AppLocale) -> Unit)? = null
+
     // First, since the flows below read it as they start.
     private val manager = context.getSystemService(LocationManager::class.java)
 
@@ -191,6 +194,8 @@ class LocationProvider(
             val resolved = api.closestLocale(position)
             localeLookedUpNear = position
             resolved ?: return
+            // Every visit counts, so a city the person stays in keeps being refreshed.
+            onLocaleResolved?.invoke(resolved)
             if (resolved.id == _locale.value?.id && !_cityChosen.value) return
             _locale.value = resolved
             _cityChosen.value = false

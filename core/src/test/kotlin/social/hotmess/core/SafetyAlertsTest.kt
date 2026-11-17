@@ -45,6 +45,15 @@ class SafetyAlertsTest {
     }
 
     @Test
+    fun opensFriendsFromContactsLinksOnNow() {
+        assertEquals(AppRoute.Friends(requests = false), DeepLink.route("https://hotmess.social/friends/contacts"))
+        assertEquals(AppRoute.Friends(requests = true), DeepLink.route("hotmess://friends/requests"))
+        assertEquals(AppTab.NOW, AppRoute.Friends(requests = true).tab)
+        assertEquals(null, DeepLink.route("https://hotmess.social/friends/other"))
+        assertEquals(null, DeepLink.route("https://hotmess.social/friends/contacts/extra"))
+    }
+
+    @Test
     fun setsARidesPickupAtTheVenue() {
         val ride = SupportRide(
             id = "uber",

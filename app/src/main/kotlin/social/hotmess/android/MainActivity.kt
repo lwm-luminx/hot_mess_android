@@ -21,6 +21,7 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialException
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import com.facebook.CallbackManager
@@ -35,7 +36,6 @@ import com.google.android.gms.auth.api.identity.Identity
 import com.google.android.gms.common.api.Scope
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
@@ -63,9 +63,8 @@ class MainActivity : ComponentActivity(), GoogleAccounts {
     /** Sign-in through the Facebook app, when this build's Facebook SDK started (see [FacebookAppSignIn]). */
     private var facebookLogin: ActivityResultLauncher<Collection<String>>? = null
 
-    /** Google's consent screen for [EMAILS_SCOPE], and the access token it answers [pendingEmailsToken] with. */
+    /** Google's consent screen for [EMAILS_SCOPE]; its answer goes to [GoogleConsent], which outlives this activity. */
     private lateinit var googleConsent: ActivityResultLauncher<IntentSenderRequest>
-    private var pendingEmailsToken: CompletableDeferred<String?>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -77,8 +76,7 @@ class MainActivity : ComponentActivity(), GoogleAccounts {
             val token = runCatching {
                 Identity.getAuthorizationClient(this).getAuthorizationResultFromIntent(result.data).accessToken
             }.getOrNull()
-            pendingEmailsToken?.complete(token)
-            pendingEmailsToken = null
+            GoogleConsent.finish(token)
         }
 
         setContent {
@@ -199,8 +197,17 @@ class MainActivity : ComponentActivity(), GoogleAccounts {
                 )
             } catch (e: GetCredentialCancellationException) {
                 graph.session.signInCancelled()
+            } catch (e: GetCredentialException) {
+                Log.e("HotMess", "Google sign-in failed on the device: ${e.type}: ${e.message}")
+                graph.session.signInFailed(GoogleSignInError.message(e))
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // The activity went away mid sign-in (rotated, recreated): back to the sign-in buttons, never a
+                // "Job was cancelled" error or a spinner that never stops.
+                graph.session.signInCancelled()
+                throw e
             } catch (e: Exception) {
-                graph.session.signInFailed(e.message ?: "Google sign-in failed.")
+                Log.e("HotMess", "Google sign-in failed: ${e.message}", e)
+                graph.session.signInFailed("Google sign-in didn't work. Try again, or ${GoogleSignInError.OTHER_WAYS}.")
             }
         }
     }
@@ -212,6 +219,9 @@ class MainActivity : ComponentActivity(), GoogleAccounts {
             graph.session.connectGoogle(credential.idToken)
         } catch (e: GetCredentialCancellationException) {
             ""
+        } catch (e: GetCredentialException) {
+            Log.e("HotMess", "Connect Google failed on the device: ${e.type}: ${e.message}")
+            GoogleSignInError.message(e, signingIn = false)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -258,10 +268,9 @@ class MainActivity : ComponentActivity(), GoogleAccounts {
         when {
             result == null -> null
             result.hasResolution() && consent != null -> {
-                val pending = CompletableDeferred<String?>()
-                pendingEmailsToken = pending
+                val wait = GoogleConsent.begin()
                 googleConsent.launch(IntentSenderRequest.Builder(consent.intentSender).build())
-                pending.await()
+                GoogleConsent.await(wait)
             }
             else -> result.accessToken
         }
@@ -304,6 +313,8 @@ class MainActivity : ComponentActivity(), GoogleAccounts {
         val route = link.route
         // A texted Ping link: Now shows its invitation.
         if (route is AppRoute.NowPing && route.invitation != null) graph.openPingInvitation(route)
+        // "A friend joined": Now, with the find-friends sheet over it. Requests are on Now itself.
+        if (route is AppRoute.Friends) graph.contactFriends.opened(sheet = !route.requests && graph.session.isSignedIn)
         val expiry = link.expiry
         if (expiry == null) {
             links.trySend(route)
@@ -327,6 +338,8 @@ class MainActivity : ComponentActivity(), GoogleAccounts {
             ?: PingPush.parse(data)?.let { AppRoute.NowPing(it.pingId) }
             ?: return false
         if (route is AppRoute.NowPing) graph.pingUpdated(route.pingId)
+        if (route is AppRoute.PingChat) graph.pingUpdated(route.pingId)
+        if (route is AppRoute.Friends) graph.contactFriends.opened(sheet = !route.requests && graph.session.isSignedIn)
         links.trySend(route)
         return true
     }

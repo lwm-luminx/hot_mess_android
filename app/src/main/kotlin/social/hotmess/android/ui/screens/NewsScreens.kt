@@ -39,6 +39,7 @@ import com.audiencekit.ArticleStatus
 import com.audiencekit.ArticleTopic
 import com.audiencekit.AudienceKitException
 import com.audiencekit.Publication
+import com.audiencekit.PublisherAdsCopy
 import com.audiencekit.SoapboxCopy
 import com.audiencekit.article
 import com.audiencekit.articles
@@ -112,18 +113,61 @@ fun LocalNewsSection(title: String, localeId: String, navigator: Navigator) {
 
 /**
  * Opens an article: the reader, or for a teaser (a publication that isn't on Soapbox yet links out) the piece on the
- * publication's own site, where its ads and traffic are.
+ * publication's own site, where its ads and traffic are. The first time, the reader acknowledges that the publisher
+ * runs its own ads ([PublisherAdsDialog]) before either opens, unless they tipped the publication to read it without
+ * ads.
  */
 @Composable
 fun rememberOpenArticle(article: Article, navigator: Navigator): () -> Unit {
+    val graph = LocalAppGraph.current
+    val userId = rememberUserId()
     val uriHandler = LocalUriHandler.current
     val url = article.canonicalUrl?.takeIf { article.teaser }
-    return remember(article.id, url) {
+    val open = remember(article.id, url) {
         {
             val opened = url != null && runCatching { uriHandler.openUri(url) }.isSuccess
             if (!opened) navigator.open(AppRoute.ArticleDetail(article.id))
         }
     }
+    var asking by remember { mutableStateOf(false) }
+    if (asking) {
+        PublisherAdsDialog(
+            onAccept = {
+                graph.publisherAds.acknowledge(userId)
+                asking = false
+                open()
+            },
+            onDecline = { asking = false },
+        )
+    }
+    return {
+        if (graph.publisherAds.isAcknowledged(userId) || article.showsWithoutAds) {
+            open()
+        } else {
+            asking = true
+        }
+    }
+}
+
+/**
+ * The one-time note before a reader's first Soapbox story: the publisher chooses and answers for the ads in its
+ * stories so it can keep paying writers, Hot Mess takes no cut, its own sponsored spots are separate and marked
+ * Sponsored, and no data goes to a publisher's advertisers.
+ */
+@Composable
+fun PublisherAdsDialog(onAccept: () -> Unit, onDecline: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDecline,
+        title = { Text(PublisherAdsCopy.TITLE) },
+        text = { Text(PublisherAdsCopy.body(appName = "Hot Mess")) },
+        confirmButton = {
+            TextButton(onClick = onAccept, modifier = Modifier.testTag("publisherAds.accept")) {
+                Text(PublisherAdsCopy.ACCEPT)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDecline) { Text(PublisherAdsCopy.DECLINE) } },
+        modifier = Modifier.testTag("publisherAds.note"),
+    )
 }
 
 /** A teaser's site, e.g. "qsaltlake.com", shown on its row so readers know it opens the web. */
@@ -182,6 +226,30 @@ fun ArticleScreen(id: String, navigator: Navigator) {
     LaunchedEffect(id) { loader.load(id, fetch = fetch) }
     val state by loader.state.collectAsStateWithLifecycle()
     val uriHandler = LocalUriHandler.current
+    // Reached without the note (a push or a link): ask first, and back out on "Not now".
+    val userId = rememberUserId()
+    // Asked once the story loads: a reader who tipped its publication to read it without ads has nothing to acknowledge.
+    var askedAboutAds by rememberSaveable { mutableStateOf(false) }
+    var askingAboutAds by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(state) {
+        val loaded = (state as? LoadState.Loaded)?.value ?: return@LaunchedEffect
+        if (!askedAboutAds) {
+            askedAboutAds = true
+            askingAboutAds = !graph.publisherAds.isAcknowledged(userId) && !loaded.showsWithoutAds
+        }
+    }
+    if (askingAboutAds) {
+        PublisherAdsDialog(
+            onAccept = {
+                graph.publisherAds.acknowledge(userId)
+                askingAboutAds = false
+            },
+            onDecline = {
+                askingAboutAds = false
+                navigator.back()
+            },
+        )
+    }
 
     ScreenScaffold((state as? LoadState.Loaded)?.value?.publication?.name.orEmpty(), onBack = navigator::back) {
         LoadStateView(state, onRetry = { loader.load(id, refresh = true, fetch = fetch) }) { article ->
@@ -212,6 +280,15 @@ fun ArticleScreen(id: String, navigator: Navigator) {
                     item(key = "disclosure") {
                         Surface(color = tokens.surfaceRaised, shape = RoundedCornerShape(12.dp), modifier = Modifier.testTag("article.disclosure")) {
                             Text(disclosure, style = HotMessType.bodySmall, color = tokens.inkMuted, modifier = Modifier.padding(Space.s3))
+                        }
+                    }
+                }
+                if (article.showsWithoutAds) {
+                    item(key = "adFree") { AdFreeThanks(article.publication.name) }
+                } else if (!article.teaser) {
+                    item(key = "adFreeTip") {
+                        AdFreeTipButton(article.publication.id, article.publication.name, article.publication.adFreeOffered) {
+                            loader.load(id, refresh = true, quiet = true, fetch = fetch)
                         }
                     }
                 }
@@ -294,6 +371,15 @@ fun PublicationScreen(id: String, navigator: Navigator) {
                                     modifier = Modifier.clickable(role = Role.Button) { uriHandler.openUri(url) },
                                 )
                             }
+                        }
+                    }
+                }
+                if (publication.viewerAdFree == true) {
+                    item(key = "adFree") { AdFreeThanks(publication.name, publication.viewerAdFreeUntil) }
+                } else {
+                    item(key = "adFreeTip") {
+                        AdFreeTipButton(publication.id, publication.name, publication.adFreeOffered) {
+                            loader.load(id, refresh = true, quiet = true, fetch = fetch)
                         }
                     }
                 }

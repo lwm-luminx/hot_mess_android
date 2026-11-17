@@ -7,6 +7,7 @@ import com.audiencekit.AudienceKitException
 import com.audiencekit.Coordinate
 import com.audiencekit.Coordinates
 import com.audiencekit.CoverPurchase
+import com.audiencekit.GraphQLCachePolicy
 import com.audiencekit.GraphQLError
 import com.audiencekit.RSVPState
 import com.audiencekit.graphQLVariables
@@ -62,10 +63,14 @@ class HotMessApi(val client: AudienceKitClient) {
         val dispatcher = currentCoroutineContext()[ContinuationInterceptor] ?: EmptyCoroutineContext
         val report = synchronized(reports) {
             reports[near] ?: shared.async(dispatcher) {
+                // The position changes with every report, so the answer is kept under one name: when the API
+                // fails, the last "Now" stands in for half an hour (where you are can change, so not longer).
                 query(
                     Documents.REPORT_LOCATION,
                     ReportLocationResponse.serializer(),
                     mapOf("position" to near.toGraphQLValue()),
+                    cachePolicy = GraphQLCachePolicy.NetworkFirst(NOW_MAX_AGE_MILLIS),
+                    cacheKey = NOW_CACHE_KEY,
                 ).reportLocation.now(json)
             }.also { request ->
                 reports[near] = request
@@ -74,6 +79,13 @@ class HotMessApi(val client: AudienceKitClient) {
         }
         return report.await().also(friends::record)
     }
+
+    /** The last "Now" the API sent, if it's recent, to show while a new one loads. */
+    suspend fun cachedNow(): Now? =
+        client.cachedGraphQL(
+            Documents.REPORT_LOCATION, ReportLocationResponse.serializer(), json = json,
+            maxAgeMillis = NOW_MAX_AGE_MILLIS, cacheKey = NOW_CACHE_KEY,
+        )?.value?.reportLocation?.now(json)
 
     /**
      * [now], or without a position just your Ping and your friends', which don't need one, so Now can
@@ -110,7 +122,8 @@ class HotMessApi(val client: AudienceKitClient) {
 
     /** The envelopes of the venues near [near], for venue geofences; venues without a point are left out. */
     suspend fun venueFences(near: Coordinates): List<VenueFence> =
-        query(Documents.VENUE_FENCES, VenueFencesResponse.serializer(), mapOf("near" to near.toGraphQLValue()))
+        // Every report is from a new spot; the last set still stands in.
+        query(Documents.VENUE_FENCES, VenueFencesResponse.serializer(), mapOf("near" to near.toGraphQLValue()), cacheKey = "VenueFences")
             .venues?.list?.nodes.orEmpty().mapNotNull { node ->
                 val point = node.point?.let(Coordinate::fromWkt) ?: return@mapNotNull null
                 val id = RecordId.normalize(node.id) ?: return@mapNotNull null
@@ -201,11 +214,19 @@ class HotMessApi(val client: AudienceKitClient) {
 
     // region Events
 
-    suspend fun events(localeId: String): EventListing {
-        val locale = query(Documents.LOCALE_EVENTS, LocaleEventsResponse.serializer(), graphQLVariables("id" to localeId)).locale
-            ?: throw ApiError.NotFound
+    /** A locale's upcoming events. A background refresh passes [GraphQLCachePolicy.Refresh] to see failures. */
+    suspend fun events(localeId: String, cachePolicy: GraphQLCachePolicy? = null): EventListing {
+        val locale = query(
+            Documents.LOCALE_EVENTS, LocaleEventsResponse.serializer(), graphQLVariables("id" to localeId),
+            cachePolicy = cachePolicy,
+        ).locale ?: throw ApiError.NotFound
         return EventListing.upcoming(locale.events)
     }
+
+    /** A locale's events as last loaded (here or by the background refresh), to show while they refresh. */
+    suspend fun cachedEvents(localeId: String): EventListing? =
+        client.cachedGraphQL(Documents.LOCALE_EVENTS, LocaleEventsResponse.serializer(), graphQLVariables("id" to localeId), json = json)
+            ?.value?.locale?.let { EventListing.upcoming(it.events) }
 
     suspend fun event(id: String): Event =
         query(Documents.EVENT, EventResponse.serializer(), graphQLVariables("id" to id)).event
@@ -499,6 +520,27 @@ class HotMessApi(val client: AudienceKitClient) {
 
     // endregion
 
+    // region Ping and Quickie chats
+
+    /** A ping's chat, when the user is in its circle and someone's in; null otherwise. */
+    suspend fun pingChat(pingId: String): PrivateChat? =
+        query(Documents.PING_CHAT, PingChatResponse.serializer(), graphQLVariables("id" to pingId)).node?.chat
+
+    /** The chat with the user's Quickie match at a venue, once both said yes; null otherwise. */
+    suspend fun quickieChat(venueId: String): PrivateChat? =
+        query(Documents.QUICKIE_CHAT, QuickieChatResponse.serializer(), graphQLVariables("id" to venueId))
+            .venues?.venue?.pairUp?.mine?.match?.chat
+
+    /** Says something in a Ping or Quickie chat. Throws when it has ended, the word list refuses it, or it's too fast. */
+    suspend fun sendPrivateChatMessage(chatId: String, body: String): PrivateChatMessage =
+        mutate(
+            Documents.SEND_PRIVATE_CHAT_MESSAGE,
+            SendPrivateChatMessageResponse.serializer(),
+            graphQLVariables("chatId" to chatId, "body" to body),
+        ).sendPrivateChatMessage.message
+
+    // endregion
+
     // region Pair me up
 
     /** Pair me up at a venue: null where the venue doesn't have it. */
@@ -689,10 +731,62 @@ class HotMessApi(val client: AudienceKitClient) {
         return SafetyState(termsAccepted = me.termsAcceptedAt != null, blockedUsers = me.blockedUsers)
     }
 
-    /** Records that the user agreed to the terms of use, which chat and Pings need first. */
-    suspend fun acceptTerms() {
+    /**
+     * Records that the user agreed to the terms of use, which chat and Pings need first. With [adult], it also sends
+     * the app's 18+ confirmation so the account keeps it; an API from before it took that refuses the document, so
+     * the plain one is the fallback.
+     */
+    suspend fun acceptTerms(adult: Boolean = false) {
+        if (adult) {
+            try {
+                mutate(Documents.ACCEPT_TERMS_AS_ADULT, JsonObject.serializer())
+                return
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // An older API: fall through to the plain document.
+            }
+        }
         mutate(Documents.ACCEPT_TERMS, JsonObject.serializer())
     }
+
+    /**
+     * Where the user stands with the proof of age their country asks for, or null signed out. An API from before age
+     * checks refuses the document, which reads as nothing being asked.
+     */
+    suspend fun ageCheck(): AgeCheck? =
+        try {
+            query(Documents.AGE_CHECK, AgeCheckResponse.serializer()).me?.ageCheck
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: ApiError) {
+            null
+        }
+
+    /** Tells the API the Play store's country ([country] as Play Billing gives it); returns where they stand. */
+    suspend fun reportStoreCountry(country: String): AgeCheck =
+        ageCheckMutation(Documents.REPORT_STORE_COUNTRY, graphQLVariables("country" to country))
+
+    /** Sends the age check purchase for the API to check with Google Play; afterwards the check can start. */
+    suspend fun recordAgeCheckPurchase(purchaseToken: String, productId: String): AgeCheck =
+        ageCheckMutation(
+            Documents.RECORD_AGE_CHECK_PURCHASE,
+            graphQLVariables("purchaseToken" to purchaseToken, "productId" to productId),
+        )
+
+    /** Opens the paid check with the age check company; [returnUrl] is where its page sends them afterwards. */
+    suspend fun startAgeCheck(returnUrl: String?): AgeCheckSession {
+        val payload = mutate(Documents.START_AGE_CHECK, AGE_CHECK_PAYLOADS, graphQLVariables("returnUrl" to returnUrl))
+            .values.firstOrNull() ?: throw failed(ApiError.Decoding("startAgeCheck"), "StartAgeCheck")
+        return AgeCheckSession(url = payload.url, provider = payload.provider.orEmpty(), ageCheck = payload.ageCheck)
+    }
+
+    /** Asks how the check they are waiting on went. */
+    suspend fun refreshAgeCheck(): AgeCheck = ageCheckMutation(Documents.REFRESH_AGE_CHECK, emptyMap())
+
+    private suspend fun ageCheckMutation(document: String, variables: Map<String, JsonElement>): AgeCheck =
+        mutate(document, AGE_CHECK_PAYLOADS, variables).values.firstOrNull()?.ageCheck
+            ?: throw failed(ApiError.Decoding("ageCheck"), operationName(document))
 
     /** Blocks someone by user id; returns everyone the user now blocks. The audience's admins are told. */
     suspend fun block(userId: String): List<BlockedUser> =
@@ -720,6 +814,14 @@ class HotMessApi(val client: AudienceKitClient) {
             ReportContentResponse.serializer(),
             graphQLVariables("targetType" to target.name, "targetId" to targetId, "reason" to reason, "block" to block),
         ).reportContent
+
+    /** Sends a test report on a chat message: nothing is filed, nobody is blocked, and the queue never sees it. */
+    suspend fun reportTest(messageId: String, reason: String?): ReportResult =
+        mutate(
+            Documents.REPORT_TEST_CHAT_MESSAGE,
+            ReportTestChatMessageResponse.serializer(),
+            graphQLVariables("messageId" to messageId, "reason" to reason),
+        ).reportChatMessage
 
     /** Deletes the user's account and everything recorded about them, and ends every session. */
     suspend fun deleteAccount(): Boolean =
@@ -821,11 +923,19 @@ class HotMessApi(val client: AudienceKitClient) {
 
     // endregion
 
+    /**
+     * Runs a query. It uses the client's cache policy (the last good answer when the API can't answer, set up in the
+     * app's AppGraph) unless [cachePolicy] says otherwise; [cacheKey] keeps the answer under a name of its own.
+     */
     private suspend fun <T> query(
         document: String,
         serializer: KSerializer<T>,
         variables: Map<String, JsonElement>? = null,
-    ): T = call(operationName(document)) { client.graphQL(document, serializer, variables, json = json) }
+        cachePolicy: GraphQLCachePolicy? = null,
+        cacheKey: String? = null,
+    ): T = call(operationName(document)) {
+        client.graphQL(document, serializer, variables, json = json, cachePolicy = cachePolicy, cacheKey = cacheKey)
+    }
 
     /**
      * [call] for the cover mutations. An error the API wrote for people ("The Wildrose doesn't take cover in
@@ -876,6 +986,10 @@ class HotMessApi(val client: AudienceKitClient) {
     }
 
     companion object {
+        /** The cache name the latest "Now" is kept under, and how long it stands in when the API fails. */
+        const val NOW_CACHE_KEY = "Now"
+        const val NOW_MAX_AGE_MILLIS = 30L * 60 * 1000
+
         /** Ignores fields the app doesn't know, so new API fields never break a shipped build. */
         val json: Json = Json {
             ignoreUnknownKeys = true
@@ -1297,6 +1411,9 @@ private data class SendFriendRequestResponse(val sendFriendRequest: Payload) {
 private data class ReportContentResponse(val reportContent: ReportResult)
 
 @Serializable
+private data class ReportTestChatMessageResponse(val reportChatMessage: ReportResult)
+
+@Serializable
 private data class DeleteAccountResponse(val deleteAccount: Payload) {
     @Serializable data class Payload(val deleted: Boolean = false)
 }
@@ -1313,6 +1430,29 @@ private data class RegisterDeviceResponse(val registerDevice: Payload? = null) {
 
 /** `venues { venue(id:) { pairUp } }`; a venue without it has no `pairUp`. */
 @Serializable
+private data class PingChatResponse(val node: Node? = null) {
+    @Serializable data class Node(val chat: PrivateChat? = null)
+}
+
+@Serializable
+private data class QuickieChatResponse(val venues: Venues? = null) {
+    @Serializable data class Venues(val venue: Venue? = null)
+
+    @Serializable data class Venue(val pairUp: PairUp? = null)
+
+    @Serializable data class PairUp(val mine: Mine? = null)
+
+    @Serializable data class Mine(val match: Match? = null)
+
+    @Serializable data class Match(val chat: PrivateChat? = null)
+}
+
+@Serializable
+private data class SendPrivateChatMessageResponse(val sendPrivateChatMessage: Payload) {
+    @Serializable data class Payload(val message: PrivateChatMessage)
+}
+
+@Serializable
 private data class VenuePairUpResponse(val venues: Venues? = null) {
     @Serializable data class Venues(val venue: Venue? = null)
 
@@ -1325,6 +1465,16 @@ private data class PairUpPayload(val pairUp: PairUpState? = null)
 // Nullable: a refused mutation comes back as `{"errors":[…],"data":{"joinPairUp":null}}`, and decoding a null payload
 // would hide the refusal ("Agree to the community terms…") behind a decoding failure.
 private val PAIR_UP_PAYLOADS = MapSerializer(String.serializer(), PairUpPayload.serializer().nullable)
+
+@Serializable
+private data class AgeCheckResponse(val me: Me? = null) {
+    @Serializable data class Me(val ageCheck: AgeCheck? = null)
+}
+
+@Serializable
+private data class AgeCheckPayload(val ageCheck: AgeCheck, val url: String? = null, val provider: String? = null)
+
+private val AGE_CHECK_PAYLOADS = MapSerializer(String.serializer(), AgeCheckPayload.serializer().nullable)
 
 private val SAFETY_ALERT_PAYLOADS = MapSerializer(String.serializer(), SafetyAlertPayload.serializer().nullable)
 

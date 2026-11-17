@@ -15,6 +15,8 @@
 
     <!-- Pair me up: scanning your match's code when you meet. -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Find friends from contacts: names and numbers are read on the phone and only scrambled codes are sent. -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <!-- Venue beacons. Android 12 and later ask for nearby devices; older versions use location. -->
@@ -75,6 +77,8 @@
                 <data android:pathPrefix="/posts/" />
                 <!-- A Ping, from a push or a link texted from the send sheet (with its invitation in `e`). -->
                 <data android:pathPrefix="/pings/" />
+                <!-- Friends from contacts: /friends/contacts and /friends/requests, from a push. -->
+                <data android:pathPrefix="/friends/" />
                 <!-- A venue's short link (a TV's QR code), followed through the site's redirect (ShortLink). -->
                 <data android:pathPrefix="/v/" />
                 <!-- A locale's chat room (a venue's, /venues/<id>/chat, is under /venues/). -->
@@ -132,6 +136,12 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+
+        <!-- Background refreshes of the on-device data cache (support/CacheRefresher.kt). -->
+        <service
+            android:name=".support.CacheRefreshJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <service
             android:name=".push.HotMessMessagingService"

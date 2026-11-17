@@ -127,7 +127,7 @@ private val NOW_FALLBACK_CARDS = listOf(
     CardKind.NOW_STAGE, CardKind.NOW_CHAT, CardKind.POSTS_TONIGHT, CardKind.NOW_SMALL_TALK, CardKind.EVENTS_UPCOMING,
     CardKind.ARTICLES_LOCALE, CardKind.POSTS_LOCALE, CardKind.VENUES_NEARBY, CardKind.VENUES_FRIENDS, CardKind.PINGS,
 )
-private val NOW_CARD_KINDS = NOW_FALLBACK_CARDS + listOf(CardKind.WEB, CardKind.PROMO_SLOT)
+private val NOW_CARD_KINDS = NOW_FALLBACK_CARDS + listOf(CardKind.WEB, CardKind.PROMO_SLOT, CardKind.FLYERS)
 
 /**
  * What's happening where you are: the venue you're in, with the last few lines of its chat and the
@@ -143,7 +143,10 @@ fun NowScreen(navigator: Navigator) {
     val refreshing by loader.isRefreshing.collectAsStateWithLifecycle()
     val simulated by graph.location.simulatedVenue.collectAsStateWithLifecycle()
 
-    LaunchedEffect(coordinates) { loader.load(coordinates) { graph.api.nowOrPings(coordinates) } }
+    LaunchedEffect(coordinates) {
+        // The last "Now" (half an hour at most) shows while the position report goes out.
+        loader.load(coordinates, cached = { coordinates?.let { graph.api.cachedNow() } }) { graph.api.nowOrPings(coordinates) }
+    }
 
     // A Ping push arrived or was tapped: reload, keeping what's on screen meanwhile.
     val latestCoordinates by rememberUpdatedState(coordinates)
@@ -169,6 +172,9 @@ fun NowScreen(navigator: Navigator) {
     }
 
     val cardLayout = rememberScreenCards(LayoutScreen.NOW, NOW_CARD_KINDS, NOW_FALLBACK_CARDS)
+    // Friends from contacts: requests waiting on an answer, and the offer to turn matching on.
+    val contactFriends = graph.contactFriends
+    LaunchedEffect(contactFriends) { contactFriends.load() }
     val userId = rememberUserId()
     val scope = rememberCoroutineScope()
     var sheetOpen by rememberSaveable { mutableStateOf(false) }
@@ -334,6 +340,12 @@ fun NowScreen(navigator: Navigator) {
                             }
                         }
                     }
+                    contactFriends.incomingRequests.forEach { request ->
+                        item(key = "friend-request-${request.id}") { FriendRequestCard(contactFriends, request) }
+                    }
+                    if (contactFriends.offersCard) {
+                        item(key = "find-friends") { FindFriendsCard(contactFriends) }
+                    }
                     // The cards in the server's order (the built-in one when it can't be had); a kind this build
                     // doesn't draw was never asked for.
                     cardLayout.cards.forEach { card ->
@@ -446,6 +458,7 @@ fun NowScreen(navigator: Navigator) {
                             }
                             CardKind.WEB -> card.web?.let { content -> item(key = card.id) { WebCardView(content) } }
                             CardKind.PROMO_SLOT -> item(key = card.id) { PromoSlotView(card, cardLayout.id, navigator) }
+                            CardKind.FLYERS -> card.flyers?.let { content -> item(key = card.id) { FlyersCardView(content) } }
                         }
                     }
                     // Passes and the cover depend on this device, so they aren't cards: they go just above pings.

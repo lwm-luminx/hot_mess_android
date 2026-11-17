@@ -42,16 +42,28 @@ sealed interface AppRoute {
     /** One of the user's safety alerts, from a push about it (`/safety-alerts/<id>`); it opens over Me. */
     data class SafetyAlertHelp(val id: String) : AppRoute
 
+    /**
+     * Friends from contacts, over Now: the find-friends sheet (`/friends/contacts`, from "a friend joined") or the
+     * requests waiting on an answer (`/friends/requests`, when [requests]).
+     */
+    data class Friends(val requests: Boolean) : AppRoute
+
+    /** A Ping's chat (`/pings/<id>/chat`, what a push about a new line in it carries): over Now. */
+    data class PingChat(val pingId: String) : AppRoute
+
+    /** The Quickie chat at a venue (`/venues/<id>/quickie`, what a push about a new line carries): over the venue. */
+    data class QuickieChat(val venueId: String) : AppRoute
+
     /** A share link that has expired: Venues, which says so, in place of the record it named. */
     data object LinkExpired : AppRoute
 
     /** Which tab the route opens in. */
     val tab: AppTab
         get() = when (this) {
-            is VenueDetail, is LocaleDetail -> AppTab.VENUES
+            is VenueDetail, is LocaleDetail, is QuickieChat -> AppTab.VENUES
             is EventDetail -> AppTab.EVENTS
             is PersonDetail -> AppTab.PEOPLE
-            is NowPing -> AppTab.NOW
+            is NowPing, is Friends, is PingChat -> AppTab.NOW
             LinkExpired -> AppTab.VENUES
             // A venue's room over its page; a locale's is reached from Now.
             is Chat -> if (room.kind == ChatRoom.Kind.VENUE) AppTab.VENUES else AppTab.NOW
@@ -121,15 +133,24 @@ object DeepLink {
 
     private fun route(segments: List<String>, token: String?): AppRoute? {
         if (segments.size < 2) return null
+        if (segments[0] == "friends") {
+            return when (segments[1].takeIf { segments.size == 2 }) {
+                "contacts" -> AppRoute.Friends(requests = false)
+                "requests" -> AppRoute.Friends(requests = true)
+                else -> null
+            }
+        }
         val id = runCatching { java.util.UUID.fromString(segments[1]).toString() }.getOrNull() ?: return null
 
         if (segments.getOrNull(2) == "chat") {
             return when (segments[0]) {
                 "venues" -> AppRoute.Chat(ChatRoom.venue(id))
                 "locales" -> AppRoute.Chat(ChatRoom.locale(id))
+                "pings" -> AppRoute.PingChat(id)
                 else -> null
             }
         }
+        if (segments.size == 3 && segments[0] == "venues" && segments[2] == "quickie") return AppRoute.QuickieChat(id)
 
         return when (segments[0]) {
             "venues" -> AppRoute.VenueDetail(id)

@@ -107,6 +107,7 @@ private enum class Confirm { RESET, SIGN_OUT, DELETE }
 @Composable
 fun MeScreen(navigator: Navigator) {
     val graph = LocalAppGraph.current
+    LaunchedEffect(graph.contactFriends) { graph.contactFriends.load() }
     val context = LocalContext.current
     val user by graph.session.user.collectAsStateWithLifecycle()
     val locale by graph.location.locale.collectAsStateWithLifecycle()
@@ -117,6 +118,8 @@ fun MeScreen(navigator: Navigator) {
     val tribes by graph.tribes.choices.collectAsStateWithLifecycle()
     var unblocking by remember { mutableStateOf<String?>(null) }
     var deleting by remember { mutableStateOf(false) }
+    var findingHelp by remember { mutableStateOf(false) }
+    if (findingHelp) ResourcesDialog(focusResourceId = null) { findingHelp = false }
     var failure by remember { mutableStateOf<String?>(null) }
     var confirm by remember { mutableStateOf<Confirm?>(null) }
     var reportingProblem by remember { mutableStateOf(false) }
@@ -416,6 +419,10 @@ fun MeScreen(navigator: Navigator) {
                     }
                 }
             }
+            // Friends from contacts; draws nothing where the API can't text a code yet.
+            if (graph.contactFriends.state?.let { it.enabled || it.canOffer } == true) {
+                item { ContactsSection(graph.contactFriends) }
+            }
             if (recentChatPush != null || pairUpPush != null) {
                 item {
                     DetailSection("Notifications") {
@@ -464,6 +471,9 @@ fun MeScreen(navigator: Navigator) {
             item {
                 DetailSection("Help and safety") {
                     InfoRow("Need support?", icon = Icons.Rounded.Favorite, onClick = { navigator.openSupport(null) }, trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight)
+                    RowDivider()
+                    // Food, shelter, health and support in the city, filtered on the phone.
+                    InfoRow("Find help nearby", icon = Icons.Rounded.Favorite, onClick = { findingHelp = true }, trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight)
                     RowDivider()
                     InfoRow("Getting help at a venue", icon = Icons.Rounded.Shield, onClick = navigator::openGettingHelp, trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight)
                     RowDivider()

@@ -89,6 +89,9 @@ fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}, onAppleSi
         signInMethods = graph.api.signInMethods(graph.configuration.audienceHost)
         asked = true
     }
+    // This build sends no Play Integrity proof with sign-ins, so an audience that requires one will refuse it: say
+    // so before anyone taps a button.
+    val deviceCheckWarning = signInMethods?.deviceCheckWarning(canAttest = false)
     val offersFacebook = signInMethods?.facebook ?: true
     val offersGoogle = signInMethods?.google ?: true
     // Apple needs the API's hand-back (/v1/token/apple/callback), so it waits for an API that lists it.
@@ -169,6 +172,9 @@ fun LoginScreen(onSignIn: () -> Unit, onGoogleSignIn: () -> Unit = {}, onAppleSi
                     val notice = endedNotice
                     if (state == AuthState.SignedOut && notice != null) {
                         Text(notice, style = HotMessType.body, color = Color.White, textAlign = TextAlign.Center)
+                    }
+                    if (deviceCheckWarning != null) {
+                        Text(deviceCheckWarning, style = HotMessType.body, color = Color.White, textAlign = TextAlign.Center)
                     }
                     if (signingIn) {
                         CircularProgressIndicator(color = Color.White)

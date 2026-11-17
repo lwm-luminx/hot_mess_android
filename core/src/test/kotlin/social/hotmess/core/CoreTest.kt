@@ -228,6 +228,9 @@ class DeepLinkTest {
         assertEquals(AppRoute.EventDetail(id), DeepLink.route("https://hotmess.social/events/${id.uppercase()}"))
         assertEquals(AppRoute.PersonDetail(id), DeepLink.route("https://hotmess.social/people/$id"))
         assertEquals(AppRoute.NowPing(id), DeepLink.route("https://hotmess.social/pings/$id"), "a push's url")
+        assertEquals(AppRoute.PingChat(id), DeepLink.route("https://hotmess.social/pings/$id/chat"), "a chat push's url")
+        assertEquals(AppRoute.QuickieChat(id), DeepLink.route("https://hotmess.social/venues/$id/quickie"))
+        assertEquals(AppRoute.VenueDetail(id), DeepLink.route("https://hotmess.social/venues/$id/quickie/x"))
         assertEquals(AppTab.EVENTS, AppRoute.EventDetail(id).tab)
     }
 
@@ -1004,6 +1007,26 @@ class HotMessApiTest {
         val (api, _) = api("/v1/token/methods?host=hotmess.social" to """{"methods":["facebook","review_code"]}""")
 
         assertTrue(api.signInMethods("hotmess.social")!!.reviewCode)
+    }
+
+    @Test
+    fun warnsOnlyWhenTheAudienceRequiresADeviceCheckThisBuildCannotPass() = runTest {
+        fun methods(mode: String, required: Boolean) = SignInMethods(
+            methods = listOf("google"),
+            deviceAttestation = DeviceAttestationPolicy(mode = mode, required = required),
+        )
+        val (api, _) = api(
+            "/v1/token/methods?host=hotmess.social" to
+                """{"methods":["google"],"deviceAttestation":{"mode":"enforce","required":true,"warning":"Blocked here."}}""",
+        )
+
+        val enforced = api.signInMethods("hotmess.social")!!
+        assertTrue(enforced.deviceCheckWarning(canAttest = false)!!.contains("sign-in is blocked"))
+        assertNull(enforced.deviceCheckWarning(canAttest = true))
+        assertNull(methods("report", false).deviceCheckWarning(canAttest = false))
+        assertNull(methods("off", false).deviceCheckWarning(canAttest = false))
+        assertNull(SignInMethods(methods = listOf("google")).deviceCheckWarning(canAttest = false))
+        assertTrue(DeviceAttestationPolicy(mode = "enforce").blocksSignIn)
     }
 
     @Test

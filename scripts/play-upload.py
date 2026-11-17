@@ -27,6 +27,9 @@ class PlayError(Exception):
 
 def play(token, method, path, payload=None, bundle=None):
     headers = {"Authorization": "Bearer " + token}
+    # A user's gcloud ADC token needs a quota project (CI's service account doesn't); without one Play refuses the call.
+    if os.environ.get("GOOGLE_CLOUD_QUOTA_PROJECT"):
+        headers["x-goog-user-project"] = os.environ["GOOGLE_CLOUD_QUOTA_PROJECT"]
     if bundle:
         data, headers["Content-Type"] = bundle.read_bytes(), "application/octet-stream"
     else:

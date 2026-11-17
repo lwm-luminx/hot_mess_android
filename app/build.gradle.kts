@@ -116,7 +116,7 @@ android {
         minSdk = 28
         targetSdk = 36
         versionCode = buildNumber
-        versionName = "2.7"
+        versionName = "2.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // The Facebook sign-in test's test user, from the environment (scripts/facebook-signin-test.sh
@@ -186,6 +186,9 @@ android {
             // The UI tests' build: instrumentation tests run against unminified code.
             isMinifyEnabled = false
             isShrinkResources = false
+            // `-Photmess.coverage` measures the unit tests' line coverage of the app (JaCoCo):
+            // ./gradlew :app:createSignInTestUnitTestCoverageReport -Photmess.coverage
+            enableUnitTestCoverage = providers.gradleProperty("hotmess.coverage").isPresent
         }
     }
 
@@ -241,6 +244,8 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // The screen tests (src/test/.../ui) render Compose under Robolectric, which needs the merged resources.
+        unitTests.isIncludeAndroidResources = true
     }
 }
 
@@ -289,6 +294,8 @@ dependencies {
     implementation(libs.newrelic.android.agent)
     // Cover charge: Stripe's payment sheet or Square's card entry takes the payment.
     implementation(libs.stripe.android)
+    // Only to read the Play storefront's country (AdFreeTips: web checkout in US storefronts only); no purchases.
+    implementation(libs.play.billing.ktx)
     implementation(libs.square.card.entry)
     // Pair me up: scanning a match's QR code (decoded with the core module's ZXing reader).
     implementation(libs.androidx.camera.camera2)
@@ -296,8 +303,27 @@ dependencies {
     implementation(libs.androidx.camera.view)
 
     testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.compose.ui.test.junit4)
+    testImplementation(libs.kotlinx.coroutines.test)
+    // The empty activity the Compose screen tests host screens in; unit tests build only for signInTest (testBuildType).
+    "signInTestImplementation"(libs.compose.ui.test.manifest)
 
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.junit)
     androidTestImplementation(libs.uiautomator)
+}
+
+// Robolectric loads the app's classes through its own class loader, which JaCoCo only counts with these.
+if (providers.gradleProperty("hotmess.coverage").isPresent) {
+    tasks.withType<Test>().configureEach {
+        // AGP sets the task's JaCoCo options as it runs, so these go on last.
+        doFirst {
+            extensions.findByType<JacocoTaskExtension>()?.apply {
+                isIncludeNoLocationClasses = true
+                excludes = listOf("jdk.internal.*")
+            }
+        }
+    }
 }
