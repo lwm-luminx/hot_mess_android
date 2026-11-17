@@ -149,6 +149,7 @@ class RecordingNavigator : Navigator {
     override fun openPass(admissionId: String) { opened += "pass:$admissionId" }
     override fun openPasses() { opened += "passes" }
     override fun openHelp(venue: HelpVenue) { opened += "help" }
+    override fun openHelpAnywhere() { opened += "helpAnywhere" }
     override fun openSafetyAlert(id: String) { opened += "safetyAlert:$id" }
     override fun openSupport(note: String?) { opened += "support" }
     override fun openSafetyAlerts() { opened += "safetyAlerts" }
