@@ -56,10 +56,14 @@ import com.audiencekit.android.StaffApps
 import com.audiencekit.cardCategories
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import social.hotmess.android.ui.LocalAppGraph
 import social.hotmess.android.ui.Navigator
 import social.hotmess.android.ui.ScreenScaffold
@@ -73,6 +77,7 @@ import social.hotmess.android.ui.theme.Radius
 import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.AppRoute
+import social.hotmess.core.LayoutRefreshPolicy
 import android.os.SystemClock
 
 /**
@@ -81,28 +86,50 @@ import android.os.SystemClock
  * the queries the screens already make.
  */
 class ScreenCards(
-    client: AudienceKitClient,
-    screen: LayoutScreen,
-    kinds: List<String>,
-    private val fallback: List<String>,
-    appVersion: String,
+    fallback: List<String>,
+    private val policy: LayoutRefreshPolicy = LayoutRefreshPolicy(),
+    private val nowMs: () -> Long = { SystemClock.elapsedRealtime() },
+    private val fetch: suspend (position: Coordinates?, localeId: String?) -> CardLayout,
 ) {
-    private val layoutClient = LayoutClient(client, screen, kinds, fallback, appVersion)
+    constructor(
+        client: AudienceKitClient,
+        screen: LayoutScreen,
+        kinds: List<String>,
+        fallback: List<String>,
+        appVersion: String,
+    ) : this(fallback, fetch = LayoutClient(client, screen, kinds, fallback, appVersion)::load)
+
     private val state = MutableStateFlow(CardLayout.fallback(fallback))
-    private var loadedAt = 0L
+    private val mutex = Mutex()
+    private var completed = 0L
 
     val layout: StateFlow<CardLayout> = state.asStateFlow()
 
-    /** Asks again only once `refreshAfter` has passed, unless [force]. */
+    /**
+     * The server's order for where the device is, or the locale without a position. Asks only when
+     * [LayoutRefreshPolicy] says it's due ([force] is for a person pulling to refresh), never twice at once, and
+     * backs off after a failure so a slow server isn't asked harder.
+     */
     suspend fun load(coordinates: Coordinates?, localeId: String?, force: Boolean = false) {
-        val current = state.value
-        val age = SystemClock.elapsedRealtime() - loadedAt
-        if (!force && loadedAt > 0 && age < current.refreshAfter * 1_000L) return
-        val fetched = layoutClient.load(coordinates, localeId)
-        // A failed fetch keeps the server's last order rather than jumping back to the built-in one.
-        if (fetched.isFallback && !current.isFallback) return
-        state.value = fetched
-        loadedAt = if (fetched.isFallback) 0L else SystemClock.elapsedRealtime()
+        val seen = completed
+        mutex.withLock {
+            // Another caller's ask finished while this one waited: share its answer.
+            if (completed != seen) return
+            val request = LayoutRefreshPolicy.Request(coordinates, localeId)
+            if (!policy.isDue(request, nowMs(), force)) return
+            policy.asked(request, nowMs())
+            // Not tied to the caller: a screen's effect cancelled mid-ask still records the answer, rather than
+            // leaving the layout due at once.
+            val fetched = withContext(NonCancellable) { fetch(coordinates, localeId) }
+            completed += 1
+            if (fetched.isFallback) {
+                // A failed fetch keeps the server's last order rather than jumping back to the built-in one.
+                policy.failed(nowMs())
+            } else {
+                policy.succeeded(fetched.refreshAfter, nowMs())
+                state.value = fetched
+            }
+        }
     }
 }
 
@@ -124,7 +151,8 @@ fun rememberScreenCards(
         ScreenCards(graph.audienceKit, screen, kinds, fallback, graph.configuration.versionName)
     }
     val position = coordinates.takeIf { forLocale == null }
-    LaunchedEffect(position, forLocale ?: locale?.id) { cards.load(position, forLocale ?: locale?.id, force = true) }
+    // Not forced: the layout asks again only for a real move or another locale (LayoutRefreshPolicy).
+    LaunchedEffect(position, forLocale ?: locale?.id) { cards.load(position, forLocale ?: locale?.id) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(lifecycle) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
