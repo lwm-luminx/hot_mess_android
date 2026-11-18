@@ -12459,6 +12459,12 @@ interface IPlacesProfile @mixin(extensionKey: "places", field: "places", null: f
   details: JSON
 
   """
+  Its opening hours and whether it's open now, in its time zone (a venue's own
+  when Google gave none). UNKNOWN without a Google place or hours.
+  """
+  hours: OpeningHours!
+
+  """
   Its Google place, if its location is one.
   """
   place: GooglePlace
@@ -16999,6 +17005,79 @@ type OpEdSubmitPayload {
 }
 
 """
+A place's opening hours and whether it's open now, from Google (OpeningState),
+in the place's own time zone. Every field but `lines` is about the moment of the request.
+"""
+type OpeningHours {
+  """
+  When it next closes, while it is open. Null when closed, or open around the clock.
+  """
+  closesAt: ISO8601DateTime
+
+  """
+  Whether it is open now; null when nobody knows (UNKNOWN).
+  """
+  isOpen: Boolean
+
+  """
+  One short line saying so, in its time zone: "Open until 2 AM", "Opens at 4
+  PM", "Opens tomorrow at 4 PM", "Open 24 hours", "Temporarily closed". Null
+  when the hours are unknown.
+  """
+  label: String
+
+  """
+  Its weekly hours, a line a day, e.g. "Monday: 4:00 PM – 2:00 AM". Empty without hours.
+  """
+  lines: [String!]!
+
+  """
+  When it next opens, while it is closed by its hours. Null when open or never opening.
+  """
+  opensAt: ISO8601DateTime
+
+  """
+  Open, closed or unknown now.
+  """
+  status: OpeningStatus!
+
+  """
+  The IANA time zone its hours are read in.
+  """
+  timeZone: String
+}
+
+"""
+Whether a place is open now, by its Google opening hours and business status (OpeningState).
+"""
+enum OpeningStatus {
+  """
+  Closed now by its hours; opensAt says when it next opens.
+  """
+  CLOSED
+
+  """
+  Google marks it closed for good.
+  """
+  CLOSED_PERMANENTLY
+
+  """
+  Google marks it closed for now, whatever its hours say.
+  """
+  CLOSED_TEMPORARILY
+
+  """
+  Open now by its hours.
+  """
+  OPEN
+
+  """
+  Google gave no hours. Apps treat it as possibly open and show nothing.
+  """
+  UNKNOWN
+}
+
+"""
 A Facebook Page associated with a listing.
 """
 type Page implements HasBanner & HasPhoto & HasTimestamps & Node {
@@ -18868,6 +18947,12 @@ type PlacesProfile implements IPlacesProfile {
   The place details stored from Google, as Google sent them. Only on a location; null on a profile.
   """
   details: JSON
+
+  """
+  Its opening hours and whether it's open now, in its time zone (a venue's own
+  when Google gave none). UNKNOWN without a Google place or hours.
+  """
+  hours: OpeningHours!
 
   """
   Its Google place, if its location is one.

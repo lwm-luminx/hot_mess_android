@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.LocationOff
 import androidx.compose.material.icons.rounded.MyLocation
@@ -404,7 +405,12 @@ fun VenueScreen(id: String, navigator: Navigator) {
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.semantics { heading() },
                                 )
-                                val details = listOfNotNull(loaded.address?.takeIf { it.isNotBlank() }, loaded.distance?.let { Formatting.distance(it) })
+                                // Whether it's open now ("Open until 2 AM", "Opens at 4 PM"), in the venue's own time zone.
+                                val details = listOfNotNull(
+                                    loaded.hours?.label,
+                                    loaded.address?.takeIf { it.isNotBlank() },
+                                    loaded.distance?.let { Formatting.distance(it) },
+                                )
                                 // While the app places the user here, Ping and Safety take the address's place, as on iOS.
                                 if (canGetHelp) {
                                     HeroVenueActions(
@@ -534,6 +540,11 @@ fun VenueScreen(id: String, navigator: Navigator) {
                                         onClick = coordinate?.let { { context.openMap(it.latitude, it.longitude, loaded.name) } },
                                         trailing = coordinate?.let { Icons.AutoMirrored.Rounded.KeyboardArrowRight },
                                     )
+                                    RowDivider()
+                                }
+                                loaded.hours?.takeIf { it.lines.isNotEmpty() }?.let { hours ->
+                                    InfoRow("Hours", hours.label, icon = Icons.Rounded.Schedule)
+                                    TextRow(hours.lines.joinToString("\n"))
                                     RowDivider()
                                 }
                                 loaded.phone?.takeIf { it.isNotBlank() }?.let { phone ->
