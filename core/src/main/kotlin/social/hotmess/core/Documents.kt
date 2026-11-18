@@ -19,10 +19,11 @@ object Documents {
     /**
      * A venue, with its address, phone and Facebook Page under its profile mixin. `bannerUrl` is its wide image
      * (its first banner, else its own photo, else its Page's cover) and `photoUrl` its own photo; both null when
-     * there's none.
+     * there's none. `places { hours }` is whether it's open now and its week's hours, from Google, worded in its time zone.
      */
     const val VENUE_FIELDS: String =
-        "id name description distance point photoUrl bannerUrl profile { address phone facebook { facebookId isLiked link } }"
+        "id name description distance point photoUrl bannerUrl profile { address phone facebook { facebookId isLiked link } " +
+            "places { hours { status isOpen label lines } } }"
 
     /** A chat line as a preview shows it: rich messages in words (`message`), with the sender's role and presence. */
     const val CHAT_LINE_FIELDS: String =

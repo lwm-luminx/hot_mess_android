@@ -68,6 +68,9 @@ data class Venue(
 
     val isLiked: Boolean get() = profile?.facebook?.isLiked == true
 
+    /** Whether it's open now and its week's hours; null when the document didn't ask. */
+    val hours: VenueHours? get() = profile?.places?.hours
+
     /** Where else to find it, like its Instagram; only the venue screen asks. */
     val socialLinks: List<SocialLink> get() = profile?.links.orEmpty()
 
@@ -186,10 +189,32 @@ data class ListingProfile(
     val phone: String? = null,
     private val socialLinks: Connection<SocialLink>? = null,
     val facebook: FacebookProfile? = null,
+    /** The places module's part: `places { hours }`. */
+    val places: PlacesProfile? = null,
 ) {
     /** Its social links, dropping null nodes; empty when not asked for. */
     val links: List<SocialLink> get() = socialLinks?.nodes.orEmpty().filterNotNull()
 }
+
+/** A listing's Google Maps side (`profile.places`): its opening hours. */
+@Serializable
+data class PlacesProfile(val hours: VenueHours? = null)
+
+/**
+ * A venue's opening hours and whether it's open now, from Google, worded by the server in the venue's own time zone
+ * ("Open until 2 AM", "Opens at 4 PM").
+ */
+@Serializable
+data class VenueHours(
+    /** OPEN, CLOSED, UNKNOWN, CLOSED_TEMPORARILY or CLOSED_PERMANENTLY. */
+    val status: String = "UNKNOWN",
+    /** Null when nobody knows. */
+    val isOpen: Boolean? = null,
+    /** One line to show; null when the hours are unknown. */
+    val label: String? = null,
+    /** The week, a line a day ("Monday: 4:00 PM – 2:00 AM"). */
+    val lines: List<String> = emptyList(),
+)
 
 /** A listing's Facebook Page ID and whether the user likes it (`profile.facebook`). */
 @Serializable
