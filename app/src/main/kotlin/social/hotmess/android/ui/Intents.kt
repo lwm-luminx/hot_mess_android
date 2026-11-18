@@ -95,7 +95,7 @@ fun Context.textMessage(smsUri: String, body: String) {
 }
 
 /**
- * Shares a venue's or event's page by a link the API signs to open it for a month ([HotMessApi.shareLink]), so it
+ * Shares a venue's, event's or person's page by a link the API signs to open it for a month ([HotMessApi.shareLink]), so it
  * says it has expired after that. The share sheet opens once the link comes back; when it can't be had,
  * [ShareLinkFailure] says why, and nothing is shared (there's no unsigned link to fall back on).
  */
