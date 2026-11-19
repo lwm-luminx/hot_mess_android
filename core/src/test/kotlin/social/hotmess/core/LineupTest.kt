@@ -78,7 +78,27 @@ class LineupTest {
     }
 
     @Test
+    fun featuresTheEventsHostWhenNobodyIsOnNow() {
+        val night = lineup(
+            """{"id":"v-4","name":"Blue Gene's","people":{"runningOrder":{"nodes":[]},
+               "hostsTonight":[{"id":"p-9","name":"Sequoia","avatarUrl":null}]}}""",
+        )
+        assertNull(night.hostOnNow)
+        val host = night.featuredHost!!
+        assertEquals("Sequoia", host.billing)
+        assertEquals(AppearanceRole.HOST, host.role)
+        assertEquals(LineupState.UPCOMING, host.state)
+        assertEquals("p-9", host.people.single().id)
+        assertFalse(night.isEmpty, "a host to feature is something to show")
+
+        assertEquals("Aurora", lineup(karaokeNight).featuredHost?.billing, "the host on now comes first")
+        assertNull(lineup("""{"id":"v-5","people":{"runningOrder":{"nodes":[]}}}""").featuredHost)
+    }
+
+    @Test
     fun documentsAskForWhatTheyRead() {
+        assertTrue(Lineups.VENUE_LINEUP.contains("hostsTonight { id name avatarUrl }"))
+        assertFalse(Lineups.VENUE_LINEUP_WITHOUT_HOSTS.contains("hostsTonight"))
         assertTrue(Lineups.VENUE_LINEUP.contains("songRequest { ${Lineups.SONG_REQUEST_FIELDS} }"))
         assertTrue(Lineups.VENUE_LINEUP.contains("karaoke { provider providerName joinUrl sessionCode tonight }"))
         assertTrue(Lineups.REQUEST_SONG.contains("requestSong(input:"))

@@ -117,6 +117,11 @@ data class VenueLineup(
     val karaoke: SongRequestWindow? = null,
     val karaokeSession: VenueKaraoke? = null,
     val songRequests: SongRequestWindow? = null,
+    /**
+     * Who's hosting there now: the hosts on now, else the hosts of the event under way (its lineup's, else the ones
+     * listed on it). Empty without one, and from an API before 2026-11-19.
+     */
+    val hostsTonight: List<Person> = emptyList(),
 ) {
     /** Everyone who isn't a karaoke singer: hosts, DJs, performers, MCs and intermissions. */
     val acts: List<LineupEntry> get() = entries.filterNot { it.isSinger }
@@ -127,6 +132,15 @@ data class VenueLineup(
     /** The host on now: the host entry that's on, else the one taking karaoke signups. */
     val hostOnNow: LineupEntry?
         get() = entries.firstOrNull { it.role == AppearanceRole.HOST && it.state == LineupState.ON } ?: karaoke?.host
+
+    /**
+     * The host to feature on Now and the venue page: [hostOnNow], else the first of [hostsTonight] (an event's host
+     * nobody has put on yet) as an upcoming host entry. Null when nobody is hosting.
+     */
+    val featuredHost: LineupEntry?
+        get() = hostOnNow ?: hostsTonight.firstOrNull()?.let { host ->
+            LineupEntry(id = "host-tonight:${host.id}", kindName = "ACT", roleName = "HOST", stateName = "UPCOMING", person = host)
+        }
 
     /** A lineup of only hosts isn't a running order: it reads "Hosted by A and B". */
     val onlyHosts: Boolean get() = acts.isNotEmpty() && acts.all { it.role == AppearanceRole.HOST }
@@ -175,7 +189,7 @@ data class VenueLineup(
     /** Whether there's anything to show at all. */
     val isEmpty: Boolean
         get() = acts.isEmpty() && singers.isEmpty() && !takesKaraokeSignups && !takesSongRequests &&
-            karaokeSession?.isPartnerSessionTonight != true
+            karaokeSession?.isPartnerSessionTonight != true && hostsTonight.isEmpty()
 }
 
 /** How the venue page bills an entry: a singer by the name they gave, else [LineupEntry.name], else "Intermission" or "Someone". */
@@ -223,9 +237,15 @@ object Lineups {
     private const val ENTRY_FIELDS = "${Documents.LINEUP_ENTRY_FIELDS} songRequest { $SONG_REQUEST_FIELDS }"
     private const val WINDOW_FIELDS = "permitted open paused closedReason cutOff reopened host { $ENTRY_FIELDS } mine { nodes { $SONG_REQUEST_FIELDS } }"
 
-    /** A venue's lineup tonight, its karaoke and its song requests (the SDK's VenueLineup query). */
-    const val VENUE_LINEUP: String = "query VenueLineup(\$id: ID!) { venues { venue(id: \$id) { id name " +
+    /** [VENUE_LINEUP] for an API before `hostsTonight` (2026-11-19). */
+    const val VENUE_LINEUP_WITHOUT_HOSTS: String = "query VenueLineup(\$id: ID!) { venues { venue(id: \$id) { id name " +
         "people { runningOrder { nodes { $ENTRY_FIELDS } } onStage { id } upNext { id } } " +
+        "karaoke { provider providerName joinUrl sessionCode tonight } " +
+        "requests { karaoke { $WINDOW_FIELDS } song { $WINDOW_FIELDS queue { nodes { $SONG_REQUEST_FIELDS } } } } } } }"
+
+    /** A venue's lineup tonight, who's hosting, its karaoke and its song requests (the SDK's VenueLineup query). */
+    const val VENUE_LINEUP: String = "query VenueLineup(\$id: ID!) { venues { venue(id: \$id) { id name " +
+        "people { runningOrder { nodes { $ENTRY_FIELDS } } onStage { id } upNext { id } hostsTonight { id name avatarUrl } } " +
         "karaoke { provider providerName joinUrl sessionCode tonight } " +
         "requests { karaoke { $WINDOW_FIELDS } song { $WINDOW_FIELDS queue { nodes { $SONG_REQUEST_FIELDS } } } } } } }"
 
@@ -258,6 +278,7 @@ internal data class TonightLineupResponse(val venues: Venues? = null) {
         val runningOrder: Order? = null,
         val onStage: LineupEntry.Ref? = null,
         val upNext: LineupEntry.Ref? = null,
+        val hostsTonight: List<Person>? = null,
     )
 
     @Serializable
@@ -278,6 +299,7 @@ internal data class TonightLineupResponse(val venues: Venues? = null) {
                 karaoke = venue.requests?.karaoke,
                 karaokeSession = venue.karaoke,
                 songRequests = venue.requests?.song,
+                hostsTonight = venue.people?.hostsTonight.orEmpty(),
             )
         }
 }

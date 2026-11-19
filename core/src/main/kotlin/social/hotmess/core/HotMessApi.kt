@@ -173,7 +173,14 @@ class HotMessApi(val client: AudienceKitClient) {
      * whether it takes signups and song requests (the viewer's own, and the song queue). Null when there's no venue.
      */
     suspend fun tonightLineup(venueId: String): VenueLineup? =
-        query(Lineups.VENUE_LINEUP, TonightLineupResponse.serializer(), graphQLVariables("id" to venueId)).lineup
+        try {
+            query(Lineups.VENUE_LINEUP, TonightLineupResponse.serializer(), graphQLVariables("id" to venueId)).lineup
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: ApiError) {
+            // An API before hostsTonight refuses the document: ask without it.
+            query(Lineups.VENUE_LINEUP_WITHOUT_HOSTS, TonightLineupResponse.serializer(), graphQLVariables("id" to venueId)).lineup
+        }
 
     /**
      * Signs the viewer up to sing ([SongRequestKind.KARAOKE]) or asks for a song ([SongRequestKind.SONG]) at a venue.
