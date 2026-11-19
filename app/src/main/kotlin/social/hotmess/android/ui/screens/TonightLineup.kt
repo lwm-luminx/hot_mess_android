@@ -26,6 +26,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Paid
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -54,6 +55,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -76,6 +78,8 @@ import social.hotmess.core.HotMessApi
 import social.hotmess.core.LineupEntry
 import social.hotmess.core.LineupState
 import social.hotmess.core.Lineups
+import social.hotmess.core.PersonDetail
+import social.hotmess.core.SocialLink
 import social.hotmess.core.SongRequest
 import social.hotmess.core.SongRequestDraft
 import social.hotmess.core.SongRequestKind
@@ -96,16 +100,39 @@ class TonightLineupModel(private val api: HotMessApi, val venueId: String, priva
 
     /** Whether the first fetch has finished, lineup or not: until then a page holds back what stands in for it. */
     val loaded: StateFlow<Boolean> = _loaded.asStateFlow()
+    private val _host = MutableStateFlow<PersonDetail?>(null)
+
+    /** The featured host's page, for where to tip them; null until it loads, or with nobody hosting. */
+    val host: StateFlow<PersonDetail?> = _host.asStateFlow()
 
     suspend fun refresh() {
         try {
-            api.tonightLineup(venueId)?.let { _lineup.value = it }
+            api.tonightLineup(venueId)?.let {
+                _lineup.value = it
+                loadHost(it.featuredHost?.personId)
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
             // An API without the lineup, or a dropped connection: the page keeps what it had (or its On now).
         }
         _loaded.value = true
+    }
+
+    /** The featured host's page, fetched again only when a different host is featured. */
+    private suspend fun loadHost(personId: String?) {
+        if (personId == null) {
+            _host.value = null
+            return
+        }
+        if (_host.value?.id == personId) return
+        _host.value = try {
+            api.person(personId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
     }
 
     /** Signs up to sing or asks for a song; the error worded for the room, or null once it went. */
@@ -158,7 +185,11 @@ fun TonightLineupSection(
     // Signed out, the lineup shows without its "+": signing up and requesting are the viewer's.
     val ask = if (viewerName == null) null else { kind: SongRequestKind -> asking = kind }
     Column(verticalArrangement = Arrangement.spacedBy(Space.s5)) {
-        lineup.hostOnNow?.let { host -> HostRow(host) { host.personId?.let(onOpenPerson) } }
+        val hostDetail by model.host.collectAsStateWithLifecycle()
+        lineup.featuredHost?.let { host ->
+            val tips = hostDetail?.takeIf { it.id == host.personId }?.tipLinks.orEmpty()
+            HostRow(host, tips) { host.personId?.let(onOpenPerson) }
+        }
         LineupStrip(lineup, onOpenPerson, onAdd = ask)
         val session = lineup.karaokeSession
         if (session != null && session.isPartnerSessionTonight) {
@@ -247,10 +278,14 @@ private fun RequestButton(kind: SongRequestKind, window: SongRequestWindow, labe
     }
 }
 
-/** The host on now, a step larger than the lineup, opening their page. */
+/**
+ * The featured host, a step larger than the lineup, opening their page: "Hosting now" once they're on, "Hosting
+ * tonight" for an event's host nobody has put on yet. Below, a Tip button for each app they take tips on.
+ */
 @Composable
-private fun HostRow(host: LineupEntry, onOpen: () -> Unit) {
+private fun HostRow(host: LineupEntry, tips: List<SocialLink>, onOpen: () -> Unit) {
     val person = host.people.firstOrNull()
+    val context = LocalContext.current
     DetailSection(null) {
         Row(
             Modifier
@@ -262,9 +297,17 @@ private fun HostRow(host: LineupEntry, onOpen: () -> Unit) {
         ) {
             Avatar(person?.avatarUrl, host.billing, size = 48.dp)
             Column(Modifier.weight(1f)) {
-                Text("Hosting now", style = HotMessType.caption, color = tokens.inkMuted)
+                Text(if (host.state == LineupState.ON) "Hosting now" else "Hosting tonight", style = HotMessType.caption, color = tokens.inkMuted)
                 Text(host.billing, style = HotMessType.subheading, color = tokens.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+        }
+        tips.forEach { link ->
+            PrimaryButton(
+                "Tip ${host.billing} on ${link.tipApp}",
+                onClick = { link.url?.let(context::openUrl) },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = Space.s4).padding(bottom = Space.s3),
+                icon = Icons.Rounded.Paid,
+            )
         }
     }
 }
