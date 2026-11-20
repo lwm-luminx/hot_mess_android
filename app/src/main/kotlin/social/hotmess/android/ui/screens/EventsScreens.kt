@@ -307,7 +307,12 @@ fun EventScreen(id: String, navigator: Navigator) {
                     }
                 }
                 val karaoke = loaded.karaoke
-                if (tonightModel != null && tonightLineup != null && tonightLineup.showsKaraoke) {
+                if (karaoke?.singAlong == true) {
+                    // A sing-along night: the playlist, what's on and what's next, and Request a song from the playlist.
+                    item(key = "sing-along") {
+                        SingAlongSection(loaded.id, PingChoices.isTonight(loaded), tonightModel, tonightLineup, viewerName)
+                    }
+                } else if (tonightModel != null && tonightLineup != null && tonightLineup.showsKaraoke) {
                     item(key = "karaoke-tonight") { TonightKaraoke(tonightModel, tonightLineup, viewerName) }
                 } else if (karaoke != null && tonightLoaded) {
                     item(key = "karaoke") {

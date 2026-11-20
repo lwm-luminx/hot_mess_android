@@ -105,4 +105,16 @@ class LineupTest {
         assertTrue(Lineups.WITHDRAW_SONG_REQUEST.contains("withdrawSongRequest(input: { id: \$id })"))
         assertEquals("Ada, Bo and Cy", Lineups.andList(listOf("Ada", "Bo", "Cy")))
     }
+
+    @Test
+    fun karaokeReadsASingAlongNight() {
+        val night = HotMessApi.json.decodeFromString(
+            KaraokeNight.serializer(),
+            """{"provider":"sing_along","providerName":"Sing-along","singAlong":true}""",
+        )
+        assertTrue(night.singAlong)
+        assertFalse(night.isAudienceKit)
+        assertFalse(HotMessApi.json.decodeFromString(KaraokeNight.serializer(), """{"provider":"audiencekit"}""").singAlong)
+        assertTrue(Documents.KARAOKE_FIELDS.contains("singAlong"))
+    }
 }

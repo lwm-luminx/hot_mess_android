@@ -179,11 +179,13 @@ fun TonightLineupSection(
     model: TonightLineupModel,
     lineup: VenueLineup,
     viewerName: String?,
+    singAlongEventId: String? = null,
     onOpenPerson: (String) -> Unit,
 ) {
     var asking by remember { mutableStateOf<SongRequestKind?>(null) }
-    // Signed out, the lineup shows without its "+": signing up and requesting are the viewer's.
-    val ask = if (viewerName == null) null else { kind: SongRequestKind -> asking = kind }
+    // Signed out, the lineup shows without its "+": signing up and requesting are the viewer's. A sing-along night has
+    // no "+" either: its card asks for songs from the playlist.
+    val ask = if (viewerName == null || singAlongEventId != null) null else { kind: SongRequestKind -> asking = kind }
     Column(verticalArrangement = Arrangement.spacedBy(Space.s5)) {
         val hostDetail by model.host.collectAsStateWithLifecycle()
         lineup.featuredHost?.let { host ->
@@ -192,6 +194,10 @@ fun TonightLineupSection(
         }
         LineupStrip(lineup, onOpenPerson, onAdd = ask)
         val session = lineup.karaokeSession
+        if (singAlongEventId != null) {
+            SingAlongSection(singAlongEventId, isLive = true, model = model, lineup = lineup, viewerName = viewerName)
+            return@Column
+        }
         if (session != null && session.isPartnerSessionTonight) {
             KaraokeJoinSection(session)
         } else if (lineup.karaoke?.permitted == true || lineup.singers.isNotEmpty()) {
@@ -253,7 +259,7 @@ val VenueLineup.showsKaraoke: Boolean
 
 /** Sign up to sing (or Request a song): the primary button while open; greyed with the venue's reason while not. */
 @Composable
-private fun RequestButton(kind: SongRequestKind, window: SongRequestWindow, label: String, onClick: () -> Unit) {
+internal fun RequestButton(kind: SongRequestKind, window: SongRequestWindow, label: String, onClick: () -> Unit) {
     if (!window.permitted) return
     val karaoke = kind == SongRequestKind.KARAOKE
     Column(verticalArrangement = Arrangement.spacedBy(Space.s1)) {
@@ -652,7 +658,7 @@ private fun SongRequestsSection(lineup: VenueLineup, model: TonightLineupModel, 
 }
 
 @Composable
-private fun RequestRow(
+internal fun RequestRow(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
     detail: String,
@@ -679,7 +685,7 @@ private fun RequestRow(
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SongRequestSheet(
+internal fun SongRequestSheet(
     kind: SongRequestKind,
     venueName: String,
     hostName: String?,
