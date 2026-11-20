@@ -353,7 +353,9 @@ fun NowScreen(navigator: Navigator) {
                             CardKind.NOW_STAGE -> {
                                 if (lineupModel != null && lineup != null) {
                                     item(key = "tonight") {
-                                        TonightLineupSection(lineupModel, lineup, viewerName) { navigator.open(AppRoute.PersonDetail(it)) }
+                                        TonightLineupSection(lineupModel, lineup, viewerName, now.singAlongEventId) {
+                                            navigator.open(AppRoute.PersonDetail(it))
+                                        }
                                     }
                                 } else {
                                     // Until the lineup loads, or from an API without it: who's on, and the event's
@@ -364,7 +366,10 @@ fun NowScreen(navigator: Navigator) {
                                         }
                                     }
                                     val karaoke = now.event?.karaoke
-                                    if (karaoke != null && now.venues == null && lineupLoaded) {
+                                    val singAlongId = now.singAlongEventId
+                                    if (singAlongId != null) {
+                                        item(key = "sing-along") { SingAlongSection(singAlongId, true, lineupModel, null, viewerName) }
+                                    } else if (karaoke != null && now.venues == null && lineupLoaded) {
                                         item(key = "karaoke") {
                                             EventKaraokeSection(karaoke, now.event?.venue ?: now.venue) { navigator.open(AppRoute.VenueDetail(it)) }
                                         }

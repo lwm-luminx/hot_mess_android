@@ -492,7 +492,9 @@ fun VenueScreen(id: String, navigator: Navigator) {
                         val tonight = tonightLineup?.takeIf { !it.isEmpty }
                         if (tonight != null) {
                             item(key = "tonight") {
-                                TonightLineupSection(tonightModel, tonight, viewerName) { navigator.open(AppRoute.PersonDetail(it)) }
+                                TonightLineupSection(tonightModel, tonight, viewerName, overview.singAlongTonight?.id) {
+                                    navigator.open(AppRoute.PersonDetail(it))
+                                }
                             }
                         } else if (overview.onNow.isNotEmpty()) {
                             item(key = "on-now") {

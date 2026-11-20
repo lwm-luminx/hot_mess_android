@@ -210,6 +210,11 @@ data class KaraokeNight(
     val sessionCode: String? = null,
     val ownSessionCode: String? = null,
     val joinUrl: String? = null,
+    /**
+     * A sing-along night (provider `sing_along`): no singers, the whole room sings to the night's playlist with the
+     * words on the venue's screens. False from an API before sing-along.
+     */
+    val singAlong: Boolean = false,
 ) {
     /** The join link, only when it's a web page. */
     val joinLink: String? get() = Lineups.webLink(joinUrl)

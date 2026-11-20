@@ -56,7 +56,7 @@ object Documents {
     const val ON_NOW_FIELDS: String = "people { onNow { nodes { id role startsAt endsAt person { id name avatarUrl } } } }"
 
     /** A karaoke night's session (`IKaraokeNight`): the partner's to join, or AudienceKit's own. */
-    const val KARAOKE_FIELDS: String = "karaoke { provider providerName sessionCode ownSessionCode joinUrl }"
+    const val KARAOKE_FIELDS: String = "karaoke { provider providerName sessionCode ownSessionCode joinUrl singAlong }"
 
     /**
      * A lineup entry as a chat room shows it: who, as what, where it is in the night, and its set when it has a hard
