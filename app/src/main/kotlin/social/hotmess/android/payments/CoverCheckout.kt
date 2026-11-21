@@ -86,8 +86,12 @@ class CoverCheckout(
         viewModelScope.launch { squareCardEntry.results.collect(::onCardEntryResult) }
     }
 
-    /** Pays tonight's cover at [venueId], or goes straight to the pass when it's already paid. */
-    fun pay(venueId: String, venueName: String) = start(venueName, coatCheck = false) { api.buyCover(venueId) }
+    /**
+     * Pays tonight's cover at [venueId], or goes straight to the pass when it's already paid. [amountCents] is what the
+     * buyer picked on a sliding scale; null pays the suggested (or fixed) amount.
+     */
+    fun pay(venueId: String, venueName: String, amountCents: Int? = null) =
+        start(venueName, coatCheck = false) { api.buyCover(venueId, amountCents) }
 
     /** Pays tonight's coat check at [venueId] for [quantity] coats, the same way as cover. */
     fun payCoatCheck(venueId: String, venueName: String, quantity: Int = 1) =

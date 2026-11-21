@@ -297,7 +297,7 @@ fun EventScreen(id: String, navigator: Navigator) {
                             CoverRow(
                                 offer,
                                 paying = checkoutState == CoverCheckout.State.Working && !payingCoatCheck,
-                                onPay = { loaded.venue?.let { checkout.pay(it.id, it.name) } },
+                                onPay = { amount -> loaded.venue?.let { checkout.pay(it.id, it.name, amount) } },
                                 onShowPass = { pass ->
                                     graph.passes.put(pass)
                                     navigator.openPass(pass.id)

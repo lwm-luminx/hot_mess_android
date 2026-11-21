@@ -549,7 +549,7 @@ private fun LazyListScope.coverCards(
             SkipTheLineCard(
                 offer,
                 paying = working && !payingCoatCheck,
-                onPay = { checkout.pay(venue.id, venue.name) },
+                onPay = { amount -> checkout.pay(venue.id, venue.name, amount) },
             )
         }
     }
