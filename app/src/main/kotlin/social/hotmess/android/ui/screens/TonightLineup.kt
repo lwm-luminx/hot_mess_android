@@ -47,6 +47,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
@@ -603,6 +604,25 @@ private fun KaraokeJoinSection(session: VenueKaraoke) {
     }
 }
 
+/**
+ * "Paste a song link from Spotify" while the venue takes requests, opening the request sheet for this venue; and
+ * this venue becomes where a song shared from Spotify goes.
+ */
+@Composable
+private fun PasteSpotifyLink(lineup: VenueLineup) {
+    val graph = LocalAppGraph.current
+    val clipboard = LocalClipboardManager.current
+    var notSpotify by remember { mutableStateOf(false) }
+    LaunchedEffect(lineup.venueId) { graph.spotifyShares.rememberRequestVenue(lineup.venueId, lineup.venueName) }
+    TextButton(onClick = {
+        val text = clipboard.getText()?.text.orEmpty()
+        notSpotify = !graph.spotifyShares.offer(text, lineup.venueId, lineup.venueName)
+    }) { Text("Paste a song link from Spotify", color = tokens.accentInk) }
+    if (notSpotify) {
+        Text("Copy a song's link in Spotify (Share › Copy link) first.", style = HotMessType.caption, color = tokens.inkMuted)
+    }
+}
+
 /** Song requests: what's playing, and the viewer's own with where they are and Remove while they wait. */
 @Composable
 private fun SongRequestsSection(lineup: VenueLineup, model: TonightLineupModel, onRequest: (() -> Unit)? = null) {
@@ -613,6 +633,7 @@ private fun SongRequestsSection(lineup: VenueLineup, model: TonightLineupModel, 
     Column(verticalArrangement = Arrangement.spacedBy(Space.s2)) {
         SectionTitle("Song requests", Modifier.semantics { heading() })
         if (onRequest != null) RequestButton(SongRequestKind.SONG, window, "Request a song", onRequest)
+        if (window.open) PasteSpotifyLink(lineup)
         DetailSection(null) {
             window.playing?.let { playing ->
                 RequestRow(Icons.Rounded.MusicNote, "Now playing", playing.songLine, accent = true)

@@ -116,6 +116,9 @@ class AppGraph(
     /** Whether a newer build is on Google Play (Me › About). */
     val updates = AppUpdates(context.applicationContext, scope)
 
+    /** Songs shared from Spotify on their way to the bar as requests, and where they go. */
+    val spotifyShares = social.hotmess.android.spotify.SpotifyShares(context)
+
     /** Square's card entry, for Square venues' cover; MainActivity passes it card entry's result. */
     val squareCardEntry = SquareCardEntry()
 
