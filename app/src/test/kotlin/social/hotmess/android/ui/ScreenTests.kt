@@ -45,6 +45,7 @@ class ScreenTests {
         data("LocaleEvents", """{"locale":{"events":{"upcoming":{"nodes":[${Fixtures.event(name = "Drag Brunch", startHours = 3)}]}}}}""")
         error("VenuePhotos", "No photos in the stub")
         error("EventPhotos", "No photos in the stub")
+        data("EventSetList", """{"events":{"event":{"id":"${Fixtures.EVENT_ID}","setList":null}}}""")
         error("LocalePosts", "No posts in the stub")
     }
 
