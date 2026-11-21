@@ -152,7 +152,9 @@ fun VenuesScreen(navigator: Navigator) {
     // Opens on the device's city each time; Everywhere is every venue, by city.
     var everywhere by rememberSaveable { mutableStateOf(false) }
 
-    LaunchedEffect(localeId) { loader.load(localeId) { graph.api.venues(localeId) } }
+    LaunchedEffect(localeId) {
+        loader.load(localeId, cached = { graph.api.cachedVenues(localeId) }) { graph.api.venues(localeId) }
+    }
     val cardLayout = rememberScreenCards(LayoutScreen.VENUES, VENUES_CARD_KINDS, VENUES_FALLBACK_CARDS)
     val everywhereLayout = rememberScreenCards(LayoutScreen.EVERYWHERE, EVERYWHERE_CARD_KINDS, emptyList())
 

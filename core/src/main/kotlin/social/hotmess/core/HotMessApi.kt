@@ -137,6 +137,14 @@ class HotMessApi(val client: AudienceKitClient) {
     suspend fun venues(localeId: String?): List<Venue> =
         query(Documents.VENUES, VenuesResponse.serializer()).venues.sortedForList(localeId)
 
+    /**
+     * The venues as last loaded (here or by the background refresh), to show at once while they refresh: a slow API
+     * otherwise leaves the Venues screen on a spinner until it answers. Null when none are kept.
+     */
+    suspend fun cachedVenues(localeId: String?): List<Venue>? =
+        client.cachedGraphQL(Documents.VENUES, VenuesResponse.serializer(), json = json)
+            ?.value?.venues?.takeIf { it.isNotEmpty() }?.sortedForList(localeId)
+
     /** A venue with its upcoming events, in one request. */
     suspend fun venueOverview(id: String): VenueOverview {
         val venue = query(Documents.VENUE, VenueResponse.serializer(), graphQLVariables("id" to id)).venue
