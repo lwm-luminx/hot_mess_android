@@ -436,7 +436,7 @@ fun VenueScreen(id: String, navigator: Navigator) {
                                     CoverRow(
                                         offer,
                                         paying = checkoutState == CoverCheckout.State.Working && !payingCoatCheck,
-                                        onPay = { checkout.pay(loaded.id, loaded.name) },
+                                        onPay = { amount -> checkout.pay(loaded.id, loaded.name, amount) },
                                         onShowPass = { pass ->
                                             graph.passes.put(pass)
                                             navigator.openPass(pass.id)
