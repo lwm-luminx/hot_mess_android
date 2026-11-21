@@ -92,9 +92,14 @@ object Formatting {
         return "$hour$minutes${if (time.hour < 12) "am" else "pm"}"
     }
 
-    /** "Cover $11.12 tonight · from 9pm"; another night's leaves out "tonight". */
+    /**
+     * "Cover $11.12 tonight · from 9pm"; another night's leaves out "tonight". A sliding scale shows its range:
+     * "Cover $5–$30 tonight, pay what you can".
+     */
     fun coverLine(charge: CoverCharge, tonight: Boolean, locale: Locale = Locale.getDefault()): String {
-        val price = "Cover ${money(charge.total, locale)}${if (tonight) " tonight" else ""}"
+        val scale = charge.scale
+        val amount = if (scale != null) "${money(scale.min, locale)}–${money(scale.max, locale)}" else money(charge.total, locale)
+        val price = "Cover $amount${if (tonight) " tonight" else ""}${if (scale != null) ", pay what you can" else ""}"
         val from = charge.from?.let(::clockTime) ?: return price
         return "$price · from $from"
     }
