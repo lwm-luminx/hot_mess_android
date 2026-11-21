@@ -56,6 +56,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- A song shared from Spotify's share sheet: offered to the bar as a song request (SpotifyShares). -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+
             <!-- hotmess://venues/<id>, hotmess://events/<id>, hotmess://people/<id> -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

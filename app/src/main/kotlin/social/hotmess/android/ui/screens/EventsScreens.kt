@@ -306,6 +306,9 @@ fun EventScreen(id: String, navigator: Navigator) {
                         }
                     }
                 }
+                item(key = "set-list") {
+                    social.hotmess.android.spotify.SetListOnSpotifyButton(loaded.id, Modifier.fillMaxWidth())
+                }
                 val karaoke = loaded.karaoke
                 if (karaoke?.singAlong == true) {
                     // A sing-along night: the playlist, what's on and what's next, and Request a song from the playlist.

@@ -24,6 +24,7 @@ import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialException
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
+import social.hotmess.android.session.AuthState
 import com.facebook.CallbackManager
 import com.facebook.FacebookCallback
 import com.facebook.FacebookException
@@ -90,6 +91,11 @@ class MainActivity : ComponentActivity(), GoogleAccounts {
                             onGoogleSignIn = ::signInWithGoogle,
                             onAppleSignIn = ::signInWithApple,
                         )
+                        val spotifyShare by graph.spotifyShares.pending.collectAsStateWithLifecycle()
+                        val authState by graph.session.state.collectAsStateWithLifecycle()
+                        spotifyShare?.takeIf { authState == AuthState.SignedIn }?.let { share ->
+                            social.hotmess.android.spotify.SpotifyRequestSheet(share) { graph.spotifyShares.dismiss() }
+                        }
                         // A notification that came over the cable while the app is open; a tap opens it as a push's would.
                         NotificationBanner(graph.notifications) { notification -> openPush(notification.data) }
                     }
@@ -289,6 +295,11 @@ class MainActivity : ComponentActivity(), GoogleAccounts {
                 PingPush.KEYS.forEach { intent.removeExtra(it) }
                 return
             }
+        }
+        // A song shared from Spotify: the request sheet offers it to the bar.
+        if (intent?.action == Intent.ACTION_SEND) {
+            intent.getStringExtra(Intent.EXTRA_TEXT)?.let { graph.spotifyShares.offer(it) }
+            return
         }
         val url = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.dataString ?: return
         if (graph.session.handleRedirect(url)) return
