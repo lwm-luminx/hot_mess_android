@@ -123,7 +123,7 @@ class LineupTest {
         assertEquals("Mama Alma", night.featuredHost?.billing)
         assertEquals(listOf("KJ Dalton"), night.featuredJockeys.map { it.billing })
         assertEquals("Your KJ tonight", night.jockeyCaption)
-        assertEquals(listOf("Mama Alma", "Dalton"), night.hostNames)
+        assertEquals(listOf("Mama Alma", "KJ Dalton"), night.hostNames)
 
         // A karaoke night with only a KJ, on now as the host: billed once, as the KJ.
         val kjOnly = lineup(
@@ -133,13 +133,30 @@ class LineupTest {
         )
         assertNull(kjOnly.featuredHost)
         assertEquals(listOf("KJ Dalton"), kjOnly.featuredJockeys.map { it.billing })
-        assertEquals(listOf("Dalton"), kjOnly.hostNames)
+        assertEquals(listOf("KJ Dalton"), kjOnly.hostNames)
+        // A lone KJ is the night's host (Rick, 2026-11-23).
+        assertEquals("Your host tonight", kjOnly.jockeyCaption)
 
         assertEquals("DJ Bea", Lineups.jockeyTitle("DJ", " Bea "))
         assertEquals("Bea", Lineups.jockeyTitle(null, "Bea"))
         assertNull(Lineups.jockeyTitle("VJ", " "))
         assertTrue(Lineups.VENUE_LINEUP_WITH_JOCKEYS.contains("jockeysTonight { id name avatarUrl } jockeyLabelTonight"))
         assertFalse(Lineups.VENUE_LINEUP.contains("jockeysTonight"))
+    }
+
+    @Test
+    fun aLoneKJHostsTheEvent() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        fun event(hosts: String) = json.decodeFromString<Event>(
+            """{"id":"e-1","startAt":"2026-11-26T03:00:00Z","people":{"hosts":{"nodes":[$hosts]},
+               "jockeys":{"nodes":[{"id":"p-2","name":"Dalton"}]},"jockeyLabel":"KJ"}}""",
+        )
+        val alone = event("")
+        assertEquals("Hosted by KJ Dalton", alone.jockeysLine)
+        assertEquals(listOf("KJ Dalton"), alone.karaokeContactNames)
+        val withHost = event("""{"id":"p-1","name":"Mama Alma"}""")
+        assertEquals("KJ Dalton", withHost.jockeysLine)
+        assertEquals(listOf("Mama Alma", "KJ Dalton"), withHost.karaokeContactNames)
     }
 
     @Test
