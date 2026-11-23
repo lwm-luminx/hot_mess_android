@@ -180,13 +180,19 @@ data class VenueLineup(
     /** A jockey as billed tonight: "KJ Dalton". */
     fun jockeyTitle(person: Person): String? = Lineups.jockeyTitle(jockeyLabel, person.name)
 
-    /** What a jockey's host row says under their name: "Your KJ tonight". */
-    val jockeyCaption: String get() = "Your ${jockeyLabel ?: "DJ"} tonight"
+    /**
+     * What a jockey's host row says under their name: "Your KJ tonight" beside a host, "Your host tonight" when the
+     * jockey is the only one (Rick, 2026-11-23: a lone KJ is the night's host).
+     */
+    val jockeyCaption: String get() = if (featuredHost == null) "Your host tonight" else "Your ${jockeyLabel ?: "DJ"} tonight"
 
-    /** Who to sign up with in person, for "Sign up in person with Dalton": the featured host and the KJ. */
+    /** Who to sign up with in person, for "Sign up in person with KJ Dalton": the featured host, then the KJ as billed. */
     val hostNames: List<String>
-        get() = (featuredHost?.people.orEmpty() + jockeysTonight).distinctBy { it.id }
-            .mapNotNull { it.name.takeIf(String::isNotBlank) }
+        get() {
+            val jockeyIds = jockeysTonight.map { it.id }.toSet()
+            val hosts = featuredHost?.people.orEmpty().filter { it.id !in jockeyIds }.distinctBy { it.id }
+            return (hosts.map { it.name } + jockeysTonight.mapNotNull { jockeyTitle(it) }).filter(String::isNotBlank)
+        }
 
     /** A lineup of only hosts isn't a running order: it reads "Hosted by A and B". */
     val onlyHosts: Boolean get() = acts.isNotEmpty() && acts.all { it.role == AppearanceRole.HOST }

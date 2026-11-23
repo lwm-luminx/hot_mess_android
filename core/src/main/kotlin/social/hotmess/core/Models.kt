@@ -538,8 +538,20 @@ data class Event(
         get() = jockeys.takeIf { it.isNotEmpty() }
             ?.let { "${peopleMixin?.jockeyLabel ?: "DJ"} ${Lineups.andList(it.map { person -> person.name })}" }
 
-    /** Who to sign up with in person at karaoke: its hosts and its KJ. */
-    val karaokeContactNames: List<String> get() = (hosts + jockeys).distinctBy { it.id }.map { it.name }
+    /**
+     * Its jockeys' line on the event page: "KJ Dalton" beside its hosts, and "Hosted by KJ Dalton" when the jockey is
+     * the only one (Rick, 2026-11-23: "if the only linked person is a KJ they are a defacto host"). Null without any.
+     */
+    val jockeysLine: String? get() = jockeysTitle?.let { if (hosts.isEmpty()) "Hosted by $it" else it }
+
+    /** Who to sign up with in person at karaoke: its hosts, then its KJ as billed ("KJ Dalton"). */
+    val karaokeContactNames: List<String>
+        get() {
+            val jockeyIds = jockeys.map { it.id }.toSet()
+            val label = peopleMixin?.jockeyLabel ?: "DJ"
+            return hosts.filter { it.id !in jockeyIds }.distinctBy { it.id }.map { it.name } +
+                jockeys.mapNotNull { Lineups.jockeyTitle(label, it.name) }
+        }
 
     /** Friends' active Pings that pick this event; only the event screen asks for it. */
     val friendPings: List<Ping> get() = pingFeed?.friendPings.orEmpty()

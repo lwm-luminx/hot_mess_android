@@ -299,8 +299,8 @@ fun EventScreen(id: String, navigator: Navigator) {
                 if (loaded.hosts.isNotEmpty()) {
                     item(key = "hosted-by") { HostedByLine(loaded.hosts) { navigator.open(AppRoute.PersonDetail(it)) } }
                 }
-                loaded.jockeysTitle?.let { title ->
-                    // "KJ Dalton": its KJ, DJ or VJ, beside its hosts.
+                loaded.jockeysLine?.let { title ->
+                    // "KJ Dalton": its KJ, DJ or VJ, beside its hosts; "Hosted by KJ Dalton" when they're the only one.
                     item(key = "jockeys") { HostedByLine(loaded.jockeys, title) { navigator.open(AppRoute.PersonDetail(it)) } }
                 }
                 loaded.parentEvent?.let { parent ->
