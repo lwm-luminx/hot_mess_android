@@ -135,6 +135,8 @@ import social.hotmess.core.postsSubject
     /** Where the venue is, for a ride's pickup; blank when unknown. */
     val latitude: String = "",
     val longitude: String = "",
+    /** The venue's safety poster code, when Get help was opened from its QR code; blank otherwise. */
+    val posterCode: String = "",
 )
 /** Get help away from a venue: a friend, a ride, support and 911, without telling staff. */
 @Serializable data object HelpAnywhereRoute
@@ -288,6 +290,17 @@ private fun MainShell(links: Flow<AppRoute>) {
                         if (signedIn) privateChat = route
                         VenueRoute(route.venueId)
                     }
+                    // Get help at a safety poster's venue, or with no venue when the API didn't know the code.
+                    is AppRoute.VenueHelp -> {
+                        openHelp(route.venue)
+                        return
+                    }
+                    AppRoute.HelpAnywhere -> {
+                        openHelpAnywhere()
+                        return
+                    }
+                    // Posters are resolved to one of the above (or a venue) before they're opened; unresolved, the tab.
+                    is AppRoute.SafetyPoster, is AppRoute.CoverPoster -> return
                     // Venues, where it says the link expired, is all it opens: never the record.
                     AppRoute.LinkExpired -> {
                         linkExpired = true
@@ -333,6 +346,7 @@ private fun MainShell(links: Flow<AppRoute>) {
                 venue.address.orEmpty(),
                 venue.latitude?.toString().orEmpty(),
                 venue.longitude?.toString().orEmpty(),
+                venue.posterCode.orEmpty(),
             )
             navController.navigate(route) { launchSingleTop = true }
         }
@@ -491,6 +505,7 @@ private fun MainShell(links: Flow<AppRoute>) {
                         route.address.ifBlank { null },
                         route.latitude.toDoubleOrNull(),
                         route.longitude.toDoubleOrNull(),
+                        route.posterCode.ifBlank { null },
                     )
                     GetHelpScreen(venue, null, navigator)
                 }

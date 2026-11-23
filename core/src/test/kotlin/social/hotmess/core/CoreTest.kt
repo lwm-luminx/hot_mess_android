@@ -257,6 +257,19 @@ class DeepLinkTest {
     }
 
     @Test
+    fun readsSafetyAndCoverPosterLinks() {
+        assertEquals(AppRoute.SafetyPoster("aB3dE5gH7j"), DeepLink.route("https://hotmess.social/help/aB3dE5gH7j"))
+        assertEquals(AppRoute.SafetyPoster("aB3dE5gH7j"), DeepLink.route("hotmess://help/aB3dE5gH7j"))
+        assertEquals(AppRoute.CoverPoster("Ab3dE5gH"), DeepLink.route("https://hotmess.social/cover/Ab3dE5gH"))
+        assertNull(DeepLink.route("https://hotmess.social/help/short"), "a safety code is ten characters")
+        assertNull(DeepLink.route("https://hotmess.social/help/aB3dE5gH7j/x"))
+        assertNull(DeepLink.route("https://hotmess.social/cover/Ab3dE5gH7j"), "a short code is eight characters")
+        assertNull(DeepLink.route("https://hotmess.social/cover/Ab3d-5gH"))
+        assertEquals(AppTab.VENUES, AppRoute.SafetyPoster("aB3dE5gH7j").tab)
+        assertEquals(AppTab.VENUES, AppRoute.CoverPoster("Ab3dE5gH").tab)
+    }
+
+    @Test
     fun aReviewLinkCarriesItsCodeAndRoutesNowhere() {
         assertEquals("ABCD-1234-EFGH-5678", DeepLink.reviewCode("hotmess://review?code=ABCD-1234-EFGH-5678"))
         assertEquals("ABCD 1234", DeepLink.reviewCode("hotmess://review?code=%20ABCD%201234%20"), "decoded and trimmed")

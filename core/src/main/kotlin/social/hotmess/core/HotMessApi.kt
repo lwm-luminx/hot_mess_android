@@ -887,9 +887,50 @@ class HotMessApi(val client: AudienceKitClient) {
         query(SafetyAlertDocuments.VENUE_SAFETY, VenueSafetyResponse.serializer(), graphQLVariables("id" to venueId))
             .venues?.venue
 
-    /** "I feel unsafe" to the staff on shift. While the user's alert there is open, the API adds to it instead. */
-    suspend fun sendSafetyAlert(venueId: String, draft: SafetyAlertDraft): SafetyAlert =
-        safetyAlertMutation(SafetyAlertDocuments.SEND, draft.variables("venueId" to venueId))
+    /**
+     * "I feel unsafe" to the staff on shift. While the user's alert there is open, the API adds to it instead.
+     * [posterCode], from the venue's safety poster, lets them send before the app places them there.
+     */
+    suspend fun sendSafetyAlert(venueId: String, draft: SafetyAlertDraft, posterCode: String? = null): SafetyAlert =
+        if (posterCode == null) {
+            safetyAlertMutation(SafetyAlertDocuments.SEND, draft.variables("venueId" to venueId))
+        } else {
+            safetyAlertMutation(
+                SafetyAlertDocuments.SEND_FROM_POSTER,
+                draft.variables("venueId" to venueId, "posterCode" to posterCode),
+            )
+        }
+
+    /**
+     * The venue a safety poster's [code] belongs to (`GET /v1/safety/posters/<code>`, open to anyone), as Get help
+     * names it with the code kept, or null for a code no longer in use. Throws when the API can't be reached. [host]
+     * names the audience.
+     */
+    suspend fun safetyPoster(host: String, code: String): HelpVenue? {
+        val venue = posterVenue("/v1/safety/posters/$code", host) ?: return null
+        return HelpVenue(venue.id, venue.name ?: "the venue", posterCode = code)
+    }
+
+    /**
+     * The id of the venue a cover poster's or TV's short [code] names (`GET /v1/cover/<code>`, open to anyone), or
+     * null when it names none. Throws when the API can't be reached. [host] names the audience.
+     */
+    suspend fun coverPosterVenue(host: String, code: String): String? = posterVenue("/v1/cover/$code", host)?.id
+
+    /** `{ venue: { id, name } }` from a poster's public endpoint; null on its 404. */
+    private suspend fun posterVenue(path: String, host: String): PosterVenue? {
+        val bytes = try {
+            client.data(APIRequest(path = path, queryItems = listOf("host" to host), authenticated = false))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: AudienceKitException.NotFound) {
+            return null
+        } catch (e: AudienceKitException) {
+            throw failed(ApiError.from(e), "GET $path")
+        }
+        return json.decodeFromString(PosterVenueResponse.serializer(), bytes.toString(Charsets.UTF_8)).venue
+            .takeIf { it.id.isNotBlank() }
+    }
 
     /** "Add more": where they are and what's going on, after sending. */
     suspend fun updateSafetyAlert(id: String, draft: SafetyAlertDraft): SafetyAlert =
@@ -1087,6 +1128,13 @@ fun Venue.isIn(localeId: String?): Boolean {
 private data class StatusResponse(val clients: Clients? = null) {
     @Serializable data class Clients(val android: VersionInfo? = null)
 }
+
+/** What a poster's public endpoint (`/v1/safety/posters/<code>`, `/v1/cover/<code>`) answers. */
+@Serializable
+private data class PosterVenueResponse(val venue: PosterVenue)
+
+@Serializable
+private data class PosterVenue(val id: String, val name: String? = null)
 
 @Serializable
 private data class ReportLocationResponse(val reportLocation: LocationReport)
