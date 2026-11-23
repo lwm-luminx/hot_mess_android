@@ -197,6 +197,11 @@ data class HelpVenue(
     /** Where it is, for a ride's pickup. */
     val latitude: Double? = null,
     val longitude: Double? = null,
+    /**
+     * The venue's safety poster code, when Get help was opened from its QR code: it lets the user tell staff before
+     * the app places them at the venue (`sendSafetyAlert`'s `posterCode`).
+     */
+    val posterCode: String? = null,
 ) {
     /** "I'm at The Wildrose, 1001 E Pike St." */
     val whereIAm: String get() = if (address.isNullOrBlank()) "I'm at $name." else "I'm at $name, $address."
@@ -222,6 +227,15 @@ internal object SafetyAlertDocuments {
     val SEND: String = """
         mutation SendSafetyAlert(${'$'}venueId: ID!, ${'$'}place: SafetyAlertPlace, ${'$'}concerns: [SafetyAlertConcern!], ${'$'}description: String) {
           sendSafetyAlert(input: { venueId: ${'$'}venueId, place: ${'$'}place, concerns: ${'$'}concerns, description: ${'$'}description }) {
+            safetyAlert { $ALERT }
+          }
+        }
+    """.trimIndent()
+
+    /** [SEND] with a safety poster's code; its own document so a send without one works on an API older than posters. */
+    val SEND_FROM_POSTER: String = """
+        mutation SendSafetyAlertFromPoster(${'$'}venueId: ID!, ${'$'}posterCode: String!, ${'$'}place: SafetyAlertPlace, ${'$'}concerns: [SafetyAlertConcern!], ${'$'}description: String) {
+          sendSafetyAlert(input: { venueId: ${'$'}venueId, posterCode: ${'$'}posterCode, place: ${'$'}place, concerns: ${'$'}concerns, description: ${'$'}description }) {
             safetyAlert { $ALERT }
           }
         }

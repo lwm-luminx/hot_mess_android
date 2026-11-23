@@ -88,6 +88,10 @@
                 <data android:pathPrefix="/friends/" />
                 <!-- A venue's short link (a TV's QR code), followed through the site's redirect (ShortLink). -->
                 <data android:pathPrefix="/v/" />
+                <!-- A venue's safety poster (/help/<code>): its Get help, on "Tell staff quietly". -->
+                <data android:pathPrefix="/help/" />
+                <!-- A venue's lobby cover poster (/cover/<code>): the venue, where Cover pays tonight's. -->
+                <data android:pathPrefix="/cover/" />
                 <!-- A locale's chat room (a venue's, /venues/<id>/chat, is under /venues/). -->
                 <data android:pathPattern="/locales/.*/chat" />
             </intent-filter>
