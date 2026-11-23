@@ -256,8 +256,16 @@ fun EventScreen(id: String, navigator: Navigator) {
                 listState,
                 hero = {
                     HeroHeader(loaded.bannerUrl, topInset, onTone = { heroTone = it }) {
+                        val lastDay = loaded.endAt?.takeIf { loaded.isMultiDay }
+                        val day = "${Formatting.monthAbbreviation(loaded.startAt)} ${Formatting.dayOfMonth(loaded.startAt)}"
                         Text(
-                            "${Formatting.monthAbbreviation(loaded.startAt)} ${Formatting.dayOfMonth(loaded.startAt)} · ${Formatting.shortTime(loaded.startAt)}".uppercase(),
+                            (
+                                if (lastDay != null) {
+                                    "$day to ${Formatting.monthAbbreviation(lastDay)} ${Formatting.dayOfMonth(lastDay)}"
+                                } else {
+                                    "$day · ${Formatting.shortTime(loaded.startAt)}"
+                                }
+                                ).uppercase(),
                             style = HotMessType.caption,
                         )
                         Text(
@@ -289,6 +297,13 @@ fun EventScreen(id: String, navigator: Navigator) {
                 }
                 if (loaded.hosts.isNotEmpty()) {
                     item(key = "hosted-by") { HostedByLine(loaded.hosts) { navigator.open(AppRoute.PersonDetail(it)) } }
+                }
+                loaded.parentEvent?.let { parent ->
+                    item(key = "part-of") {
+                        DetailSection {
+                            InfoRow("Part of ${parent.name}", onClick = { navigator.open(AppRoute.EventDetail(parent.id)) })
+                        }
+                    }
                 }
                 item { DetailSection("Your RSVP") { RsvpPicker(loaded.rsvp, ::choose) } }
                 CoverOffer.of(loaded)?.let { offer ->
@@ -345,6 +360,10 @@ fun EventScreen(id: String, navigator: Navigator) {
                     }
                 } else {
                     item { DetailSection("Venue") { EmptyRow(Formatting.TO_BE_ANNOUNCED) } }
+                }
+                // A festival's or conference's parties and parade.
+                cardSection("during", "During ${loaded.name}", loaded.childEvents, key = { it.id }) { child ->
+                    EventCard(child, onClick = { navigator.open(AppRoute.EventDetail(child.id)) })
                 }
                 cardSection("presented-by", "Presented by", loaded.organizers, key = { it.id }) { organizer ->
                     PersonCard(organizer, onClick = { navigator.open(AppRoute.PersonDetail(organizer.id)) })
