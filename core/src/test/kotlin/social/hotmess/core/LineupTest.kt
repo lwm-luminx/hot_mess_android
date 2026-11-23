@@ -66,6 +66,32 @@ class LineupTest {
     }
 
     @Test
+    fun aKaraFunNightWithNoCodeSignsUpInPersonWithTheHost() {
+        val night = lineup(
+            """{"id":"v-2","name":"The SunTrapp","people":{"runningOrder":{"nodes":[
+                 {"id":"h-1","kind":"ACT","role":"HOST","state":"ON","people":{"nodes":[{"id":"p-1","name":"Dalton"}]}}]}},
+               "karaoke":{"provider":"karafun","providerName":"KaraFun","tonight":true},
+               "requests":{"karaoke":{"permitted":false,"open":false}}}""",
+        )
+        assertTrue(night.karaokeSession!!.signsUpInPerson)
+        assertFalse(night.takesKaraokeSignups)
+        assertEquals(listOf("Dalton"), night.hostNames)
+        assertEquals("Sign up in person with Dalton", KaraokeSignUpInPerson.text(night.hostNames))
+        assertEquals("Sign up in person with the host", KaraokeSignUpInPerson.text(listOf(" ")))
+        assertEquals("Sign up in person with Dalton or Sequoia", KaraokeSignUpInPerson.text(listOf("Dalton", "Sequoia")))
+        assertFalse(VenueKaraoke(provider = "karafun", joinUrl = "https://www.karafun.com/123456/", tonight = true).signsUpInPerson)
+        assertFalse(VenueKaraoke(provider = "audiencekit", tonight = true).signsUpInPerson)
+    }
+
+    @Test
+    fun searchesKaraFunsSongbookOnly() {
+        assertEquals("https://www.karafun.com/search/?query=Bohemian%20Rhapsody", KaraokeSongbook.searchUrl("karafun", " Bohemian Rhapsody "))
+        assertEquals("https://www.karafun.com/karaoke-song-list.html", KaraokeSongbook.searchUrl("KaraFun", ""))
+        assertNull(KaraokeSongbook.searchUrl("custom_url", "Waterloo"))
+        assertNull(KaraokeSongbook.searchUrl(null, "Waterloo"))
+    }
+
+    @Test
     fun unknownStatesAndKindsStillRead() {
         val night = lineup(
             """{"id":"v-3","people":{"runningOrder":{"nodes":[{"id":"x","role":"SINGER","state":"ON",
