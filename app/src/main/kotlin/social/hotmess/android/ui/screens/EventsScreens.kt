@@ -477,7 +477,7 @@ internal fun EventKaraokeSection(
                     InfoRow("Join code", code)
                 } else {
                     Column(Modifier.padding(Space.s4), verticalArrangement = Arrangement.spacedBy(Space.s3)) {
-                        KaraokeSignUpInPersonRows(karaoke.provider, karaoke.providerName, hostNames)
+                        KaraokeSignUpInPersonRows(hostNames)
                     }
                 }
             }
