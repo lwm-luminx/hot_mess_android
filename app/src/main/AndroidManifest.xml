@@ -169,6 +169,14 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_icon"
             android:resource="@mipmap/ic_launcher_monochrome" />
+        <!-- The ongoing Ping and Quickie notifications' buttons (OngoingNotifications). -->
+        <receiver
+            android:name=".push.OngoingActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="social.hotmess.android.ONGOING_ACTION" />
+            </intent-filter>
+        </receiver>
     </application>
 
     <queries>

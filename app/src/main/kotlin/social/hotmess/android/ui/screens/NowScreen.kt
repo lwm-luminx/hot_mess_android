@@ -143,6 +143,11 @@ fun NowScreen(navigator: Navigator) {
     val refreshing by loader.isRefreshing.collectAsStateWithLifecycle()
     val simulated by graph.location.simulatedVenue.collectAsStateWithLifecycle()
 
+    // The ongoing Ping notification follows what Now shows (the iOS Live Activity's counterpart).
+    LaunchedEffect(state) {
+        state.valueOrNull?.let { now -> graph.ongoing.syncPings(now.myPing, now.friendPings) }
+    }
+
     LaunchedEffect(coordinates) {
         // The last "Now" (half an hour at most) shows while the position report goes out.
         loader.load(coordinates, cached = { coordinates?.let { graph.api.cachedNow() } }) { graph.api.nowOrPings(coordinates) }
@@ -224,7 +229,12 @@ fun NowScreen(navigator: Navigator) {
 
     // Pair me up at the venue you're at, or your event's: reloaded with Now, while the screen shows.
     val pairUpVenue = state.valueOrNull?.venue
-    val pairUp = remember(pairUpVenue?.id) { pairUpVenue?.let { PairUpController(graph.api, it.id, scope) { graph.location.reportAgain() } } }
+    val pairUp = remember(pairUpVenue?.id) {
+        pairUpVenue?.let { venue ->
+            PairUpController(graph.api, venue.id, scope) { graph.location.reportAgain() }
+                .also { it.onChange = { state -> graph.ongoing.syncQuickie(state, venue.id, venue.name) } }
+        }
+    }
     var pairingUp by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(pairUp, lifecycle) {
         val controller = pairUp ?: return@LaunchedEffect
