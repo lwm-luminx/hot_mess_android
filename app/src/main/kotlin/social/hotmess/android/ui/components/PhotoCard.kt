@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -72,6 +74,7 @@ import social.hotmess.core.Formatting
 import social.hotmess.core.Friend
 import social.hotmess.core.Person
 import social.hotmess.core.Venue
+import social.hotmess.core.VenueHours
 import kotlin.math.max
 
 // PhotoCard and the cards built on it (design system PhotoCard): venues, events and people as photos
@@ -288,12 +291,31 @@ fun VenueCard(
         trailing = { if (pill != null) GlassPill(pill) },
     ) {
         Text(venue.name, style = CardTitle, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        venue.hours?.let { OpenStatusLine(it) }
         Text(
             detail ?: venue.summary ?: venue.locale?.displayName ?: "No address yet",
             style = CardDetail,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
+    }
+}
+
+/**
+ * "Open until 2 AM" with a green dot, or "Opens at 4 PM" / "Temporarily closed" with a grey one: the server's line, in
+ * the venue's own time zone. Nothing when the hours are unknown.
+ */
+@Composable
+fun OpenStatusLine(hours: VenueHours, modifier: Modifier = Modifier) {
+    val label = hours.label ?: return
+    Row(modifier.semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .size(7.dp)
+                .background(if (hours.isOpen == true) Color(0xFF34C759) else LocalContentColor.current.copy(alpha = 0.6f), CircleShape),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(label, style = CardDetail, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

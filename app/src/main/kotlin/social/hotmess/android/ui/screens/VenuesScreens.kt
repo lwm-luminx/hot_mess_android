@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.LocationOff
 import androidx.compose.material.icons.rounded.MyLocation
@@ -151,7 +152,9 @@ fun VenuesScreen(navigator: Navigator) {
     // Opens on the device's city each time; Everywhere is every venue, by city.
     var everywhere by rememberSaveable { mutableStateOf(false) }
 
-    LaunchedEffect(localeId) { loader.load(localeId) { graph.api.venues(localeId) } }
+    LaunchedEffect(localeId) {
+        loader.load(localeId, cached = { graph.api.cachedVenues(localeId) }) { graph.api.venues(localeId) }
+    }
     val cardLayout = rememberScreenCards(LayoutScreen.VENUES, VENUES_CARD_KINDS, VENUES_FALLBACK_CARDS)
     val everywhereLayout = rememberScreenCards(LayoutScreen.EVERYWHERE, EVERYWHERE_CARD_KINDS, emptyList())
 
@@ -336,7 +339,11 @@ fun VenueScreen(id: String, navigator: Navigator) {
     val userId = rememberUserId()
     var pingHere by rememberSaveable { mutableStateOf(false) }
     val pairUpScope = rememberCoroutineScope()
-    val pairUp = remember(id) { PairUpController(graph.api, id, pairUpScope) { graph.location.reportAgain() } }
+    val pairUp = remember(id) {
+        PairUpController(graph.api, id, pairUpScope) { graph.location.reportAgain() }
+            // No name here: the notification keeps the title Now gave it, else says "Quickie".
+            .also { it.onChange = { state -> graph.ongoing.syncQuickie(state, id, null) } }
+    }
     var pairingUp by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(id) { pairUp.load() }
     // Whether the app places the user here, so Safety shows in the hero.
@@ -404,7 +411,12 @@ fun VenueScreen(id: String, navigator: Navigator) {
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.semantics { heading() },
                                 )
-                                val details = listOfNotNull(loaded.address?.takeIf { it.isNotBlank() }, loaded.distance?.let { Formatting.distance(it) })
+                                // Whether it's open now ("Open until 2 AM", "Opens at 4 PM"), in the venue's own time zone.
+                                val details = listOfNotNull(
+                                    loaded.hours?.label,
+                                    loaded.address?.takeIf { it.isNotBlank() },
+                                    loaded.distance?.let { Formatting.distance(it) },
+                                )
                                 // While the app places the user here, Ping and Safety take the address's place, as on iOS.
                                 if (canGetHelp) {
                                     HeroVenueActions(
@@ -428,7 +440,7 @@ fun VenueScreen(id: String, navigator: Navigator) {
                                     CoverRow(
                                         offer,
                                         paying = checkoutState == CoverCheckout.State.Working && !payingCoatCheck,
-                                        onPay = { checkout.pay(loaded.id, loaded.name) },
+                                        onPay = { amount -> checkout.pay(loaded.id, loaded.name, amount) },
                                         onShowPass = { pass ->
                                             graph.passes.put(pass)
                                             navigator.openPass(pass.id)
@@ -486,7 +498,9 @@ fun VenueScreen(id: String, navigator: Navigator) {
                         val tonight = tonightLineup?.takeIf { !it.isEmpty }
                         if (tonight != null) {
                             item(key = "tonight") {
-                                TonightLineupSection(tonightModel, tonight, viewerName) { navigator.open(AppRoute.PersonDetail(it)) }
+                                TonightLineupSection(tonightModel, tonight, viewerName, overview.singAlongTonight?.id) {
+                                    navigator.open(AppRoute.PersonDetail(it))
+                                }
                             }
                         } else if (overview.onNow.isNotEmpty()) {
                             item(key = "on-now") {
@@ -534,6 +548,11 @@ fun VenueScreen(id: String, navigator: Navigator) {
                                         onClick = coordinate?.let { { context.openMap(it.latitude, it.longitude, loaded.name) } },
                                         trailing = coordinate?.let { Icons.AutoMirrored.Rounded.KeyboardArrowRight },
                                     )
+                                    RowDivider()
+                                }
+                                loaded.hours?.takeIf { it.lines.isNotEmpty() }?.let { hours ->
+                                    InfoRow("Hours", hours.label, icon = Icons.Rounded.Schedule)
+                                    TextRow(hours.lines.joinToString("\n"))
                                     RowDivider()
                                 }
                                 loaded.phone?.takeIf { it.isNotBlank() }?.let { phone ->

@@ -26,6 +26,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Paid
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -46,6 +47,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
@@ -54,6 +56,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -73,9 +76,12 @@ import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.ApiError
 import social.hotmess.core.HotMessApi
+import social.hotmess.core.KaraokeSignUpInPerson
 import social.hotmess.core.LineupEntry
 import social.hotmess.core.LineupState
 import social.hotmess.core.Lineups
+import social.hotmess.core.PersonDetail
+import social.hotmess.core.SocialLink
 import social.hotmess.core.SongRequest
 import social.hotmess.core.SongRequestDraft
 import social.hotmess.core.SongRequestKind
@@ -96,16 +102,39 @@ class TonightLineupModel(private val api: HotMessApi, val venueId: String, priva
 
     /** Whether the first fetch has finished, lineup or not: until then a page holds back what stands in for it. */
     val loaded: StateFlow<Boolean> = _loaded.asStateFlow()
+    private val _host = MutableStateFlow<PersonDetail?>(null)
+
+    /** The featured host's page, for where to tip them; null until it loads, or with nobody hosting. */
+    val host: StateFlow<PersonDetail?> = _host.asStateFlow()
 
     suspend fun refresh() {
         try {
-            api.tonightLineup(venueId)?.let { _lineup.value = it }
+            api.tonightLineup(venueId)?.let {
+                _lineup.value = it
+                loadHost(it.featuredHost?.personId)
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
             // An API without the lineup, or a dropped connection: the page keeps what it had (or its On now).
         }
         _loaded.value = true
+    }
+
+    /** The featured host's page, fetched again only when a different host is featured. */
+    private suspend fun loadHost(personId: String?) {
+        if (personId == null) {
+            _host.value = null
+            return
+        }
+        if (_host.value?.id == personId) return
+        _host.value = try {
+            api.person(personId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
     }
 
     /** Signs up to sing or asks for a song; the error worded for the room, or null once it went. */
@@ -152,17 +181,31 @@ fun TonightLineupSection(
     model: TonightLineupModel,
     lineup: VenueLineup,
     viewerName: String?,
+    singAlongEventId: String? = null,
     onOpenPerson: (String) -> Unit,
 ) {
     var asking by remember { mutableStateOf<SongRequestKind?>(null) }
-    // Signed out, the lineup shows without its "+": signing up and requesting are the viewer's.
-    val ask = if (viewerName == null) null else { kind: SongRequestKind -> asking = kind }
+    // Signed out, the lineup shows without its "+": signing up and requesting are the viewer's. A sing-along night has
+    // no "+" either: its card asks for songs from the playlist.
+    val ask = if (viewerName == null || singAlongEventId != null) null else { kind: SongRequestKind -> asking = kind }
     Column(verticalArrangement = Arrangement.spacedBy(Space.s5)) {
-        lineup.hostOnNow?.let { host -> HostRow(host) { host.personId?.let(onOpenPerson) } }
+        val hostDetail by model.host.collectAsStateWithLifecycle()
+        lineup.featuredHost?.let { host ->
+            val tips = hostDetail?.takeIf { it.id == host.personId }?.tipLinks.orEmpty()
+            HostRow(host, tips) { host.personId?.let(onOpenPerson) }
+        }
+        // Its KJ, DJ or VJ beside the host: "KJ Dalton", "Your KJ tonight".
+        lineup.featuredJockeys.forEach { jockey ->
+            HostRow(jockey, emptyList(), caption = lineup.jockeyCaption) { jockey.personId?.let(onOpenPerson) }
+        }
         LineupStrip(lineup, onOpenPerson, onAdd = ask)
         val session = lineup.karaokeSession
+        if (singAlongEventId != null) {
+            SingAlongSection(singAlongEventId, isLive = true, model = model, lineup = lineup, viewerName = viewerName)
+            return@Column
+        }
         if (session != null && session.isPartnerSessionTonight) {
-            KaraokeJoinSection(session)
+            KaraokeJoinSection(session, lineup.hostNames)
         } else if (lineup.karaoke?.permitted == true || lineup.singers.isNotEmpty()) {
             KaraokeSection(lineup, viewerName, model)
         }
@@ -194,7 +237,7 @@ fun TonightKaraoke(model: TonightLineupModel, lineup: VenueLineup, viewerName: S
     Column(verticalArrangement = Arrangement.spacedBy(Space.s5)) {
         val session = lineup.karaokeSession
         if (session != null && session.isPartnerSessionTonight) {
-            KaraokeJoinSection(session)
+            KaraokeJoinSection(session, lineup.hostNames)
         } else if (lineup.karaoke?.permitted == true || lineup.singers.isNotEmpty()) {
             KaraokeSection(lineup, viewerName, model, onSignUp = ask?.let { add -> { add(SongRequestKind.KARAOKE) } })
         }
@@ -222,7 +265,7 @@ val VenueLineup.showsKaraoke: Boolean
 
 /** Sign up to sing (or Request a song): the primary button while open; greyed with the venue's reason while not. */
 @Composable
-private fun RequestButton(kind: SongRequestKind, window: SongRequestWindow, label: String, onClick: () -> Unit) {
+internal fun RequestButton(kind: SongRequestKind, window: SongRequestWindow, label: String, onClick: () -> Unit) {
     if (!window.permitted) return
     val karaoke = kind == SongRequestKind.KARAOKE
     Column(verticalArrangement = Arrangement.spacedBy(Space.s1)) {
@@ -247,10 +290,14 @@ private fun RequestButton(kind: SongRequestKind, window: SongRequestWindow, labe
     }
 }
 
-/** The host on now, a step larger than the lineup, opening their page. */
+/**
+ * The featured host, a step larger than the lineup, opening their page: "Hosting now" once they're on, "Hosting
+ * tonight" for an event's host nobody has put on yet. Below, a Tip button for each app they take tips on.
+ */
 @Composable
-private fun HostRow(host: LineupEntry, onOpen: () -> Unit) {
+private fun HostRow(host: LineupEntry, tips: List<SocialLink>, caption: String? = null, onOpen: () -> Unit) {
     val person = host.people.firstOrNull()
+    val context = LocalContext.current
     DetailSection(null) {
         Row(
             Modifier
@@ -262,9 +309,17 @@ private fun HostRow(host: LineupEntry, onOpen: () -> Unit) {
         ) {
             Avatar(person?.avatarUrl, host.billing, size = 48.dp)
             Column(Modifier.weight(1f)) {
-                Text("Hosting now", style = HotMessType.caption, color = tokens.inkMuted)
+                Text(caption ?: if (host.state == LineupState.ON) "Hosting now" else "Hosting tonight", style = HotMessType.caption, color = tokens.inkMuted)
                 Text(host.billing, style = HotMessType.subheading, color = tokens.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+        }
+        tips.forEach { link ->
+            PrimaryButton(
+                "Tip ${host.billing} on ${link.tipApp}",
+                onClick = { link.url?.let(context::openUrl) },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = Space.s4).padding(bottom = Space.s3),
+                icon = Icons.Rounded.Paid,
+            )
         }
     }
 }
@@ -525,7 +580,7 @@ private fun MySignupCard(lineup: VenueLineup, request: SongRequest, viewerName: 
 
 /** A partner's karaoke session tonight (KaraFun and the like): join by link, or with the code. */
 @Composable
-private fun KaraokeJoinSection(session: VenueKaraoke) {
+private fun KaraokeJoinSection(session: VenueKaraoke, hostNames: List<String> = emptyList()) {
     val context = LocalContext.current
     var showingCode by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(Space.s2)) {
@@ -547,10 +602,29 @@ private fun KaraokeJoinSection(session: VenueKaraoke) {
                     }
                 }
                 if (url == null && code == null) {
-                    Text("Ask the host how to join the karaoke session.", style = HotMessType.body, color = tokens.inkMuted)
+                    KaraokeSignUpInPersonRows(hostNames)
                 }
             }
         }
+    }
+}
+
+/**
+ * "Paste a song link from Spotify" while the venue takes requests, opening the request sheet for this venue; and
+ * this venue becomes where a song shared from Spotify goes.
+ */
+@Composable
+private fun PasteSpotifyLink(lineup: VenueLineup) {
+    val graph = LocalAppGraph.current
+    val clipboard = LocalClipboardManager.current
+    var notSpotify by remember { mutableStateOf(false) }
+    LaunchedEffect(lineup.venueId) { graph.spotifyShares.rememberRequestVenue(lineup.venueId, lineup.venueName) }
+    TextButton(onClick = {
+        val text = clipboard.getText()?.text.orEmpty()
+        notSpotify = !graph.spotifyShares.offer(text, lineup.venueId, lineup.venueName)
+    }) { Text("Paste a song link from Spotify", color = tokens.accentInk) }
+    if (notSpotify) {
+        Text("Copy a song's link in Spotify (Share › Copy link) first.", style = HotMessType.caption, color = tokens.inkMuted)
     }
 }
 
@@ -564,6 +638,7 @@ private fun SongRequestsSection(lineup: VenueLineup, model: TonightLineupModel, 
     Column(verticalArrangement = Arrangement.spacedBy(Space.s2)) {
         SectionTitle("Song requests", Modifier.semantics { heading() })
         if (onRequest != null) RequestButton(SongRequestKind.SONG, window, "Request a song", onRequest)
+        if (window.open) PasteSpotifyLink(lineup)
         DetailSection(null) {
             window.playing?.let { playing ->
                 RequestRow(Icons.Rounded.MusicNote, "Now playing", playing.songLine, accent = true)
@@ -609,7 +684,7 @@ private fun SongRequestsSection(lineup: VenueLineup, model: TonightLineupModel, 
 }
 
 @Composable
-private fun RequestRow(
+internal fun RequestRow(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
     detail: String,
@@ -636,7 +711,7 @@ private fun RequestRow(
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SongRequestSheet(
+internal fun SongRequestSheet(
     kind: SongRequestKind,
     venueName: String,
     hostName: String?,
@@ -697,4 +772,14 @@ private fun SongRequestSheet(
             Spacer(Modifier.size(Space.s2))
         }
     }
+}
+
+/**
+ * A partner's night with no code (KaraFun run by the host; Rick, 2026-11-23): no queue in the app, just "Sign up in
+ * person with Dalton" (Rick, 2026-11-23: "we dont want to say 'search karafun'").
+ */
+@Composable
+internal fun KaraokeSignUpInPersonRows(hostNames: List<String>) {
+    Text(KaraokeSignUpInPerson.text(hostNames), style = HotMessType.body, color = tokens.ink,
+        modifier = Modifier.testTag("karaoke.signUpInPerson"))
 }

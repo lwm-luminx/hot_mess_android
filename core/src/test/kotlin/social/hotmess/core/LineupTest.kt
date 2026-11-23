@@ -66,6 +66,24 @@ class LineupTest {
     }
 
     @Test
+    fun aKaraFunNightWithNoCodeSignsUpInPersonWithTheHost() {
+        val night = lineup(
+            """{"id":"v-2","name":"The SunTrapp","people":{"runningOrder":{"nodes":[
+                 {"id":"h-1","kind":"ACT","role":"HOST","state":"ON","people":{"nodes":[{"id":"p-1","name":"Dalton"}]}}]}},
+               "karaoke":{"provider":"karafun","providerName":"KaraFun","tonight":true},
+               "requests":{"karaoke":{"permitted":false,"open":false}}}""",
+        )
+        assertTrue(night.karaokeSession!!.signsUpInPerson)
+        assertFalse(night.takesKaraokeSignups)
+        assertEquals(listOf("Dalton"), night.hostNames)
+        assertEquals("Sign up in person with Dalton", KaraokeSignUpInPerson.text(night.hostNames))
+        assertEquals("Sign up in person with the host", KaraokeSignUpInPerson.text(listOf(" ")))
+        assertEquals("Sign up in person with Dalton or Sequoia", KaraokeSignUpInPerson.text(listOf("Dalton", "Sequoia")))
+        assertFalse(VenueKaraoke(provider = "karafun", joinUrl = "https://www.karafun.com/123456/", tonight = true).signsUpInPerson)
+        assertFalse(VenueKaraoke(provider = "audiencekit", tonight = true).signsUpInPerson)
+    }
+
+    @Test
     fun unknownStatesAndKindsStillRead() {
         val night = lineup(
             """{"id":"v-3","people":{"runningOrder":{"nodes":[{"id":"x","role":"SINGER","state":"ON",
@@ -78,11 +96,89 @@ class LineupTest {
     }
 
     @Test
+    fun featuresTheEventsHostWhenNobodyIsOnNow() {
+        val night = lineup(
+            """{"id":"v-4","name":"Blue Gene's","people":{"runningOrder":{"nodes":[]},
+               "hostsTonight":[{"id":"p-9","name":"Sequoia","avatarUrl":null}]}}""",
+        )
+        assertNull(night.hostOnNow)
+        val host = night.featuredHost!!
+        assertEquals("Sequoia", host.billing)
+        assertEquals(AppearanceRole.HOST, host.role)
+        assertEquals(LineupState.UPCOMING, host.state)
+        assertEquals("p-9", host.people.single().id)
+        assertFalse(night.isEmpty, "a host to feature is something to show")
+
+        assertEquals("Aurora", lineup(karaokeNight).featuredHost?.billing, "the host on now comes first")
+        assertNull(lineup("""{"id":"v-5","people":{"runningOrder":{"nodes":[]}}}""").featuredHost)
+    }
+
+    @Test
+    fun featuresTheKJBesideTheHost() {
+        val night = lineup(
+            """{"id":"v-6","name":"The SunTrapp","people":{"runningOrder":{"nodes":[]},
+               "hostsTonight":[{"id":"p-1","name":"Mama Alma"}],
+               "jockeysTonight":[{"id":"p-2","name":"Dalton"}],"jockeyLabelTonight":"KJ"}}""",
+        )
+        assertEquals("Mama Alma", night.featuredHost?.billing)
+        assertEquals(listOf("KJ Dalton"), night.featuredJockeys.map { it.billing })
+        assertEquals("Your KJ tonight", night.jockeyCaption)
+        assertEquals(listOf("Mama Alma", "KJ Dalton"), night.hostNames)
+
+        // A karaoke night with only a KJ, on now as the host: billed once, as the KJ.
+        val kjOnly = lineup(
+            """{"id":"v-6","people":{"runningOrder":{"nodes":[
+               {"id":"h-1","kind":"ACT","role":"HOST","state":"ON","people":{"nodes":[{"id":"p-2","name":"Dalton"}]}}]},
+               "jockeysTonight":[{"id":"p-2","name":"Dalton"}],"jockeyLabelTonight":"KJ"}}""",
+        )
+        assertNull(kjOnly.featuredHost)
+        assertEquals(listOf("KJ Dalton"), kjOnly.featuredJockeys.map { it.billing })
+        assertEquals(listOf("KJ Dalton"), kjOnly.hostNames)
+        // A lone KJ is the night's host (Rick, 2026-11-23).
+        assertEquals("Your host tonight", kjOnly.jockeyCaption)
+
+        assertEquals("DJ Bea", Lineups.jockeyTitle("DJ", " Bea "))
+        assertEquals("Bea", Lineups.jockeyTitle(null, "Bea"))
+        assertNull(Lineups.jockeyTitle("VJ", " "))
+        assertTrue(Lineups.VENUE_LINEUP_WITH_JOCKEYS.contains("jockeysTonight { id name avatarUrl } jockeyLabelTonight"))
+        assertFalse(Lineups.VENUE_LINEUP.contains("jockeysTonight"))
+    }
+
+    @Test
+    fun aLoneKJHostsTheEvent() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        fun event(hosts: String) = json.decodeFromString<Event>(
+            """{"id":"e-1","startAt":"2026-11-26T03:00:00Z","people":{"hosts":{"nodes":[$hosts]},
+               "jockeys":{"nodes":[{"id":"p-2","name":"Dalton"}]},"jockeyLabel":"KJ"}}""",
+        )
+        val alone = event("")
+        assertEquals("Hosted by KJ Dalton", alone.jockeysLine)
+        assertEquals(listOf("KJ Dalton"), alone.karaokeContactNames)
+        val withHost = event("""{"id":"p-1","name":"Mama Alma"}""")
+        assertEquals("KJ Dalton", withHost.jockeysLine)
+        assertEquals(listOf("Mama Alma", "KJ Dalton"), withHost.karaokeContactNames)
+    }
+
+    @Test
     fun documentsAskForWhatTheyRead() {
+        assertTrue(Lineups.VENUE_LINEUP.contains("hostsTonight { id name avatarUrl }"))
+        assertFalse(Lineups.VENUE_LINEUP_WITHOUT_HOSTS.contains("hostsTonight"))
         assertTrue(Lineups.VENUE_LINEUP.contains("songRequest { ${Lineups.SONG_REQUEST_FIELDS} }"))
         assertTrue(Lineups.VENUE_LINEUP.contains("karaoke { provider providerName joinUrl sessionCode tonight }"))
         assertTrue(Lineups.REQUEST_SONG.contains("requestSong(input:"))
         assertTrue(Lineups.WITHDRAW_SONG_REQUEST.contains("withdrawSongRequest(input: { id: \$id })"))
         assertEquals("Ada, Bo and Cy", Lineups.andList(listOf("Ada", "Bo", "Cy")))
+    }
+
+    @Test
+    fun karaokeReadsASingAlongNight() {
+        val night = HotMessApi.json.decodeFromString(
+            KaraokeNight.serializer(),
+            """{"provider":"sing_along","providerName":"Sing-along","singAlong":true}""",
+        )
+        assertTrue(night.singAlong)
+        assertFalse(night.isAudienceKit)
+        assertFalse(HotMessApi.json.decodeFromString(KaraokeNight.serializer(), """{"provider":"audiencekit"}""").singAlong)
+        assertTrue(Documents.KARAOKE_FIELDS.contains("singAlong"))
     }
 }

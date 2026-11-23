@@ -143,6 +143,15 @@ fun NowScreen(navigator: Navigator) {
     val refreshing by loader.isRefreshing.collectAsStateWithLifecycle()
     val simulated by graph.location.simulatedVenue.collectAsStateWithLifecycle()
 
+    // The ongoing Ping notification (the iOS Live Activity's counterpart) and the Tonight widget follow what Now shows.
+    val appContext = LocalContext.current.applicationContext
+    LaunchedEffect(state) {
+        state.valueOrNull?.let { now ->
+            graph.ongoing.syncPings(now.myPing, now.friendPings)
+            social.hotmess.android.widget.TonightStore.update(appContext, now)
+        }
+    }
+
     LaunchedEffect(coordinates) {
         // The last "Now" (half an hour at most) shows while the position report goes out.
         loader.load(coordinates, cached = { coordinates?.let { graph.api.cachedNow() } }) { graph.api.nowOrPings(coordinates) }
@@ -224,7 +233,12 @@ fun NowScreen(navigator: Navigator) {
 
     // Pair me up at the venue you're at, or your event's: reloaded with Now, while the screen shows.
     val pairUpVenue = state.valueOrNull?.venue
-    val pairUp = remember(pairUpVenue?.id) { pairUpVenue?.let { PairUpController(graph.api, it.id, scope) { graph.location.reportAgain() } } }
+    val pairUp = remember(pairUpVenue?.id) {
+        pairUpVenue?.let { venue ->
+            PairUpController(graph.api, venue.id, scope) { graph.location.reportAgain() }
+                .also { it.onChange = { state -> graph.ongoing.syncQuickie(state, venue.id, venue.name) } }
+        }
+    }
     var pairingUp by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(pairUp, lifecycle) {
         val controller = pairUp ?: return@LaunchedEffect
@@ -353,7 +367,9 @@ fun NowScreen(navigator: Navigator) {
                             CardKind.NOW_STAGE -> {
                                 if (lineupModel != null && lineup != null) {
                                     item(key = "tonight") {
-                                        TonightLineupSection(lineupModel, lineup, viewerName) { navigator.open(AppRoute.PersonDetail(it)) }
+                                        TonightLineupSection(lineupModel, lineup, viewerName, now.singAlongEventId) {
+                                            navigator.open(AppRoute.PersonDetail(it))
+                                        }
                                     }
                                 } else {
                                     // Until the lineup loads, or from an API without it: who's on, and the event's
@@ -364,7 +380,10 @@ fun NowScreen(navigator: Navigator) {
                                         }
                                     }
                                     val karaoke = now.event?.karaoke
-                                    if (karaoke != null && now.venues == null && lineupLoaded) {
+                                    val singAlongId = now.singAlongEventId
+                                    if (singAlongId != null) {
+                                        item(key = "sing-along") { SingAlongSection(singAlongId, true, lineupModel, null, viewerName) }
+                                    } else if (karaoke != null && now.venues == null && lineupLoaded) {
                                         item(key = "karaoke") {
                                             EventKaraokeSection(karaoke, now.event?.venue ?: now.venue) { navigator.open(AppRoute.VenueDetail(it)) }
                                         }
@@ -544,7 +563,7 @@ private fun LazyListScope.coverCards(
             SkipTheLineCard(
                 offer,
                 paying = working && !payingCoatCheck,
-                onPay = { checkout.pay(venue.id, venue.name) },
+                onPay = { amount -> checkout.pay(venue.id, venue.name, amount) },
             )
         }
     }

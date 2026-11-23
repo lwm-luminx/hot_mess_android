@@ -24,6 +24,7 @@ import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialException
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
+import social.hotmess.android.session.AuthState
 import com.facebook.CallbackManager
 import com.facebook.FacebookCallback
 import com.facebook.FacebookException
@@ -49,6 +50,7 @@ import social.hotmess.android.ui.LocalAppGraph
 import social.hotmess.android.ui.components.NotificationBanner
 import social.hotmess.android.ui.theme.HotMessTheme
 import social.hotmess.core.AppRoute
+import social.hotmess.core.ChatRoom
 import social.hotmess.core.DeepLink
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
@@ -90,6 +92,11 @@ class MainActivity : ComponentActivity(), GoogleAccounts {
                             onGoogleSignIn = ::signInWithGoogle,
                             onAppleSignIn = ::signInWithApple,
                         )
+                        val spotifyShare by graph.spotifyShares.pending.collectAsStateWithLifecycle()
+                        val authState by graph.session.state.collectAsStateWithLifecycle()
+                        spotifyShare?.takeIf { authState == AuthState.SignedIn }?.let { share ->
+                            social.hotmess.android.spotify.SpotifyRequestSheet(share) { graph.spotifyShares.dismiss() }
+                        }
                         // A notification that came over the cable while the app is open; a tap opens it as a push's would.
                         NotificationBanner(graph.notifications) { notification -> openPush(notification.data) }
                     }
@@ -290,6 +297,11 @@ class MainActivity : ComponentActivity(), GoogleAccounts {
                 return
             }
         }
+        // A song shared from Spotify: the request sheet offers it to the bar.
+        if (intent?.action == Intent.ACTION_SEND) {
+            intent.getStringExtra(Intent.EXTRA_TEXT)?.let { graph.spotifyShares.offer(it) }
+            return
+        }
         val url = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.dataString ?: return
         if (graph.session.handleRedirect(url)) return
         // hotmess://review?code=…: the sign-in screen opens "Have an App Review code?" with it filled in.
@@ -297,14 +309,44 @@ class MainActivity : ComponentActivity(), GoogleAccounts {
             graph.session.offerReviewCode(it)
             return
         }
-        // A venue's short link (a TV's QR code): the site redirects it to the venue's chat, which opens here.
+        // A venue's short link (a TV's QR code): its chat. The API names the venue for the code (the cover poster's
+        // read, the same code), so the scan doesn't wait on the site; else the site's redirect, which opens here.
         ShortLink.url(url)?.let { short ->
             lifecycleScope.launch {
+                val code = short.substringAfterLast('/')
+                val venueId = runCatching { graph.api.coverPosterVenue(graph.configuration.audienceHost, code) }.getOrNull()
+                if (venueId != null) {
+                    links.trySend(AppRoute.Chat(ChatRoom.venue(venueId)))
+                    return@launch
+                }
                 withContext(Dispatchers.IO) { ShortLink.target(short) }?.let(::openLink)
             }
             return
         }
-        openLink(url)
+        when (val route = DeepLink.route(url)) {
+            is AppRoute.SafetyPoster -> openSafetyPoster(route.code)
+            is AppRoute.CoverPoster -> openCoverPoster(route.code)
+            else -> openLink(url)
+        }
+    }
+
+    /**
+     * A venue's safety poster: its Get help, opening on "Tell staff quietly". A code no longer in use, or no
+     * connection, still opens Get help, without a venue (a friend, a ride, support and 911).
+     */
+    private fun openSafetyPoster(code: String) {
+        lifecycleScope.launch {
+            val venue = runCatching { graph.api.safetyPoster(graph.configuration.audienceHost, code) }.getOrNull()
+            links.trySend(venue?.let { AppRoute.VenueHelp(it) } ?: AppRoute.HelpAnywhere)
+        }
+    }
+
+    /** A venue's lobby cover poster: the venue, whose Cover section pays tonight's. Unknown or offline: Venues. */
+    private fun openCoverPoster(code: String) {
+        lifecycleScope.launch {
+            val venueId = runCatching { graph.api.coverPosterVenue(graph.configuration.audienceHost, code) }.getOrNull()
+            links.trySend(venueId?.let { AppRoute.VenueDetail(it) } ?: AppRoute.CoverPoster(code))
+        }
     }
 
     /** Opens a link the app knows (DeepLink), checking a share link's signed expiry first. */

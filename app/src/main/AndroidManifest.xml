@@ -56,6 +56,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- A song shared from Spotify's share sheet: offered to the bar as a song request (SpotifyShares). -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+
             <!-- hotmess://venues/<id>, hotmess://events/<id>, hotmess://people/<id> -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -81,6 +88,10 @@
                 <data android:pathPrefix="/friends/" />
                 <!-- A venue's short link (a TV's QR code), followed through the site's redirect (ShortLink). -->
                 <data android:pathPrefix="/v/" />
+                <!-- A venue's safety poster (/help/<code>): its Get help, on "Tell staff quietly". -->
+                <data android:pathPrefix="/help/" />
+                <!-- A venue's lobby cover poster (/cover/<code>): the venue, where Cover pays tonight's. -->
+                <data android:pathPrefix="/cover/" />
                 <!-- A locale's chat room (a venue's, /venues/<id>/chat, is under /venues/). -->
                 <data android:pathPattern="/locales/.*/chat" />
             </intent-filter>
@@ -158,6 +169,26 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_icon"
             android:resource="@mipmap/ic_launcher_monochrome" />
+        <!-- The ongoing Ping and Quickie notifications' buttons (OngoingNotifications). -->
+        <!-- The Tonight home screen widget (widget/TonightWidget.kt). -->
+        <receiver
+            android:name=".widget.TonightWidgetReceiver"
+            android:exported="true"
+            android:label="Tonight">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/tonight_widget_info" />
+        </receiver>
+        <receiver
+            android:name=".push.OngoingActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="social.hotmess.android.ONGOING_ACTION" />
+            </intent-filter>
+        </receiver>
     </application>
 
     <queries>

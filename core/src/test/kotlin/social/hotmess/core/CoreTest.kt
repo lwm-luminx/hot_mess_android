@@ -50,6 +50,28 @@ class ModelDecodingTest {
     }
 
     @Test
+    fun decodesAFestivalWithItsPartsAndAPartWithItsFestival() {
+        val festival = json.decodeFromString(
+            Event.serializer(),
+            """{"id":"f-1","name":"Utah Pride Festival","startAt":"2026-06-05T16:00:00Z","endAt":"2026-06-07T22:00:00Z",
+              "parentEvent":null,"childEvents":{"nodes":[${Fixtures.EVENT}]}}""",
+        )
+        assertEquals(listOf("Drag Brunch"), festival.childEvents.map { it.name })
+        assertTrue(festival.isMultiDay)
+        assertNull(festival.parentEvent)
+
+        val party = json.decodeFromString(
+            Event.serializer(),
+            """{"id":"e-2","name":"Pride Party","startAt":"2026-06-06T04:00:00Z",
+              "parentEvent":{"id":"f-1","name":"Utah Pride Festival","startAt":"2026-06-05T16:00:00Z","endAt":null},
+              "childEvents":{"nodes":[]}}""",
+        )
+        assertEquals("Utah Pride Festival", party.parentEvent?.name)
+        assertTrue(party.childEvents.isEmpty())
+        assertFalse(party.isMultiDay)
+    }
+
+    @Test
     fun acceptsTheOldCompactDateFormat() {
         assertEquals(Instant.parse("2017-04-27T04:00:00Z"), InstantSerializer.parse("2017-04-26T21:00:00.000-0700"))
         assertEquals(Instant.parse("2026-10-10T04:00:00Z"), InstantSerializer.parse("2026-10-10T04:00:00.000Z"))
@@ -232,6 +254,19 @@ class DeepLinkTest {
         assertEquals(AppRoute.QuickieChat(id), DeepLink.route("https://hotmess.social/venues/$id/quickie"))
         assertEquals(AppRoute.VenueDetail(id), DeepLink.route("https://hotmess.social/venues/$id/quickie/x"))
         assertEquals(AppTab.EVENTS, AppRoute.EventDetail(id).tab)
+    }
+
+    @Test
+    fun readsSafetyAndCoverPosterLinks() {
+        assertEquals(AppRoute.SafetyPoster("aB3dE5gH7j"), DeepLink.route("https://hotmess.social/help/aB3dE5gH7j"))
+        assertEquals(AppRoute.SafetyPoster("aB3dE5gH7j"), DeepLink.route("hotmess://help/aB3dE5gH7j"))
+        assertEquals(AppRoute.CoverPoster("Ab3dE5gH"), DeepLink.route("https://hotmess.social/cover/Ab3dE5gH"))
+        assertNull(DeepLink.route("https://hotmess.social/help/short"), "a safety code is ten characters")
+        assertNull(DeepLink.route("https://hotmess.social/help/aB3dE5gH7j/x"))
+        assertNull(DeepLink.route("https://hotmess.social/cover/Ab3dE5gH7j"), "a short code is eight characters")
+        assertNull(DeepLink.route("https://hotmess.social/cover/Ab3d-5gH"))
+        assertEquals(AppTab.VENUES, AppRoute.SafetyPoster("aB3dE5gH7j").tab)
+        assertEquals(AppTab.VENUES, AppRoute.CoverPoster("Ab3dE5gH").tab)
     }
 
     @Test

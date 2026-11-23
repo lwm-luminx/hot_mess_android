@@ -175,7 +175,7 @@ class SafetyAlertController(private val api: HotMessApi, private val scope: Coro
 
     fun send(done: () -> Unit) {
         val venueId = venue?.id ?: return
-        run({ api.sendSafetyAlert(venueId, draft) }) { draft = SafetyAlertDraft(); done() }
+        run({ api.sendSafetyAlert(venueId, draft, venue?.posterCode) }) { draft = SafetyAlertDraft(); done() }
     }
 
     fun addDetails(done: () -> Unit) {
@@ -331,7 +331,8 @@ fun GetHelpScreen(venue: HelpVenue?, alertId: String?, navigator: Navigator) {
     val graph = LocalAppGraph.current
     val scope = rememberCoroutineScope()
     val controller = remember(venue, alertId) { SafetyAlertController(graph.api, scope, venue, alertId) }
-    var telling by remember { mutableStateOf(false) }
+    // From a venue's safety poster: straight to "Tell staff quietly", which can send before the app places them there.
+    var telling by remember(venue, alertId) { mutableStateOf(venue?.posterCode != null && alertId == null) }
     var addingMore by remember { mutableStateOf(false) }
     val haptics = LocalHapticFeedback.current
 
@@ -371,7 +372,7 @@ fun GetHelpScreen(venue: HelpVenue?, alertId: String?, navigator: Navigator) {
             Feed {
                 item {
                     DetailSection(null, footer = { Footnote("Nothing here shows in chat or on your profile.") }) {
-                        if (controller.venue != null && controller.staffOnShift) {
+                        if (controller.venue != null && (controller.staffOnShift || controller.venue?.posterCode != null)) {
                             HelpRow("Tell staff I feel unsafe", "The staff on shift hear it quietly and can come find you.", Icons.Rounded.Shield) {
                                 telling = true
                             }

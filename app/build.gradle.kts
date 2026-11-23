@@ -116,7 +116,7 @@ android {
         minSdk = 28
         targetSdk = 36
         versionCode = buildNumber
-        versionName = "2.8"
+        versionName = "2.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // The Facebook sign-in test's test user, from the environment (scripts/facebook-signin-test.sh
@@ -301,6 +301,8 @@ dependencies {
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.view)
+    // The Tonight home screen widget (widget/TonightWidget.kt).
+    implementation(libs.androidx.glance.appwidget)
 
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)

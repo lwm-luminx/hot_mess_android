@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Flag
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Paid
 import androidx.compose.material.icons.rounded.People
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -52,6 +53,8 @@ import social.hotmess.android.R
 import social.hotmess.android.ui.LocalAppGraph
 import social.hotmess.android.ui.Navigator
 import social.hotmess.android.ui.ScreenScaffold
+import social.hotmess.android.ui.ShareLinkFailure
+import social.hotmess.android.ui.rememberShareLinks
 import social.hotmess.android.ui.components.Avatar
 import social.hotmess.android.ui.components.CardRows
 import social.hotmess.android.ui.components.DetailInset
@@ -236,6 +239,10 @@ fun PersonScreen(id: String, navigator: Navigator) {
     var heroTone by remember { mutableStateOf(PhotoTone.PLACEHOLDER) }
     var reporting by remember { mutableStateOf<ReportSubject?>(null) }
     reporting?.let { ReportDialog(it) { reporting = null } }
+    // The same signed hotmess.social link as venues and events; its preview shows only the person's public card (a
+    // Community performer's names no one).
+    val shareLinks = rememberShareLinks()
+    ShareLinkFailure(shareLinks)
     HeroScaffold(
         title = current?.name ?: "Person",
         tone = heroTone,
@@ -243,6 +250,9 @@ fun PersonScreen(id: String, navigator: Navigator) {
         onBack = navigator::back,
         actions = {
             if (current != null) {
+                IconButton(onClick = { shareLinks.share("/people/${id.lowercase()}", current.name) }) {
+                    Icon(Icons.Rounded.Share, contentDescription = "Share")
+                }
                 IconButton(onClick = { reporting = ReportSubject(ReportTarget.PERSON, id) }) {
                     Icon(Icons.Rounded.Flag, contentDescription = "Report")
                 }

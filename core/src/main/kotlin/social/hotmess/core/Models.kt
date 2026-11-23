@@ -68,6 +68,9 @@ data class Venue(
 
     val isLiked: Boolean get() = profile?.facebook?.isLiked == true
 
+    /** Whether it's open now and its week's hours; null when the document didn't ask. */
+    val hours: VenueHours? get() = profile?.places?.hours
+
     /** Where else to find it, like its Instagram; only the venue screen asks. */
     val socialLinks: List<SocialLink> get() = profile?.links.orEmpty()
 
@@ -149,9 +152,15 @@ data class EventPeopleMixin(
     private val lineup: Connection<Person>? = null,
     private val organizers: Connection<Person>? = null,
     private val hosts: Connection<Person>? = null,
+    private val jockeys: Connection<Person>? = null,
+    /** What its jockeys are billed as: "KJ", "DJ" or "VJ". */
+    val jockeyLabel: String? = null,
 ) {
     /** Who hosts it ("Hosted by"). */
     val hostedBy: List<Person> get() = hosts?.nodes.orEmpty().filterNotNull()
+
+    /** Its KJ, DJ or VJ ([jockeyLabel] says which); empty from an API before the jockey role. */
+    val jockeyPeople: List<Person> get() = jockeys?.nodes.orEmpty().filterNotNull()
 
     val people: List<Person> get() = lineup?.nodes.orEmpty().filterNotNull()
 
@@ -186,10 +195,32 @@ data class ListingProfile(
     val phone: String? = null,
     private val socialLinks: Connection<SocialLink>? = null,
     val facebook: FacebookProfile? = null,
+    /** The places module's part: `places { hours }`. */
+    val places: PlacesProfile? = null,
 ) {
     /** Its social links, dropping null nodes; empty when not asked for. */
     val links: List<SocialLink> get() = socialLinks?.nodes.orEmpty().filterNotNull()
 }
+
+/** A listing's Google Maps side (`profile.places`): its opening hours. */
+@Serializable
+data class PlacesProfile(val hours: VenueHours? = null)
+
+/**
+ * A venue's opening hours and whether it's open now, from Google, worded by the server in the venue's own time zone
+ * ("Open until 2 AM", "Opens at 4 PM").
+ */
+@Serializable
+data class VenueHours(
+    /** OPEN, CLOSED, UNKNOWN, CLOSED_TEMPORARILY or CLOSED_PERMANENTLY. */
+    val status: String = "UNKNOWN",
+    /** Null when nobody knows. */
+    val isOpen: Boolean? = null,
+    /** One line to show; null when the hours are unknown. */
+    val label: String? = null,
+    /** The week, a line a day ("Monday: 4:00 PM – 2:00 AM"). */
+    val lines: List<String> = emptyList(),
+)
 
 /** A listing's Facebook Page ID and whether the user likes it (`profile.facebook`). */
 @Serializable
@@ -440,6 +471,15 @@ enum class Rsvp {
     }
 }
 
+/** Enough of a super-event to link to it from one of its parts. */
+@Serializable
+data class EventLink(
+    val id: String,
+    val name: String = "",
+    @Serializable(with = InstantSerializer::class) val startAt: Instant? = null,
+    @Serializable(with = InstantSerializer::class) val endAt: Instant? = null,
+)
+
 @Serializable
 data class Event(
     val id: String,
@@ -461,7 +501,17 @@ data class Event(
     @SerialName("ping") private val pingFeed: PingFeedMixin? = null,
     /** A karaoke night's partner and session; null for any other event. Only the event screen asks for it. */
     val karaoke: KaraokeNight? = null,
+    /** The super-event it's part of, such as a bar's party's Pride festival ("Part of …"). Only the event screen asks. */
+    val parentEvent: EventLink? = null,
+    /** A super-event's parts, upcoming and under way; read through [childEvents]. Only the event screen asks. */
+    @SerialName("childEvents") private val childEventsConnection: Connection<Event>? = null,
 ) {
+    /** A festival's or conference's events ("During …"), soonest first; empty for any other. */
+    val childEvents: List<Event> get() = childEventsConnection?.nodes.orEmpty().filterNotNull()
+
+    /** Whether it runs over a day, like a festival: shown as a run of dates rather than a start time. */
+    val isMultiDay: Boolean get() = endAt?.let { java.time.Duration.between(startAt, it) > java.time.Duration.ofHours(24) } == true
+
     /** Whether the signed-in user is going, from the rsvp mixin; undecided when the event wasn't asked for it. */
     val rsvp: Rsvp get() = rsvpMixin?.mine ?: Rsvp.UNSURE
 
@@ -479,6 +529,29 @@ data class Event(
 
     /** Who presents it ("Presented by"); only the event screen asks for it. */
     val organizers: List<Person> get() = peopleMixin?.presenters.orEmpty()
+
+    /** Its KJ, DJ or VJ; only the event screen asks for it. */
+    val jockeys: List<Person> get() = peopleMixin?.jockeyPeople.orEmpty()
+
+    /** Its jockeys as billed, "KJ Dalton and Bea"; null without any. */
+    val jockeysTitle: String?
+        get() = jockeys.takeIf { it.isNotEmpty() }
+            ?.let { "${peopleMixin?.jockeyLabel ?: "DJ"} ${Lineups.andList(it.map { person -> person.name })}" }
+
+    /**
+     * Its jockeys' line on the event page: "KJ Dalton" beside its hosts, and "Hosted by KJ Dalton" when the jockey is
+     * the only one (Rick, 2026-11-23: "if the only linked person is a KJ they are a defacto host"). Null without any.
+     */
+    val jockeysLine: String? get() = jockeysTitle?.let { if (hosts.isEmpty()) "Hosted by $it" else it }
+
+    /** Who to sign up with in person at karaoke: its hosts, then its KJ as billed ("KJ Dalton"). */
+    val karaokeContactNames: List<String>
+        get() {
+            val jockeyIds = jockeys.map { it.id }.toSet()
+            val label = peopleMixin?.jockeyLabel ?: "DJ"
+            return hosts.filter { it.id !in jockeyIds }.distinctBy { it.id }.map { it.name } +
+                jockeys.mapNotNull { Lineups.jockeyTitle(label, it.name) }
+        }
 
     /** Friends' active Pings that pick this event; only the event screen asks for it. */
     val friendPings: List<Ping> get() = pingFeed?.friendPings.orEmpty()

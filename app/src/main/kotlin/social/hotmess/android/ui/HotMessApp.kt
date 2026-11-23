@@ -74,6 +74,7 @@ import social.hotmess.android.ui.screens.FixDetailScreen
 import social.hotmess.android.ui.screens.CheckTheAppScreen
 import social.hotmess.android.ui.screens.YourSuggestionsScreen
 import social.hotmess.android.ui.screens.CardsYouSeeScreen
+import social.hotmess.android.ui.screens.PrivacyChoicesScreen
 import social.hotmess.android.ui.screens.GettingHelpScreen
 import social.hotmess.android.ui.screens.SafetyAlertsScreen
 import social.hotmess.android.ui.screens.SupportScreen
@@ -134,6 +135,8 @@ import social.hotmess.core.postsSubject
     /** Where the venue is, for a ride's pickup; blank when unknown. */
     val latitude: String = "",
     val longitude: String = "",
+    /** The venue's safety poster code, when Get help was opened from its QR code; blank otherwise. */
+    val posterCode: String = "",
 )
 /** Get help away from a venue: a friend, a ride, support and 911, without telling staff. */
 @Serializable data object HelpAnywhereRoute
@@ -144,6 +147,7 @@ import social.hotmess.core.postsSubject
 @Serializable data object SafetyAlertsRoute
 @Serializable data object GettingHelpRoute
 @Serializable data object CardsYouSeeRoute
+@Serializable data object PrivacyChoicesRoute
 /** "Your tribes", from Me. */
 @Serializable data object TribesRoute
 @Serializable data class SuggestListingRoute(val event: Boolean, val venueId: String = "", val venueName: String = "")
@@ -199,6 +203,7 @@ interface Navigator {
     fun openGettingHelp()
     /** Me > Cards you see: the promoted-card categories to show. */
     fun openCardsYouSee()
+    fun openPrivacyChoices()
     fun openTribes()
     /** "Suggest a venue" or "Suggest an event"; an event from a venue's page names that venue. */
     fun openSuggestListing(event: Boolean, venueId: String? = null, venueName: String? = null)
@@ -285,6 +290,17 @@ private fun MainShell(links: Flow<AppRoute>) {
                         if (signedIn) privateChat = route
                         VenueRoute(route.venueId)
                     }
+                    // Get help at a safety poster's venue, or with no venue when the API didn't know the code.
+                    is AppRoute.VenueHelp -> {
+                        openHelp(route.venue)
+                        return
+                    }
+                    AppRoute.HelpAnywhere -> {
+                        openHelpAnywhere()
+                        return
+                    }
+                    // Posters are resolved to one of the above (or a venue) before they're opened; unresolved, the tab.
+                    is AppRoute.SafetyPoster, is AppRoute.CoverPoster -> return
                     // Venues, where it says the link expired, is all it opens: never the record.
                     AppRoute.LinkExpired -> {
                         linkExpired = true
@@ -330,6 +346,7 @@ private fun MainShell(links: Flow<AppRoute>) {
                 venue.address.orEmpty(),
                 venue.latitude?.toString().orEmpty(),
                 venue.longitude?.toString().orEmpty(),
+                venue.posterCode.orEmpty(),
             )
             navController.navigate(route) { launchSingleTop = true }
         }
@@ -352,6 +369,10 @@ private fun MainShell(links: Flow<AppRoute>) {
 
         override fun openGettingHelp() {
             navController.navigate(GettingHelpRoute)
+        }
+
+        override fun openPrivacyChoices() {
+            navController.navigate(PrivacyChoicesRoute)
         }
 
         override fun openCardsYouSee() {
@@ -484,6 +505,7 @@ private fun MainShell(links: Flow<AppRoute>) {
                         route.address.ifBlank { null },
                         route.latitude.toDoubleOrNull(),
                         route.longitude.toDoubleOrNull(),
+                        route.posterCode.ifBlank { null },
                     )
                     GetHelpScreen(venue, null, navigator)
                 }
@@ -493,6 +515,7 @@ private fun MainShell(links: Flow<AppRoute>) {
                 composable<SafetyAlertsRoute> { SafetyAlertsScreen(navigator) }
                 composable<GettingHelpRoute> { GettingHelpScreen(navigator) }
                 composable<CardsYouSeeRoute> { CardsYouSeeScreen(navigator) }
+                composable<PrivacyChoicesRoute> { PrivacyChoicesScreen(navigator) }
                 composable<TribesRoute> { TribePickerScreen(navigator) }
                 composable<SuggestListingRoute> {
                     val route = it.toRoute<SuggestListingRoute>()

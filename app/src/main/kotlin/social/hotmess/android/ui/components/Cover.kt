@@ -51,6 +51,12 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.audiencekit.Admission
 import com.audiencekit.CoverPass
+import com.audiencekit.CoverScale
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material3.IconButton
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.semantics.stateDescription
 import kotlinx.coroutines.delay
 import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.Radius
@@ -74,23 +80,35 @@ import java.util.Locale
 
 /**
  * "Cover $11.12 tonight · from 9pm", with "Pay cover", "Show pass" or "Pay at the door". [paying] shows
- * a spinner in place of the button while the payment starts.
+ * a spinner in place of the button while the payment starts. On a sliding scale an [AmountStepper] picks what to
+ * pay first, and [onPay] gets it (null for a fixed cover).
  */
 @Composable
-fun CoverRow(offer: CoverOffer, paying: Boolean, onPay: () -> Unit, onShowPass: (Admission) -> Unit) {
-    RowButton(null) {
-        Icon(Icons.Rounded.ConfirmationNumber, contentDescription = null, tint = tokens.inkMuted, modifier = Modifier.size(20.dp))
-        Text(offer.line, style = HotMessType.body, color = tokens.ink, modifier = Modifier.weight(1f))
-        when (offer.action) {
-            CoverAction.PAY ->
-                if (paying) {
-                    CircularProgressIndicator(color = tokens.accent, strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
-                } else {
-                    PrimaryButton("Pay cover", onPay)
-                }
-            CoverAction.SHOW_PASS -> offer.pass?.let { pass -> PrimaryButton("Show pass", { onShowPass(pass) }) }
-            CoverAction.PAY_AT_DOOR -> Text("Pay at the door", style = HotMessType.bodySmall, color = tokens.inkMuted)
-            CoverAction.PRICE_ONLY -> Unit
+fun CoverRow(offer: CoverOffer, paying: Boolean, onPay: (amountCents: Int?) -> Unit, onShowPass: (Admission) -> Unit) {
+    val scale = offer.charge.scale.takeIf { offer.action == CoverAction.PAY }
+    var picked by remember(scale) { mutableIntStateOf(scale?.suggested?.cents ?: 0) }
+    Column {
+        RowButton(null) {
+            Icon(Icons.Rounded.ConfirmationNumber, contentDescription = null, tint = tokens.inkMuted, modifier = Modifier.size(20.dp))
+            Text(offer.line, style = HotMessType.body, color = tokens.ink, modifier = Modifier.weight(1f))
+            when (offer.action) {
+                CoverAction.PAY ->
+                    if (paying) {
+                        CircularProgressIndicator(color = tokens.accent, strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
+                    } else if (scale != null) {
+                        PrimaryButton("Pay ${Formatting.money(picked, scale.suggested.currency)}", { onPay(picked) })
+                    } else {
+                        PrimaryButton("Pay cover", { onPay(null) })
+                    }
+                CoverAction.SHOW_PASS -> offer.pass?.let { pass -> PrimaryButton("Show pass", { onShowPass(pass) }) }
+                CoverAction.PAY_AT_DOOR -> Text("Pay at the door", style = HotMessType.bodySmall, color = tokens.inkMuted)
+                CoverAction.PRICE_ONLY -> Unit
+            }
+        }
+        if (scale != null && !paying) {
+            Box(Modifier.padding(horizontal = Space.s4).padding(bottom = Space.s2)) {
+                AmountStepper(scale, picked, hasFee = offer.charge.fee.cents > 0) { picked = it }
+            }
         }
     }
 }
@@ -282,7 +300,9 @@ fun KeepScreenBright() {
 
 /** The "Skip the line" card on Now: tonight's cover at the venue you're at, and the way to pay it. */
 @Composable
-fun SkipTheLineCard(offer: CoverOffer, paying: Boolean, onPay: () -> Unit) {
+fun SkipTheLineCard(offer: CoverOffer, paying: Boolean, onPay: (amountCents: Int?) -> Unit) {
+    val scale = offer.charge.scale
+    var picked by remember(scale) { mutableIntStateOf(scale?.suggested?.cents ?: 0) }
     Card {
         LiveBand(height = 4.dp)
         Row(
@@ -296,9 +316,45 @@ fun SkipTheLineCard(offer: CoverOffer, paying: Boolean, onPay: () -> Unit) {
             }
             if (paying) {
                 CircularProgressIndicator(color = tokens.accent, strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
+            } else if (scale != null) {
+                PrimaryButton("Pay ${Formatting.money(picked, scale.suggested.currency)}", { onPay(picked) })
             } else {
-                PrimaryButton("Pay", onPay)
+                PrimaryButton("Pay", { onPay(null) })
             }
         }
+        if (scale != null && !paying) {
+            Box(Modifier.padding(start = Space.s4, end = Space.s4, bottom = Space.s4)) {
+                AmountStepper(scale, picked, hasFee = offer.charge.fee.cents > 0) { picked = it }
+            }
+        }
+    }
+}
+
+/**
+ * A sliding-scale cover's amount: minus and plus a dollar at a time within its range, from the suggested amount. The
+ * payment sheet adds fees, so [hasFee] says so under it.
+ */
+@Composable
+fun AmountStepper(scale: CoverScale, cents: Int, hasFee: Boolean, onChange: (Int) -> Unit) {
+    val amount = Formatting.money(cents, scale.suggested.currency)
+    Column(Modifier.fillMaxWidth().testTag("cover.amount"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s2)) {
+            Text("Pay what you can", style = HotMessType.body, color = tokens.ink, modifier = Modifier.weight(1f))
+            IconButton(onClick = { onChange(scale.step(cents, -1)) }, enabled = cents > scale.min.cents) {
+                Icon(Icons.Rounded.Remove, contentDescription = "Less", tint = tokens.accent)
+            }
+            Text(
+                amount,
+                style = HotMessType.heading,
+                color = tokens.ink,
+                modifier = Modifier.widthIn(min = 56.dp).semantics { stateDescription = amount },
+                textAlign = TextAlign.Center,
+            )
+            IconButton(onClick = { onChange(scale.step(cents, 1)) }, enabled = cents < scale.max.cents) {
+                Icon(Icons.Rounded.Add, contentDescription = "More", tint = tokens.accent)
+            }
+        }
+        val range = "${Formatting.money(scale.min)}–${Formatting.money(scale.max)}, ${Formatting.money(scale.suggested)} suggested"
+        Text(if (hasFee) "$range. Fees are added at checkout." else range, style = HotMessType.bodySmall, color = tokens.inkMuted)
     }
 }

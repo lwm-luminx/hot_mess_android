@@ -19,10 +19,11 @@ object Documents {
     /**
      * A venue, with its address, phone and Facebook Page under its profile mixin. `bannerUrl` is its wide image
      * (its first banner, else its own photo, else its Page's cover) and `photoUrl` its own photo; both null when
-     * there's none.
+     * there's none. `places { hours }` is whether it's open now and its week's hours, from Google, worded in its time zone.
      */
     const val VENUE_FIELDS: String =
-        "id name description distance point photoUrl bannerUrl profile { address phone facebook { facebookId isLiked link } }"
+        "id name description distance point photoUrl bannerUrl profile { address phone facebook { facebookId isLiked link } " +
+            "places { hours { status isOpen label lines } } }"
 
     /** A chat line as a preview shows it: rich messages in words (`message`), with the sender's role and presence. */
     const val CHAT_LINE_FIELDS: String =
@@ -55,7 +56,7 @@ object Documents {
     const val ON_NOW_FIELDS: String = "people { onNow { nodes { id role startsAt endsAt person { id name avatarUrl } } } }"
 
     /** A karaoke night's session (`IKaraokeNight`): the partner's to join, or AudienceKit's own. */
-    const val KARAOKE_FIELDS: String = "karaoke { provider providerName sessionCode ownSessionCode joinUrl }"
+    const val KARAOKE_FIELDS: String = "karaoke { provider providerName sessionCode ownSessionCode joinUrl singAlong }"
 
     /**
      * A lineup entry as a chat room shows it: who, as what, where it is in the night, and its set when it has a hard
@@ -271,16 +272,23 @@ object Documents {
         }
     """.trimIndent()
 
-    val EVENT: String = """
+    val EVENT: String = eventDocument(jockeys = false)
+
+    /** [EVENT] with its KJ, DJ or VJ: an API from audience_kit_api #881 on. */
+    val EVENT_WITH_JOCKEYS: String = eventDocument(jockeys = true)
+
+    private fun eventDocument(jockeys: Boolean): String = """
         query Event(${'$'}id: ID!) {
           events {
             event(id: ${'$'}id) {
               $EVENT_FIELDS
               tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } } }
               venue { venue { id $VENUE_COVER_FIELDS } }
-              people { lineup { nodes { $PERSON_FIELDS } } organizers { nodes { $PERSON_FIELDS } } hosts { nodes { $PERSON_FIELDS } } }
+              people { lineup { nodes { $PERSON_FIELDS } } organizers { nodes { $PERSON_FIELDS } } hosts { nodes { $PERSON_FIELDS } }${if (jockeys) " jockeys { nodes { $PERSON_FIELDS } } jockeyLabel" else ""} }
               $KARAOKE_FIELDS
               ping { friendPings { $PING_FIELDS } }
+              parentEvent { id name startAt endAt }
+              childEvents { nodes { $EVENT_FIELDS } }
             }
           }
         }

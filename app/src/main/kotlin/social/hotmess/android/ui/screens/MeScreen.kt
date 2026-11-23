@@ -59,6 +59,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.audiencekit.PrivacyChoicesCopy
 import com.audiencekit.StaffApp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -483,6 +484,14 @@ fun MeScreen(navigator: Navigator) {
             item {
                 // Promoted cards the user turned off: kept on this phone, never sent.
                 DetailSection("Cards") {
+                    // Do not sell or share, ad measurement and the privacy pass, per audience (enforced on the server).
+                    InfoRow(
+                        PrivacyChoicesCopy.TITLE,
+                        icon = Icons.Rounded.Shield,
+                        onClick = navigator::openPrivacyChoices,
+                        trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                    )
+                    RowDivider()
                     InfoRow(
                         "Cards you see",
                         icon = Icons.Rounded.ViewAgenda,

@@ -4,6 +4,7 @@ import com.audiencekit.SoapboxCopy
 import com.audiencekit.ArticleTopic
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -256,8 +257,16 @@ fun EventScreen(id: String, navigator: Navigator) {
                 listState,
                 hero = {
                     HeroHeader(loaded.bannerUrl, topInset, onTone = { heroTone = it }) {
+                        val lastDay = loaded.endAt?.takeIf { loaded.isMultiDay }
+                        val day = "${Formatting.monthAbbreviation(loaded.startAt)} ${Formatting.dayOfMonth(loaded.startAt)}"
                         Text(
-                            "${Formatting.monthAbbreviation(loaded.startAt)} ${Formatting.dayOfMonth(loaded.startAt)} · ${Formatting.shortTime(loaded.startAt)}".uppercase(),
+                            (
+                                if (lastDay != null) {
+                                    "$day to ${Formatting.monthAbbreviation(lastDay)} ${Formatting.dayOfMonth(lastDay)}"
+                                } else {
+                                    "$day · ${Formatting.shortTime(loaded.startAt)}"
+                                }
+                                ).uppercase(),
                             style = HotMessType.caption,
                         )
                         Text(
@@ -290,6 +299,17 @@ fun EventScreen(id: String, navigator: Navigator) {
                 if (loaded.hosts.isNotEmpty()) {
                     item(key = "hosted-by") { HostedByLine(loaded.hosts) { navigator.open(AppRoute.PersonDetail(it)) } }
                 }
+                loaded.jockeysLine?.let { title ->
+                    // "KJ Dalton": its KJ, DJ or VJ, beside its hosts; "Hosted by KJ Dalton" when they're the only one.
+                    item(key = "jockeys") { HostedByLine(loaded.jockeys, title) { navigator.open(AppRoute.PersonDetail(it)) } }
+                }
+                loaded.parentEvent?.let { parent ->
+                    item(key = "part-of") {
+                        DetailSection {
+                            InfoRow("Part of ${parent.name}", onClick = { navigator.open(AppRoute.EventDetail(parent.id)) })
+                        }
+                    }
+                }
                 item { DetailSection("Your RSVP") { RsvpPicker(loaded.rsvp, ::choose) } }
                 CoverOffer.of(loaded)?.let { offer ->
                     item {
@@ -297,7 +317,7 @@ fun EventScreen(id: String, navigator: Navigator) {
                             CoverRow(
                                 offer,
                                 paying = checkoutState == CoverCheckout.State.Working && !payingCoatCheck,
-                                onPay = { loaded.venue?.let { checkout.pay(it.id, it.name) } },
+                                onPay = { amount -> loaded.venue?.let { checkout.pay(it.id, it.name, amount) } },
                                 onShowPass = { pass ->
                                     graph.passes.put(pass)
                                     navigator.openPass(pass.id)
@@ -306,12 +326,20 @@ fun EventScreen(id: String, navigator: Navigator) {
                         }
                     }
                 }
+                item(key = "set-list") {
+                    social.hotmess.android.spotify.SetListOnSpotifyButton(loaded.id, Modifier.fillMaxWidth())
+                }
                 val karaoke = loaded.karaoke
-                if (tonightModel != null && tonightLineup != null && tonightLineup.showsKaraoke) {
+                if (karaoke?.singAlong == true) {
+                    // A sing-along night: the playlist, what's on and what's next, and Request a song from the playlist.
+                    item(key = "sing-along") {
+                        SingAlongSection(loaded.id, PingChoices.isTonight(loaded), tonightModel, tonightLineup, viewerName)
+                    }
+                } else if (tonightModel != null && tonightLineup != null && tonightLineup.showsKaraoke) {
                     item(key = "karaoke-tonight") { TonightKaraoke(tonightModel, tonightLineup, viewerName) }
                 } else if (karaoke != null && tonightLoaded) {
                     item(key = "karaoke") {
-                        EventKaraokeSection(karaoke, loaded.venue) { navigator.open(AppRoute.VenueDetail(it)) }
+                        EventKaraokeSection(karaoke, loaded.venue, loaded.karaokeContactNames) { navigator.open(AppRoute.VenueDetail(it)) }
                     }
                 }
                 postsSection("From the venue and hosts", postsSubject, posts, postActions)
@@ -337,6 +365,10 @@ fun EventScreen(id: String, navigator: Navigator) {
                     }
                 } else {
                     item { DetailSection("Venue") { EmptyRow(Formatting.TO_BE_ANNOUNCED) } }
+                }
+                // A festival's or conference's parties and parade.
+                cardSection("during", "During ${loaded.name}", loaded.childEvents, key = { it.id }) { child ->
+                    EventCard(child, onClick = { navigator.open(AppRoute.EventDetail(child.id)) })
                 }
                 cardSection("presented-by", "Presented by", loaded.organizers, key = { it.id }) { organizer ->
                     PersonCard(organizer, onClick = { navigator.open(AppRoute.PersonDetail(organizer.id)) })
@@ -380,9 +412,9 @@ fun EventScreen(id: String, navigator: Navigator) {
     }
 }
 
-/** "Hosted by Sasha and Bea" with their faces; one host opens their page. */
+/** "Hosted by Sasha and Bea" (or [text], like "KJ Dalton") with their faces; one host opens their page. */
 @Composable
-private fun HostedByLine(hosts: List<Person>, onOpen: (String) -> Unit) {
+private fun HostedByLine(hosts: List<Person>, text: String? = null, onOpen: (String) -> Unit) {
     val single = hosts.singleOrNull()
     Row(
         Modifier
@@ -396,7 +428,7 @@ private fun HostedByLine(hosts: List<Person>, onOpen: (String) -> Unit) {
             hosts.take(3).forEach { Avatar(it.avatarUrl, it.name, size = 28.dp) }
         }
         Text(
-            "Hosted by ${Lineups.andList(hosts.map { it.name })}",
+            text ?: "Hosted by ${Lineups.andList(hosts.map { it.name })}",
             style = HotMessType.subheading,
             color = tokens.ink,
             maxLines = 2,
@@ -410,7 +442,12 @@ private fun HostedByLine(hosts: List<Person>, onOpen: (String) -> Unit) {
  * karaoke, where to sign up.
  */
 @Composable
-internal fun EventKaraokeSection(karaoke: KaraokeNight, venue: Venue?, onOpenVenue: (String) -> Unit) {
+internal fun EventKaraokeSection(
+    karaoke: KaraokeNight,
+    venue: Venue?,
+    hostNames: List<String> = emptyList(),
+    onOpenVenue: (String) -> Unit,
+) {
     val context = LocalContext.current
     var showingCode by remember { mutableStateOf(false) }
     DetailSection("Karaoke") {
@@ -440,7 +477,13 @@ internal fun EventKaraokeSection(karaoke: KaraokeNight, venue: Venue?, onOpenVen
             }
             else -> {
                 InfoRow("Karaoke night", icon = Icons.Rounded.Mic)
-                if (code != null) InfoRow("Join code", code) else TextRow("Ask the host how to join the karaoke session.")
+                if (code != null) {
+                    InfoRow("Join code", code)
+                } else {
+                    Column(Modifier.padding(Space.s4), verticalArrangement = Arrangement.spacedBy(Space.s3)) {
+                        KaraokeSignUpInPersonRows(hostNames)
+                    }
+                }
             }
         }
     }

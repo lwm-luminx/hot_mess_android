@@ -137,6 +137,14 @@ class HotMessApi(val client: AudienceKitClient) {
     suspend fun venues(localeId: String?): List<Venue> =
         query(Documents.VENUES, VenuesResponse.serializer()).venues.sortedForList(localeId)
 
+    /**
+     * The venues as last loaded (here or by the background refresh), to show at once while they refresh: a slow API
+     * otherwise leaves the Venues screen on a spinner until it answers. Null when none are kept.
+     */
+    suspend fun cachedVenues(localeId: String?): List<Venue>? =
+        client.cachedGraphQL(Documents.VENUES, VenuesResponse.serializer(), json = json)
+            ?.value?.venues?.takeIf { it.isNotEmpty() }?.sortedForList(localeId)
+
     /** A venue with its upcoming events, in one request. */
     suspend fun venueOverview(id: String): VenueOverview {
         val venue = query(Documents.VENUE, VenueResponse.serializer(), graphQLVariables("id" to id)).venue
@@ -172,8 +180,20 @@ class HotMessApi(val client: AudienceKitClient) {
      * A venue's lineup tonight for its page: the running order with its karaoke singers, who runs its karaoke, and
      * whether it takes signups and song requests (the viewer's own, and the song queue). Null when there's no venue.
      */
-    suspend fun tonightLineup(venueId: String): VenueLineup? =
-        query(Lineups.VENUE_LINEUP, TonightLineupResponse.serializer(), graphQLVariables("id" to venueId)).lineup
+    suspend fun tonightLineup(venueId: String): VenueLineup? {
+        // An older API refuses the newest fields: jockeysTonight (before #881), then hostsTonight (before 2026-11-19).
+        val documents = listOf(Lineups.VENUE_LINEUP_WITH_JOCKEYS, Lineups.VENUE_LINEUP, Lineups.VENUE_LINEUP_WITHOUT_HOSTS)
+        documents.forEachIndexed { index, document ->
+            try {
+                return query(document, TonightLineupResponse.serializer(), graphQLVariables("id" to venueId)).lineup
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: ApiError) {
+                if (index == documents.lastIndex) throw e
+            }
+        }
+        return null
+    }
 
     /**
      * Signs the viewer up to sing ([SongRequestKind.KARAOKE]) or asks for a song ([SongRequestKind.SONG]) at a venue.
@@ -228,9 +248,19 @@ class HotMessApi(val client: AudienceKitClient) {
         client.cachedGraphQL(Documents.LOCALE_EVENTS, LocaleEventsResponse.serializer(), graphQLVariables("id" to localeId), json = json)
             ?.value?.locale?.let { EventListing.upcoming(it.events) }
 
-    suspend fun event(id: String): Event =
-        query(Documents.EVENT, EventResponse.serializer(), graphQLVariables("id" to id)).event
-            ?: throw ApiError.NotFound
+    suspend fun event(id: String): Event {
+        val variables = graphQLVariables("id" to id)
+        val response = try {
+            query(Documents.EVENT_WITH_JOCKEYS, EventResponse.serializer(), variables)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: ApiError) {
+            // An API before the jockey role refuses that document; offline and not found stay as they are.
+            if (e is ApiError.NotFound || e is ApiError.Offline) throw e
+            query(Documents.EVENT, EventResponse.serializer(), variables)
+        }
+        return response.event ?: throw ApiError.NotFound
+    }
 
     suspend fun setRsvp(rsvp: Rsvp, eventId: String) {
         call { client.setRSVP(RSVPState.valueOf(rsvp.name), eventId) }
@@ -243,9 +273,11 @@ class HotMessApi(val client: AudienceKitClient) {
     /**
      * Starts paying tonight's cover at a venue: the pass, pending until paid, and what Stripe's payment
      * sheet or Square's card entry needs ([CoverPayment] says which). Asking again the same night returns
-     * the same pass and payment.
+     * the same pass and payment. On a sliding scale [amountCents] is what the buyer picked; null pays the
+     * suggested (or fixed) amount.
      */
-    suspend fun buyCover(venueId: String): CoverPurchase = mutate { client.buyCover(venueId) }
+    suspend fun buyCover(venueId: String, amountCents: Int? = null): CoverPurchase =
+        mutate { client.buyCover(venueId, amountCents) }
 
     /** Starts paying tonight's coat check at a venue for [quantity] coats; paid the same way as cover. */
     suspend fun buyCoatCheck(venueId: String, quantity: Int = 1): CoverPurchase = mutate { client.buyCoatCheck(venueId, quantity) }
@@ -870,9 +902,50 @@ class HotMessApi(val client: AudienceKitClient) {
         query(SafetyAlertDocuments.VENUE_SAFETY, VenueSafetyResponse.serializer(), graphQLVariables("id" to venueId))
             .venues?.venue
 
-    /** "I feel unsafe" to the staff on shift. While the user's alert there is open, the API adds to it instead. */
-    suspend fun sendSafetyAlert(venueId: String, draft: SafetyAlertDraft): SafetyAlert =
-        safetyAlertMutation(SafetyAlertDocuments.SEND, draft.variables("venueId" to venueId))
+    /**
+     * "I feel unsafe" to the staff on shift. While the user's alert there is open, the API adds to it instead.
+     * [posterCode], from the venue's safety poster, lets them send before the app places them there.
+     */
+    suspend fun sendSafetyAlert(venueId: String, draft: SafetyAlertDraft, posterCode: String? = null): SafetyAlert =
+        if (posterCode == null) {
+            safetyAlertMutation(SafetyAlertDocuments.SEND, draft.variables("venueId" to venueId))
+        } else {
+            safetyAlertMutation(
+                SafetyAlertDocuments.SEND_FROM_POSTER,
+                draft.variables("venueId" to venueId, "posterCode" to posterCode),
+            )
+        }
+
+    /**
+     * The venue a safety poster's [code] belongs to (`GET /v1/safety/posters/<code>`, open to anyone), as Get help
+     * names it with the code kept, or null for a code no longer in use. Throws when the API can't be reached. [host]
+     * names the audience.
+     */
+    suspend fun safetyPoster(host: String, code: String): HelpVenue? {
+        val venue = posterVenue("/v1/safety/posters/$code", host) ?: return null
+        return HelpVenue(venue.id, venue.name ?: "the venue", posterCode = code)
+    }
+
+    /**
+     * The id of the venue a cover poster's or TV's short [code] names (`GET /v1/cover/<code>`, open to anyone), or
+     * null when it names none. Throws when the API can't be reached. [host] names the audience.
+     */
+    suspend fun coverPosterVenue(host: String, code: String): String? = posterVenue("/v1/cover/$code", host)?.id
+
+    /** `{ venue: { id, name } }` from a poster's public endpoint; null on its 404. */
+    private suspend fun posterVenue(path: String, host: String): PosterVenue? {
+        val bytes = try {
+            client.data(APIRequest(path = path, queryItems = listOf("host" to host), authenticated = false))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: AudienceKitException.NotFound) {
+            return null
+        } catch (e: AudienceKitException) {
+            throw failed(ApiError.from(e), "GET $path")
+        }
+        return json.decodeFromString(PosterVenueResponse.serializer(), bytes.toString(Charsets.UTF_8)).venue
+            .takeIf { it.id.isNotBlank() }
+    }
 
     /** "Add more": where they are and what's going on, after sending. */
     suspend fun updateSafetyAlert(id: String, draft: SafetyAlertDraft): SafetyAlert =
@@ -1070,6 +1143,13 @@ fun Venue.isIn(localeId: String?): Boolean {
 private data class StatusResponse(val clients: Clients? = null) {
     @Serializable data class Clients(val android: VersionInfo? = null)
 }
+
+/** What a poster's public endpoint (`/v1/safety/posters/<code>`, `/v1/cover/<code>`) answers. */
+@Serializable
+private data class PosterVenueResponse(val venue: PosterVenue)
+
+@Serializable
+private data class PosterVenue(val id: String, val name: String? = null)
 
 @Serializable
 private data class ReportLocationResponse(val reportLocation: LocationReport)

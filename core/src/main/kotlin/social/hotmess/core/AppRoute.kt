@@ -57,6 +57,25 @@ sealed interface AppRoute {
     /** A share link that has expired: Venues, which says so, in place of the record it named. */
     data object LinkExpired : AppRoute
 
+    /**
+     * A venue's safety poster (`/help/<code>`, what its QR code carries; api doc/SAFETY_ALERTS.md "Safety posters"):
+     * the app asks the API which venue it is, then opens that venue's Get help on "Tell staff quietly", which can send
+     * before the app places the user there. [code] is ten letters and digits.
+     */
+    data class SafetyPoster(val code: String) : AppRoute
+
+    /**
+     * A venue's lobby cover poster (`/cover/<code>`, the venue's short code; api doc/DIGITAL_COVER_CHARGE.md "Cover
+     * poster"): the app asks the API which venue it is, then opens it, where Cover pays tonight's.
+     */
+    data class CoverPoster(val code: String) : AppRoute
+
+    /** Get help at a venue, as a resolved safety poster opens it ([HelpVenue.posterCode] set). */
+    data class VenueHelp(val venue: HelpVenue) : AppRoute
+
+    /** Get help with no venue (a friend, a ride, support and 911), for a safety poster the API doesn't know. */
+    data object HelpAnywhere : AppRoute
+
     /** Which tab the route opens in. */
     val tab: AppTab
         get() = when (this) {
@@ -64,7 +83,9 @@ sealed interface AppRoute {
             is EventDetail -> AppTab.EVENTS
             is PersonDetail -> AppTab.PEOPLE
             is NowPing, is Friends, is PingChat -> AppTab.NOW
-            LinkExpired -> AppTab.VENUES
+            LinkExpired, is CoverPoster -> AppTab.VENUES
+            // Get help opens over whichever tab is showing; a poster scanned from outside lands on Venues.
+            is SafetyPoster, is VenueHelp, HelpAnywhere -> AppTab.VENUES
             // A venue's room over its page; a locale's is reached from Now.
             is Chat -> if (room.kind == ChatRoom.Kind.VENUE) AppTab.VENUES else AppTab.NOW
             // A post opens wherever it's linked from; a link from outside lands on Now.
@@ -133,6 +154,12 @@ object DeepLink {
 
     private fun route(segments: List<String>, token: String?): AppRoute? {
         if (segments.size < 2) return null
+        if (segments.size == 2 && segments[0] == "help" && PosterCodes.isSafetyPoster(segments[1])) {
+            return AppRoute.SafetyPoster(segments[1])
+        }
+        if (segments.size == 2 && segments[0] == "cover" && PosterCodes.isShortCode(segments[1])) {
+            return AppRoute.CoverPoster(segments[1])
+        }
         if (segments[0] == "friends") {
             return when (segments[1].takeIf { segments.size == 2 }) {
                 "contacts" -> AppRoute.Friends(requests = false)
@@ -172,6 +199,18 @@ object DeepLink {
             val raw = pair.substringAfter('=').replace("+", "%2B")
             runCatching { java.net.URLDecoder.decode(raw, Charsets.UTF_8.name()) }.getOrNull()
         }?.takeIf { it.isNotBlank() }
+}
+
+/** The codes a venue's posters carry. */
+object PosterCodes {
+    private val SAFETY = Regex("[0-9A-Za-z]{10}")
+    private val SHORT = Regex("[0-9A-Za-z]{8}")
+
+    /** A safety poster's code (`/help/<code>`): ten base62 characters, random. */
+    fun isSafetyPoster(code: String): Boolean = SAFETY.matches(code)
+
+    /** A venue's short code (`/cover/<code>` and `/v/<code>`): eight base62 characters. */
+    fun isShortCode(code: String): Boolean = SHORT.matches(code)
 }
 
 /**

@@ -7,6 +7,7 @@ import com.audiencekit.AudienceKitConfiguration
 import com.audiencekit.CoverCharge
 import com.audiencekit.CoverPass
 import com.audiencekit.CoverPurchase
+import com.audiencekit.CoverScale
 import com.audiencekit.HttpResponse
 import com.audiencekit.HttpTransport
 import com.audiencekit.InMemoryTokenStore
@@ -52,6 +53,8 @@ class CoverFormattingTest {
         assertEquals("Cover $11.12 tonight · from 9pm", Formatting.coverLine(tonight, tonight = true, locale = Locale.US))
         assertEquals("Cover $11.12 · from 9pm", Formatting.coverLine(tonight, tonight = false, locale = Locale.US))
         assertEquals("Cover $11.12 tonight", Formatting.coverLine(tonight.copy(from = null), tonight = true, locale = Locale.US))
+        val sliding = tonight.copy(from = null, scale = CoverScale(Money(500), Money(3000), Money(1500)))
+        assertEquals("Cover $5–$30 tonight, pay what you can", Formatting.coverLine(sliding, tonight = true, locale = Locale.US))
     }
 
     @Test
