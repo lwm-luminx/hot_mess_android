@@ -170,6 +170,18 @@
             android:name="com.google.firebase.messaging.default_notification_icon"
             android:resource="@mipmap/ic_launcher_monochrome" />
         <!-- The ongoing Ping and Quickie notifications' buttons (OngoingNotifications). -->
+        <!-- The Tonight home screen widget (widget/TonightWidget.kt). -->
+        <receiver
+            android:name=".widget.TonightWidgetReceiver"
+            android:exported="true"
+            android:label="Tonight">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/tonight_widget_info" />
+        </receiver>
         <receiver
             android:name=".push.OngoingActionReceiver"
             android:exported="false">
