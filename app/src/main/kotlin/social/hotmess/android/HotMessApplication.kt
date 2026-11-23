@@ -165,6 +165,7 @@ class AppGraph(
                         safety.clear()
                         listings.clear()
                         ongoing.clear()
+                        scope.launch { social.hotmess.android.widget.TonightStore.clear(context.applicationContext) }
                         tribes.clear()
                         contactFriends.forget()
                         cable.disconnect()

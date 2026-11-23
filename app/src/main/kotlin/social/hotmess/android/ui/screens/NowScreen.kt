@@ -143,9 +143,13 @@ fun NowScreen(navigator: Navigator) {
     val refreshing by loader.isRefreshing.collectAsStateWithLifecycle()
     val simulated by graph.location.simulatedVenue.collectAsStateWithLifecycle()
 
-    // The ongoing Ping notification follows what Now shows (the iOS Live Activity's counterpart).
+    // The ongoing Ping notification (the iOS Live Activity's counterpart) and the Tonight widget follow what Now shows.
+    val appContext = LocalContext.current.applicationContext
     LaunchedEffect(state) {
-        state.valueOrNull?.let { now -> graph.ongoing.syncPings(now.myPing, now.friendPings) }
+        state.valueOrNull?.let { now ->
+            graph.ongoing.syncPings(now.myPing, now.friendPings)
+            social.hotmess.android.widget.TonightStore.update(appContext, now)
+        }
     }
 
     LaunchedEffect(coordinates) {
