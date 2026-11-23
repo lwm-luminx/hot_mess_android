@@ -106,23 +106,6 @@ data class VenueKaraoke(
     val signsUpInPerson: Boolean get() = isPartnerSessionTonight && joinLink == null && sessionCode.isNullOrBlank()
 }
 
-/**
- * A karaoke partner's public songbook, so guests can find a song before signing up with the host in person (Rick,
- * 2026-11-23). Only KaraFun has one; its catalog API is by partnership only, so the app opens its site's search.
- */
-object KaraokeSongbook {
-    fun searches(provider: String?): Boolean = provider.equals("karafun", ignoreCase = true)
-
-    /** The songbook's search page for [query], or its whole catalog when blank; null without a songbook. */
-    fun searchUrl(provider: String?, query: String): String? {
-        if (!searches(provider)) return null
-        val trimmed = query.trim()
-        if (trimmed.isEmpty()) return "https://www.karafun.com/karaoke-song-list.html"
-        val encoded = java.net.URLEncoder.encode(trimmed, "UTF-8").replace("+", "%20")
-        return "https://www.karafun.com/search/?query=$encoded"
-    }
-}
-
 /** What a partner's night with no code tells singers: "Sign up in person with Dalton". */
 object KaraokeSignUpInPerson {
     fun text(hostNames: List<String>): String {

@@ -84,14 +84,6 @@ class LineupTest {
     }
 
     @Test
-    fun searchesKaraFunsSongbookOnly() {
-        assertEquals("https://www.karafun.com/search/?query=Bohemian%20Rhapsody", KaraokeSongbook.searchUrl("karafun", " Bohemian Rhapsody "))
-        assertEquals("https://www.karafun.com/karaoke-song-list.html", KaraokeSongbook.searchUrl("KaraFun", ""))
-        assertNull(KaraokeSongbook.searchUrl("custom_url", "Waterloo"))
-        assertNull(KaraokeSongbook.searchUrl(null, "Waterloo"))
-    }
-
-    @Test
     fun unknownStatesAndKindsStillRead() {
         val night = lineup(
             """{"id":"v-3","people":{"runningOrder":{"nodes":[{"id":"x","role":"SINGER","state":"ON",
