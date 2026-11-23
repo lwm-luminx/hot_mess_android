@@ -282,6 +282,8 @@ object Documents {
               people { lineup { nodes { $PERSON_FIELDS } } organizers { nodes { $PERSON_FIELDS } } hosts { nodes { $PERSON_FIELDS } } }
               $KARAOKE_FIELDS
               ping { friendPings { $PING_FIELDS } }
+              parentEvent { id name startAt endAt }
+              childEvents { nodes { $EVENT_FIELDS } }
             }
           }
         }

@@ -465,6 +465,15 @@ enum class Rsvp {
     }
 }
 
+/** Enough of a super-event to link to it from one of its parts. */
+@Serializable
+data class EventLink(
+    val id: String,
+    val name: String = "",
+    @Serializable(with = InstantSerializer::class) val startAt: Instant? = null,
+    @Serializable(with = InstantSerializer::class) val endAt: Instant? = null,
+)
+
 @Serializable
 data class Event(
     val id: String,
@@ -486,7 +495,17 @@ data class Event(
     @SerialName("ping") private val pingFeed: PingFeedMixin? = null,
     /** A karaoke night's partner and session; null for any other event. Only the event screen asks for it. */
     val karaoke: KaraokeNight? = null,
+    /** The super-event it's part of, such as a bar's party's Pride festival ("Part of …"). Only the event screen asks. */
+    val parentEvent: EventLink? = null,
+    /** A super-event's parts, upcoming and under way; read through [childEvents]. Only the event screen asks. */
+    @SerialName("childEvents") private val childEventsConnection: Connection<Event>? = null,
 ) {
+    /** A festival's or conference's events ("During …"), soonest first; empty for any other. */
+    val childEvents: List<Event> get() = childEventsConnection?.nodes.orEmpty().filterNotNull()
+
+    /** Whether it runs over a day, like a festival: shown as a run of dates rather than a start time. */
+    val isMultiDay: Boolean get() = endAt?.let { java.time.Duration.between(startAt, it) > java.time.Duration.ofHours(24) } == true
+
     /** Whether the signed-in user is going, from the rsvp mixin; undecided when the event wasn't asked for it. */
     val rsvp: Rsvp get() = rsvpMixin?.mine ?: Rsvp.UNSURE
 
