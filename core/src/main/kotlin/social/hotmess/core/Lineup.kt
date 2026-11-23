@@ -135,7 +135,16 @@ data class VenueLineup(
      * listed on it). Empty without one, and from an API before 2026-11-19.
      */
     val hostsTonight: List<Person> = emptyList(),
+    /** Who's the KJ, DJ or VJ there now: the jockeys of the event under way. Empty from an older API. */
+    val jockeysTonight: List<Person> = emptyList(),
+    /** What [jockeysTonight] are billed as, by the kind of night: "KJ", "DJ" or "VJ"; null with nothing under way. */
+    val jockeyLabel: String? = null,
 ) {
+    private val jockeyIds: Set<String> get() = jockeysTonight.mapTo(mutableSetOf()) { it.id }
+
+    /** An entry whose people are all jockeys (a KJ put on now as the host): billed as the jockey, not as a host. */
+    private fun LineupEntry.isJockeys(): Boolean = people.isNotEmpty() && people.all { it.id in jockeyIds }
+
     /** Everyone who isn't a karaoke singer: hosts, DJs, performers, MCs and intermissions. */
     val acts: List<LineupEntry> get() = entries.filterNot { it.isSinger }
 
@@ -144,19 +153,40 @@ data class VenueLineup(
 
     /** The host on now: the host entry that's on, else the one taking karaoke signups. */
     val hostOnNow: LineupEntry?
-        get() = entries.firstOrNull { it.role == AppearanceRole.HOST && it.state == LineupState.ON } ?: karaoke?.host
+        get() = entries.firstOrNull { it.role == AppearanceRole.HOST && it.state == LineupState.ON && !it.isJockeys() }
+            ?: karaoke?.host?.takeUnless { it.isJockeys() }
 
     /**
      * The host to feature on Now and the venue page: [hostOnNow], else the first of [hostsTonight] (an event's host
      * nobody has put on yet) as an upcoming host entry. Null when nobody is hosting.
      */
     val featuredHost: LineupEntry?
-        get() = hostOnNow ?: hostsTonight.firstOrNull()?.let { host ->
+        get() = hostOnNow ?: hostsTonight.firstOrNull { it.id !in jockeyIds }?.let { host ->
             LineupEntry(id = "host-tonight:${host.id}", kindName = "ACT", roleName = "HOST", stateName = "UPCOMING", person = host)
         }
 
-    /** The featured host's names, for "Sign up in person with Dalton"; empty when nobody is hosting. */
-    val hostNames: List<String> get() = featuredHost?.people?.mapNotNull { it.name.takeIf(String::isNotBlank) }.orEmpty()
+    /**
+     * The KJ, DJ or VJ to feature beside the host, as entries billed "KJ Dalton". A karaoke night with only a KJ
+     * features the KJ.
+     */
+    val featuredJockeys: List<LineupEntry>
+        get() = jockeysTonight.map { jockey ->
+            LineupEntry(
+                id = "jockey-tonight:${jockey.id}", kindName = "ACT", roleName = "DJ", stateName = "UPCOMING",
+                title = jockeyTitle(jockey), person = jockey,
+            )
+        }
+
+    /** A jockey as billed tonight: "KJ Dalton". */
+    fun jockeyTitle(person: Person): String? = Lineups.jockeyTitle(jockeyLabel, person.name)
+
+    /** What a jockey's host row says under their name: "Your KJ tonight". */
+    val jockeyCaption: String get() = "Your ${jockeyLabel ?: "DJ"} tonight"
+
+    /** Who to sign up with in person, for "Sign up in person with Dalton": the featured host and the KJ. */
+    val hostNames: List<String>
+        get() = (featuredHost?.people.orEmpty() + jockeysTonight).distinctBy { it.id }
+            .mapNotNull { it.name.takeIf(String::isNotBlank) }
 
     /** A lineup of only hosts isn't a running order: it reads "Hosted by A and B". */
     val onlyHosts: Boolean get() = acts.isNotEmpty() && acts.all { it.role == AppearanceRole.HOST }
@@ -205,7 +235,7 @@ data class VenueLineup(
     /** Whether there's anything to show at all. */
     val isEmpty: Boolean
         get() = acts.isEmpty() && singers.isEmpty() && !takesKaraokeSignups && !takesSongRequests &&
-            karaokeSession?.isPartnerSessionTonight != true && hostsTonight.isEmpty()
+            karaokeSession?.isPartnerSessionTonight != true && hostsTonight.isEmpty() && jockeysTonight.isEmpty()
 }
 
 /** How the venue page bills an entry: a singer by the name they gave, else [LineupEntry.name], else "Intermission" or "Someone". */
@@ -264,6 +294,20 @@ object Lineups {
         "karaoke { provider providerName joinUrl sessionCode tonight } " +
         "requests { karaoke { $WINDOW_FIELDS } song { $WINDOW_FIELDS queue { nodes { $SONG_REQUEST_FIELDS } } } } } } }"
 
+    /** [VENUE_LINEUP] with its KJ, DJ or VJ (`jockeysTonight`, an API from audience_kit_api #881 on). */
+    const val VENUE_LINEUP_WITH_JOCKEYS: String = "query VenueLineup(\$id: ID!) { venues { venue(id: \$id) { id name " +
+        "people { runningOrder { nodes { $ENTRY_FIELDS } } onStage { id } upNext { id } hostsTonight { id name avatarUrl } " +
+        "jockeysTonight { id name avatarUrl } jockeyLabelTonight } " +
+        "karaoke { provider providerName joinUrl sessionCode tonight } " +
+        "requests { karaoke { $WINDOW_FIELDS } song { $WINDOW_FIELDS queue { nodes { $SONG_REQUEST_FIELDS } } } } } } }"
+
+    /** "KJ Dalton"; the name alone without a label, and null without a name. */
+    fun jockeyTitle(label: String?, name: String?): String? {
+        val trimmed = name?.trim().takeUnless { it.isNullOrEmpty() } ?: return null
+        val prefix = label?.trim().takeUnless { it.isNullOrEmpty() } ?: return trimmed
+        return "$prefix $trimmed"
+    }
+
     /** A venue's lineup tonight, who's hosting, its karaoke and its song requests (the SDK's VenueLineup query). */
     const val VENUE_LINEUP: String = "query VenueLineup(\$id: ID!) { venues { venue(id: \$id) { id name " +
         "people { runningOrder { nodes { $ENTRY_FIELDS } } onStage { id } upNext { id } hostsTonight { id name avatarUrl } } " +
@@ -300,6 +344,8 @@ internal data class TonightLineupResponse(val venues: Venues? = null) {
         val onStage: LineupEntry.Ref? = null,
         val upNext: LineupEntry.Ref? = null,
         val hostsTonight: List<Person>? = null,
+        val jockeysTonight: List<Person>? = null,
+        val jockeyLabelTonight: String? = null,
     )
 
     @Serializable
@@ -321,6 +367,8 @@ internal data class TonightLineupResponse(val venues: Venues? = null) {
                 karaokeSession = venue.karaoke,
                 songRequests = venue.requests?.song,
                 hostsTonight = venue.people?.hostsTonight.orEmpty(),
+                jockeysTonight = venue.people?.jockeysTonight.orEmpty(),
+                jockeyLabel = venue.people?.jockeyLabelTonight,
             )
         }
 }

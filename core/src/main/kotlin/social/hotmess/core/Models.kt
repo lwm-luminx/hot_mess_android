@@ -152,9 +152,15 @@ data class EventPeopleMixin(
     private val lineup: Connection<Person>? = null,
     private val organizers: Connection<Person>? = null,
     private val hosts: Connection<Person>? = null,
+    private val jockeys: Connection<Person>? = null,
+    /** What its jockeys are billed as: "KJ", "DJ" or "VJ". */
+    val jockeyLabel: String? = null,
 ) {
     /** Who hosts it ("Hosted by"). */
     val hostedBy: List<Person> get() = hosts?.nodes.orEmpty().filterNotNull()
+
+    /** Its KJ, DJ or VJ ([jockeyLabel] says which); empty from an API before the jockey role. */
+    val jockeyPeople: List<Person> get() = jockeys?.nodes.orEmpty().filterNotNull()
 
     val people: List<Person> get() = lineup?.nodes.orEmpty().filterNotNull()
 
@@ -523,6 +529,17 @@ data class Event(
 
     /** Who presents it ("Presented by"); only the event screen asks for it. */
     val organizers: List<Person> get() = peopleMixin?.presenters.orEmpty()
+
+    /** Its KJ, DJ or VJ; only the event screen asks for it. */
+    val jockeys: List<Person> get() = peopleMixin?.jockeyPeople.orEmpty()
+
+    /** Its jockeys as billed, "KJ Dalton and Bea"; null without any. */
+    val jockeysTitle: String?
+        get() = jockeys.takeIf { it.isNotEmpty() }
+            ?.let { "${peopleMixin?.jockeyLabel ?: "DJ"} ${Lineups.andList(it.map { person -> person.name })}" }
+
+    /** Who to sign up with in person at karaoke: its hosts and its KJ. */
+    val karaokeContactNames: List<String> get() = (hosts + jockeys).distinctBy { it.id }.map { it.name }
 
     /** Friends' active Pings that pick this event; only the event screen asks for it. */
     val friendPings: List<Ping> get() = pingFeed?.friendPings.orEmpty()

@@ -272,14 +272,19 @@ object Documents {
         }
     """.trimIndent()
 
-    val EVENT: String = """
+    val EVENT: String = eventDocument(jockeys = false)
+
+    /** [EVENT] with its KJ, DJ or VJ: an API from audience_kit_api #881 on. */
+    val EVENT_WITH_JOCKEYS: String = eventDocument(jockeys = true)
+
+    private fun eventDocument(jockeys: Boolean): String = """
         query Event(${'$'}id: ID!) {
           events {
             event(id: ${'$'}id) {
               $EVENT_FIELDS
               tickets { cover { charge { ${Queries.COVER_CHARGE_FIELDS} } } }
               venue { venue { id $VENUE_COVER_FIELDS } }
-              people { lineup { nodes { $PERSON_FIELDS } } organizers { nodes { $PERSON_FIELDS } } hosts { nodes { $PERSON_FIELDS } } }
+              people { lineup { nodes { $PERSON_FIELDS } } organizers { nodes { $PERSON_FIELDS } } hosts { nodes { $PERSON_FIELDS } }${if (jockeys) " jockeys { nodes { $PERSON_FIELDS } } jockeyLabel" else ""} }
               $KARAOKE_FIELDS
               ping { friendPings { $PING_FIELDS } }
               parentEvent { id name startAt endAt }

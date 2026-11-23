@@ -180,15 +180,20 @@ class HotMessApi(val client: AudienceKitClient) {
      * A venue's lineup tonight for its page: the running order with its karaoke singers, who runs its karaoke, and
      * whether it takes signups and song requests (the viewer's own, and the song queue). Null when there's no venue.
      */
-    suspend fun tonightLineup(venueId: String): VenueLineup? =
-        try {
-            query(Lineups.VENUE_LINEUP, TonightLineupResponse.serializer(), graphQLVariables("id" to venueId)).lineup
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: ApiError) {
-            // An API before hostsTonight refuses the document: ask without it.
-            query(Lineups.VENUE_LINEUP_WITHOUT_HOSTS, TonightLineupResponse.serializer(), graphQLVariables("id" to venueId)).lineup
+    suspend fun tonightLineup(venueId: String): VenueLineup? {
+        // An older API refuses the newest fields: jockeysTonight (before #881), then hostsTonight (before 2026-11-19).
+        val documents = listOf(Lineups.VENUE_LINEUP_WITH_JOCKEYS, Lineups.VENUE_LINEUP, Lineups.VENUE_LINEUP_WITHOUT_HOSTS)
+        documents.forEachIndexed { index, document ->
+            try {
+                return query(document, TonightLineupResponse.serializer(), graphQLVariables("id" to venueId)).lineup
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: ApiError) {
+                if (index == documents.lastIndex) throw e
+            }
         }
+        return null
+    }
 
     /**
      * Signs the viewer up to sing ([SongRequestKind.KARAOKE]) or asks for a song ([SongRequestKind.SONG]) at a venue.
@@ -243,9 +248,19 @@ class HotMessApi(val client: AudienceKitClient) {
         client.cachedGraphQL(Documents.LOCALE_EVENTS, LocaleEventsResponse.serializer(), graphQLVariables("id" to localeId), json = json)
             ?.value?.locale?.let { EventListing.upcoming(it.events) }
 
-    suspend fun event(id: String): Event =
-        query(Documents.EVENT, EventResponse.serializer(), graphQLVariables("id" to id)).event
-            ?: throw ApiError.NotFound
+    suspend fun event(id: String): Event {
+        val variables = graphQLVariables("id" to id)
+        val response = try {
+            query(Documents.EVENT_WITH_JOCKEYS, EventResponse.serializer(), variables)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: ApiError) {
+            // An API before the jockey role refuses that document; offline and not found stay as they are.
+            if (e is ApiError.NotFound || e is ApiError.Offline) throw e
+            query(Documents.EVENT, EventResponse.serializer(), variables)
+        }
+        return response.event ?: throw ApiError.NotFound
+    }
 
     suspend fun setRsvp(rsvp: Rsvp, eventId: String) {
         call { client.setRSVP(RSVPState.valueOf(rsvp.name), eventId) }

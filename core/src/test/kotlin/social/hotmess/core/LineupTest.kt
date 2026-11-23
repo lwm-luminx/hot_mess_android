@@ -114,6 +114,35 @@ class LineupTest {
     }
 
     @Test
+    fun featuresTheKJBesideTheHost() {
+        val night = lineup(
+            """{"id":"v-6","name":"The SunTrapp","people":{"runningOrder":{"nodes":[]},
+               "hostsTonight":[{"id":"p-1","name":"Mama Alma"}],
+               "jockeysTonight":[{"id":"p-2","name":"Dalton"}],"jockeyLabelTonight":"KJ"}}""",
+        )
+        assertEquals("Mama Alma", night.featuredHost?.billing)
+        assertEquals(listOf("KJ Dalton"), night.featuredJockeys.map { it.billing })
+        assertEquals("Your KJ tonight", night.jockeyCaption)
+        assertEquals(listOf("Mama Alma", "Dalton"), night.hostNames)
+
+        // A karaoke night with only a KJ, on now as the host: billed once, as the KJ.
+        val kjOnly = lineup(
+            """{"id":"v-6","people":{"runningOrder":{"nodes":[
+               {"id":"h-1","kind":"ACT","role":"HOST","state":"ON","people":{"nodes":[{"id":"p-2","name":"Dalton"}]}}]},
+               "jockeysTonight":[{"id":"p-2","name":"Dalton"}],"jockeyLabelTonight":"KJ"}}""",
+        )
+        assertNull(kjOnly.featuredHost)
+        assertEquals(listOf("KJ Dalton"), kjOnly.featuredJockeys.map { it.billing })
+        assertEquals(listOf("Dalton"), kjOnly.hostNames)
+
+        assertEquals("DJ Bea", Lineups.jockeyTitle("DJ", " Bea "))
+        assertEquals("Bea", Lineups.jockeyTitle(null, "Bea"))
+        assertNull(Lineups.jockeyTitle("VJ", " "))
+        assertTrue(Lineups.VENUE_LINEUP_WITH_JOCKEYS.contains("jockeysTonight { id name avatarUrl } jockeyLabelTonight"))
+        assertFalse(Lineups.VENUE_LINEUP.contains("jockeysTonight"))
+    }
+
+    @Test
     fun documentsAskForWhatTheyRead() {
         assertTrue(Lineups.VENUE_LINEUP.contains("hostsTonight { id name avatarUrl }"))
         assertFalse(Lineups.VENUE_LINEUP_WITHOUT_HOSTS.contains("hostsTonight"))
