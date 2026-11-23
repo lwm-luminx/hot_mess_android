@@ -155,6 +155,7 @@ class RecordingNavigator : Navigator {
     override fun openSafetyAlerts() { opened += "safetyAlerts" }
     override fun openGettingHelp() { opened += "gettingHelp" }
     override fun openCardsYouSee() { opened += "cards" }
+    override fun openPrivacyChoices() { opened += "privacy" }
     override fun openTribes() { opened += "tribes" }
     override fun openSuggestListing(event: Boolean, venueId: String?, venueName: String?) { opened += "suggest" }
     override fun openSuggestFix(target: FixTarget) { opened += "fix" }
