@@ -299,6 +299,10 @@ fun EventScreen(id: String, navigator: Navigator) {
                 if (loaded.hosts.isNotEmpty()) {
                     item(key = "hosted-by") { HostedByLine(loaded.hosts) { navigator.open(AppRoute.PersonDetail(it)) } }
                 }
+                loaded.jockeysTitle?.let { title ->
+                    // "KJ Dalton": its KJ, DJ or VJ, beside its hosts.
+                    item(key = "jockeys") { HostedByLine(loaded.jockeys, title) { navigator.open(AppRoute.PersonDetail(it)) } }
+                }
                 loaded.parentEvent?.let { parent ->
                     item(key = "part-of") {
                         DetailSection {
@@ -335,7 +339,7 @@ fun EventScreen(id: String, navigator: Navigator) {
                     item(key = "karaoke-tonight") { TonightKaraoke(tonightModel, tonightLineup, viewerName) }
                 } else if (karaoke != null && tonightLoaded) {
                     item(key = "karaoke") {
-                        EventKaraokeSection(karaoke, loaded.venue, loaded.hosts.map { it.name }) { navigator.open(AppRoute.VenueDetail(it)) }
+                        EventKaraokeSection(karaoke, loaded.venue, loaded.karaokeContactNames) { navigator.open(AppRoute.VenueDetail(it)) }
                     }
                 }
                 postsSection("From the venue and hosts", postsSubject, posts, postActions)
@@ -408,9 +412,9 @@ fun EventScreen(id: String, navigator: Navigator) {
     }
 }
 
-/** "Hosted by Sasha and Bea" with their faces; one host opens their page. */
+/** "Hosted by Sasha and Bea" (or [text], like "KJ Dalton") with their faces; one host opens their page. */
 @Composable
-private fun HostedByLine(hosts: List<Person>, onOpen: (String) -> Unit) {
+private fun HostedByLine(hosts: List<Person>, text: String? = null, onOpen: (String) -> Unit) {
     val single = hosts.singleOrNull()
     Row(
         Modifier
@@ -424,7 +428,7 @@ private fun HostedByLine(hosts: List<Person>, onOpen: (String) -> Unit) {
             hosts.take(3).forEach { Avatar(it.avatarUrl, it.name, size = 28.dp) }
         }
         Text(
-            "Hosted by ${Lineups.andList(hosts.map { it.name })}",
+            text ?: "Hosted by ${Lineups.andList(hosts.map { it.name })}",
             style = HotMessType.subheading,
             color = tokens.ink,
             maxLines = 2,

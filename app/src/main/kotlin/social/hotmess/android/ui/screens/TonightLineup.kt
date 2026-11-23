@@ -194,6 +194,10 @@ fun TonightLineupSection(
             val tips = hostDetail?.takeIf { it.id == host.personId }?.tipLinks.orEmpty()
             HostRow(host, tips) { host.personId?.let(onOpenPerson) }
         }
+        // Its KJ, DJ or VJ beside the host: "KJ Dalton", "Your KJ tonight".
+        lineup.featuredJockeys.forEach { jockey ->
+            HostRow(jockey, emptyList(), caption = lineup.jockeyCaption) { jockey.personId?.let(onOpenPerson) }
+        }
         LineupStrip(lineup, onOpenPerson, onAdd = ask)
         val session = lineup.karaokeSession
         if (singAlongEventId != null) {
@@ -291,7 +295,7 @@ internal fun RequestButton(kind: SongRequestKind, window: SongRequestWindow, lab
  * tonight" for an event's host nobody has put on yet. Below, a Tip button for each app they take tips on.
  */
 @Composable
-private fun HostRow(host: LineupEntry, tips: List<SocialLink>, onOpen: () -> Unit) {
+private fun HostRow(host: LineupEntry, tips: List<SocialLink>, caption: String? = null, onOpen: () -> Unit) {
     val person = host.people.firstOrNull()
     val context = LocalContext.current
     DetailSection(null) {
@@ -305,7 +309,7 @@ private fun HostRow(host: LineupEntry, tips: List<SocialLink>, onOpen: () -> Uni
         ) {
             Avatar(person?.avatarUrl, host.billing, size = 48.dp)
             Column(Modifier.weight(1f)) {
-                Text(if (host.state == LineupState.ON) "Hosting now" else "Hosting tonight", style = HotMessType.caption, color = tokens.inkMuted)
+                Text(caption ?: if (host.state == LineupState.ON) "Hosting now" else "Hosting tonight", style = HotMessType.caption, color = tokens.inkMuted)
                 Text(host.billing, style = HotMessType.subheading, color = tokens.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
