@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -27,6 +28,7 @@ import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Paid
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -53,6 +55,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -76,6 +79,8 @@ import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.ApiError
 import social.hotmess.core.HotMessApi
+import social.hotmess.core.KaraokeSignUpInPerson
+import social.hotmess.core.KaraokeSongbook
 import social.hotmess.core.LineupEntry
 import social.hotmess.core.LineupState
 import social.hotmess.core.Lineups
@@ -200,7 +205,7 @@ fun TonightLineupSection(
             return@Column
         }
         if (session != null && session.isPartnerSessionTonight) {
-            KaraokeJoinSection(session)
+            KaraokeJoinSection(session, lineup.hostNames)
         } else if (lineup.karaoke?.permitted == true || lineup.singers.isNotEmpty()) {
             KaraokeSection(lineup, viewerName, model)
         }
@@ -232,7 +237,7 @@ fun TonightKaraoke(model: TonightLineupModel, lineup: VenueLineup, viewerName: S
     Column(verticalArrangement = Arrangement.spacedBy(Space.s5)) {
         val session = lineup.karaokeSession
         if (session != null && session.isPartnerSessionTonight) {
-            KaraokeJoinSection(session)
+            KaraokeJoinSection(session, lineup.hostNames)
         } else if (lineup.karaoke?.permitted == true || lineup.singers.isNotEmpty()) {
             KaraokeSection(lineup, viewerName, model, onSignUp = ask?.let { add -> { add(SongRequestKind.KARAOKE) } })
         }
@@ -575,7 +580,7 @@ private fun MySignupCard(lineup: VenueLineup, request: SongRequest, viewerName: 
 
 /** A partner's karaoke session tonight (KaraFun and the like): join by link, or with the code. */
 @Composable
-private fun KaraokeJoinSection(session: VenueKaraoke) {
+private fun KaraokeJoinSection(session: VenueKaraoke, hostNames: List<String> = emptyList()) {
     val context = LocalContext.current
     var showingCode by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(Space.s2)) {
@@ -597,7 +602,7 @@ private fun KaraokeJoinSection(session: VenueKaraoke) {
                     }
                 }
                 if (url == null && code == null) {
-                    Text("Ask the host how to join the karaoke session.", style = HotMessType.body, color = tokens.inkMuted)
+                    KaraokeSignUpInPersonRows(session.provider, session.providerName, hostNames)
                 }
             }
         }
@@ -766,5 +771,29 @@ internal fun SongRequestSheet(
             TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Cancel") }
             Spacer(Modifier.size(Space.s2))
         }
+    }
+}
+
+/**
+ * A partner's night with no code (KaraFun run by the host; Rick, 2026-11-23): no queue in the app, "Sign up in person
+ * with Dalton", and on KaraFun a box that searches its songbook so guests can pick a song first.
+ */
+@Composable
+internal fun KaraokeSignUpInPersonRows(provider: String?, providerName: String?, hostNames: List<String>) {
+    val context = LocalContext.current
+    var query by remember { mutableStateOf("") }
+    Text(KaraokeSignUpInPerson.text(hostNames), style = HotMessType.body, color = tokens.ink,
+        modifier = Modifier.testTag("karaoke.signUpInPerson"))
+    if (KaraokeSongbook.searches(provider)) {
+        val search = { KaraokeSongbook.searchUrl(provider, query)?.let(context::openUrl) }
+        OutlinedTextField(
+            query, { query = it },
+            placeholder = { Text("Find a song in ${providerName?.takeIf { it.isNotBlank() } ?: "KaraFun"}") },
+            leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { search() }),
+            modifier = Modifier.fillMaxWidth().testTag("karaoke.songSearch"),
+        )
     }
 }

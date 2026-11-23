@@ -4,6 +4,7 @@ import com.audiencekit.SoapboxCopy
 import com.audiencekit.ArticleTopic
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -334,7 +335,7 @@ fun EventScreen(id: String, navigator: Navigator) {
                     item(key = "karaoke-tonight") { TonightKaraoke(tonightModel, tonightLineup, viewerName) }
                 } else if (karaoke != null && tonightLoaded) {
                     item(key = "karaoke") {
-                        EventKaraokeSection(karaoke, loaded.venue) { navigator.open(AppRoute.VenueDetail(it)) }
+                        EventKaraokeSection(karaoke, loaded.venue, loaded.hosts.map { it.name }) { navigator.open(AppRoute.VenueDetail(it)) }
                     }
                 }
                 postsSection("From the venue and hosts", postsSubject, posts, postActions)
@@ -437,7 +438,12 @@ private fun HostedByLine(hosts: List<Person>, onOpen: (String) -> Unit) {
  * karaoke, where to sign up.
  */
 @Composable
-internal fun EventKaraokeSection(karaoke: KaraokeNight, venue: Venue?, onOpenVenue: (String) -> Unit) {
+internal fun EventKaraokeSection(
+    karaoke: KaraokeNight,
+    venue: Venue?,
+    hostNames: List<String> = emptyList(),
+    onOpenVenue: (String) -> Unit,
+) {
     val context = LocalContext.current
     var showingCode by remember { mutableStateOf(false) }
     DetailSection("Karaoke") {
@@ -467,7 +473,13 @@ internal fun EventKaraokeSection(karaoke: KaraokeNight, venue: Venue?, onOpenVen
             }
             else -> {
                 InfoRow("Karaoke night", icon = Icons.Rounded.Mic)
-                if (code != null) InfoRow("Join code", code) else TextRow("Ask the host how to join the karaoke session.")
+                if (code != null) {
+                    InfoRow("Join code", code)
+                } else {
+                    Column(Modifier.padding(Space.s4), verticalArrangement = Arrangement.spacedBy(Space.s3)) {
+                        KaraokeSignUpInPersonRows(karaoke.provider, karaoke.providerName, hostNames)
+                    }
+                }
             }
         }
     }

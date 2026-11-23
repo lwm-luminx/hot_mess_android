@@ -101,6 +101,36 @@ data class VenueKaraoke(
 
     /** A partner's session to show tonight: the venue has one and tonight is a karaoke night. */
     val isPartnerSessionTonight: Boolean get() = provider != null && !isAudienceKit && tonight != false
+
+    /** A partner's night with no session to join (KaraFun with no code): singers sign up with the host in person. */
+    val signsUpInPerson: Boolean get() = isPartnerSessionTonight && joinLink == null && sessionCode.isNullOrBlank()
+}
+
+/**
+ * A karaoke partner's public songbook, so guests can find a song before signing up with the host in person (Rick,
+ * 2026-11-23). Only KaraFun has one; its catalog API is by partnership only, so the app opens its site's search.
+ */
+object KaraokeSongbook {
+    fun searches(provider: String?): Boolean = provider.equals("karafun", ignoreCase = true)
+
+    /** The songbook's search page for [query], or its whole catalog when blank; null without a songbook. */
+    fun searchUrl(provider: String?, query: String): String? {
+        if (!searches(provider)) return null
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) return "https://www.karafun.com/karaoke-song-list.html"
+        val encoded = java.net.URLEncoder.encode(trimmed, "UTF-8").replace("+", "%20")
+        return "https://www.karafun.com/search/?query=$encoded"
+    }
+}
+
+/** What a partner's night with no code tells singers: "Sign up in person with Dalton". */
+object KaraokeSignUpInPerson {
+    fun text(hostNames: List<String>): String {
+        val names = hostNames.map { it.trim() }.filter { it.isNotEmpty() }
+        if (names.isEmpty()) return "Sign up in person with the host"
+        val list = if (names.size == 1) names[0] else names.dropLast(1).joinToString(", ") + " or " + names.last()
+        return "Sign up in person with $list"
+    }
 }
 
 /** What a karaoke signup or song request asks for. [singer] is for karaoke only; the viewer when left out. */
@@ -141,6 +171,9 @@ data class VenueLineup(
         get() = hostOnNow ?: hostsTonight.firstOrNull()?.let { host ->
             LineupEntry(id = "host-tonight:${host.id}", kindName = "ACT", roleName = "HOST", stateName = "UPCOMING", person = host)
         }
+
+    /** The featured host's names, for "Sign up in person with Dalton"; empty when nobody is hosting. */
+    val hostNames: List<String> get() = featuredHost?.people?.mapNotNull { it.name.takeIf(String::isNotBlank) }.orEmpty()
 
     /** A lineup of only hosts isn't a running order: it reads "Hosted by A and B". */
     val onlyHosts: Boolean get() = acts.isNotEmpty() && acts.all { it.role == AppearanceRole.HOST }
