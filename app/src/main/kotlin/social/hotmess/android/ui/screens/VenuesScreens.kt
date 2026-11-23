@@ -339,7 +339,11 @@ fun VenueScreen(id: String, navigator: Navigator) {
     val userId = rememberUserId()
     var pingHere by rememberSaveable { mutableStateOf(false) }
     val pairUpScope = rememberCoroutineScope()
-    val pairUp = remember(id) { PairUpController(graph.api, id, pairUpScope) { graph.location.reportAgain() } }
+    val pairUp = remember(id) {
+        PairUpController(graph.api, id, pairUpScope) { graph.location.reportAgain() }
+            // No name here: the notification keeps the title Now gave it, else says "Quickie".
+            .also { it.onChange = { state -> graph.ongoing.syncQuickie(state, id, null) } }
+    }
     var pairingUp by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(id) { pairUp.load() }
     // Whether the app places the user here, so Safety shows in the hero.

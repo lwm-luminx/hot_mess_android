@@ -86,6 +86,8 @@ class AppGraph(
 
     /** The venues and talent the signed-in user manages, so Me offers Velvet or Backstage. */
     val listings = ListingsStore(api)
+    /** The ongoing Ping and Quickie notifications (the iOS Live Activities' counterpart). */
+    val ongoing = social.hotmess.android.push.OngoingNotifications(context.applicationContext, api, scope)
 
     /** Which promoted cards the user turned off (on this device only), and the reports of the ones they saw. */
     val cards = CardSettings(context.applicationContext, audienceKit, scope)
@@ -162,6 +164,7 @@ class AppGraph(
                         notifications.clear()
                         safety.clear()
                         listings.clear()
+                        ongoing.clear()
                         tribes.clear()
                         contactFriends.forget()
                         cable.disconnect()

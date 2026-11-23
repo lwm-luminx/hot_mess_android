@@ -123,12 +123,16 @@ class PairUpController(
     var celebrating by mutableStateOf(false)
     private var lastMetId: String? = null
 
+    /** Told the user's state here each time it changes: the ongoing Quickie notification follows it. */
+    var onChange: (PairUpState?) -> Unit = {}
+
     val state: PairUpState? get() = pairUp?.mine?.takeIf { it.isActive }
     val here: Boolean get() = pairUp?.here == true
 
     suspend fun load() {
         try {
             pairUp = api.pairUp(venueId)
+            onChange(pairUp?.mine)
             noteMeeting()
         } catch (e: CancellationException) {
             throw e
@@ -181,7 +185,7 @@ class PairUpController(
             busy = true
             try {
                 val scan = api.scanPairUpCode(venueId, code)
-                scan.pairUp?.let { pairUp = VenuePairUp(here = here, mine = it) }
+                scan.pairUp?.let { pairUp = VenuePairUp(here = here, mine = it); onChange(it) }
                 scanNotice = scan.notice
                 noteMeeting()
             } catch (e: CancellationException) {
@@ -210,6 +214,7 @@ class PairUpController(
             busy = true
             try {
                 pairUp = VenuePairUp(here = here, mine = action())
+                onChange(pairUp?.mine)
                 noteMeeting()
             } catch (e: CancellationException) {
                 throw e
