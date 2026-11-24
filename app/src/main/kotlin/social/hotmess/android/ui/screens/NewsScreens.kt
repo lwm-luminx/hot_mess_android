@@ -2,21 +2,28 @@ package social.hotmess.android.ui.screens
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -32,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.audiencekit.Article
@@ -44,10 +52,14 @@ import com.audiencekit.SoapboxCopy
 import com.audiencekit.article
 import com.audiencekit.articles
 import com.audiencekit.articlesAbout
+import com.audiencekit.articlesPage
+import com.audiencekit.localPublications
 import com.audiencekit.myOpEds
 import com.audiencekit.publication
 import com.audiencekit.submitOpEd
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import social.hotmess.android.ui.LocalAppGraph
 import social.hotmess.android.ui.Navigator
@@ -85,11 +97,22 @@ fun rememberNews(topic: ArticleTopic, limit: Int = 3): List<Article> {
     return state.valueOrNull.orEmpty()
 }
 
-/** "In the news" on a venue, event or person page, or a locale's "News": its articles as rows. */
-fun LazyListScope.newsSection(title: String, articles: List<Article>, navigator: Navigator) {
+/**
+ * "In the news" on a venue, event or person page, or a locale's "News": its articles as rows. With [showMore], [limit]
+ * rows and a "Show more" link to the full list when there are more (load one more than [limit] to know).
+ */
+fun LazyListScope.newsSection(
+    title: String,
+    articles: List<Article>,
+    navigator: Navigator,
+    limit: Int = articles.size,
+    showMore: AppRoute? = null,
+) {
     if (articles.isEmpty()) return
-    item(key = "news-title") { SectionTitle(title) }
-    items(articles, key = { "news-${it.id}" }) { article ->
+    item(key = "news-title") {
+        NewsTitle(title, showMore?.takeIf { articles.size > limit }, navigator)
+    }
+    items(articles.take(limit), key = { "news-${it.id}" }) { article ->
         ArticleRow(article, onClick = rememberOpenArticle(article, navigator))
     }
 }
@@ -100,14 +123,160 @@ fun LazyListScope.newsSection(title: String, articles: List<Article>, navigator:
  * can always list it.
  */
 @Composable
-fun LocalNewsSection(title: String, localeId: String, navigator: Navigator) {
-    val articles = rememberNews(remember(localeId) { ArticleTopic.Locale(localeId) }).take(3)
-    if (articles.isEmpty()) return
+fun LocalNewsSection(title: String, localeId: String, localeName: String, navigator: Navigator) {
+    // One more than it shows tells it whether to offer "Show more".
+    val loaded = rememberNews(remember(localeId) { ArticleTopic.Locale(localeId) }, limit = LOCAL_NEWS_LIMIT + 1)
+    if (loaded.isEmpty()) return
+    val articles = loaded.take(LOCAL_NEWS_LIMIT)
+    val showMore = AppRoute.News(localeId, localeName).takeIf { loaded.size > LOCAL_NEWS_LIMIT }
     Column(Modifier.fillMaxWidth().testTag("now.news"), verticalArrangement = Arrangement.spacedBy(Space.s2)) {
-        SectionTitle(title)
+        NewsTitle(title, showMore, navigator)
         articles.forEach { article ->
             key(article.id) { ArticleRow(article, onClick = rememberOpenArticle(article, navigator)) }
         }
+    }
+}
+
+/** How many articles Now's local news shows before "Show more". */
+const val LOCAL_NEWS_LIMIT: Int = 3
+
+/** How many articles a locale's page shows under "News" before "Show more". */
+const val LOCALE_NEWS_LIMIT: Int = 5
+
+/** A news section's title, and "Show more" at its end when [showMore] is where the rest is. */
+@Composable
+private fun NewsTitle(title: String, showMore: AppRoute?, navigator: Navigator) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        SectionTitle(title, Modifier.weight(1f))
+        if (showMore != null) {
+            Text(
+                "Show more",
+                style = HotMessType.label,
+                color = tokens.accentInk,
+                modifier = Modifier
+                    .clickable(role = Role.Button) { navigator.open(showMore) }
+                    .padding(horizontal = Space.s5, vertical = Space.s1)
+                    .testTag("news.showMore"),
+            )
+        }
+    }
+}
+
+/** A locale's news in full: its publishers, the articles shown so far, and where the next page starts. */
+data class LocalNews(val publishers: List<Publication>, val articles: List<Article>, val nextCursor: String?)
+
+/** How many articles each page of [NewsScreen] asks for. */
+const val NEWS_PAGE_SIZE: Int = 20
+
+/**
+ * A locale's news in full, from "Show more" under its news: the local publishers at the top (each opens its page),
+ * then every publisher's articles together, pinned first, then newest, loading more as the reader scrolls.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun NewsScreen(localeId: String, localeName: String, navigator: Navigator) {
+    val graph = LocalAppGraph.current
+    val loader = rememberLoader<LocalNews>("news-locale-$localeId")
+    val fetch: suspend () -> LocalNews = {
+        coroutineScope {
+            val publishers = async { runCatching { graph.audienceKit.localPublications(localeId) }.getOrDefault(emptyList()) }
+            val page = graph.audienceKit.articlesPage(localeId = localeId, first = NEWS_PAGE_SIZE)
+            LocalNews(publishers.await(), page.articles, page.endCursor)
+        }
+    }
+    LaunchedEffect(localeId) { loader.load(localeId, fetch = fetch) }
+    val state by loader.state.collectAsStateWithLifecycle()
+    val refreshing by loader.isRefreshing.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    var loadingMore by remember { mutableStateOf(false) }
+    val loadMore: () -> Unit = {
+        val cursor = (state as? LoadState.Loaded)?.value?.nextCursor
+        if (cursor != null && !loadingMore) {
+            loadingMore = true
+            scope.launch {
+                try {
+                    val page = graph.audienceKit.articlesPage(localeId = localeId, first = NEWS_PAGE_SIZE, after = cursor)
+                    loader.update { news ->
+                        val seen = news.articles.map { it.id }.toSet()
+                        news.copy(articles = news.articles + page.articles.filterNot { it.id in seen }, nextCursor = page.endCursor)
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // Left as it was: "Show more" stays to try again.
+                } finally {
+                    loadingMore = false
+                }
+            }
+        }
+    }
+
+    ScreenScaffold(if (localeName.isBlank()) SoapboxCopy.NEWS else "News in $localeName", onBack = navigator::back) {
+        LoadStateView(state, onRetry = { loader.load(localeId, refresh = true, fetch = fetch) }) { news ->
+            PullToRefreshBox(refreshing, onRefresh = { loader.load(localeId, refresh = true, fetch = fetch) }) {
+                Feed {
+                    if (news.publishers.isNotEmpty()) {
+                        item(key = "publishers-title") { SectionTitle("Local publishers") }
+                        item(key = "publishers") {
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(Space.s3),
+                                modifier = Modifier.fillMaxWidth().testTag("news.publishers"),
+                            ) {
+                                items(news.publishers, key = { it.id }) { publication ->
+                                    PublisherTile(publication) { navigator.open(AppRoute.PublicationDetail(publication.id)) }
+                                }
+                            }
+                        }
+                    }
+                    item(key = "articles-title") { SectionTitle("Latest") }
+                    if (news.articles.isEmpty()) {
+                        item(key = "articles-empty") {
+                            Text("Nothing published yet.", style = HotMessType.body, color = tokens.inkMuted)
+                        }
+                    }
+                    itemsIndexed(news.articles, key = { _, article -> "article-${article.id}" }) { index, article ->
+                        if (index == news.articles.lastIndex) LaunchedEffect(article.id) { loadMore() }
+                        ArticleRow(article, onClick = rememberOpenArticle(article, navigator))
+                    }
+                    if (news.nextCursor != null) {
+                        item(key = "showMore") {
+                            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                if (loadingMore) {
+                                    CircularProgressIndicator(Modifier.size(24.dp))
+                                } else {
+                                    TextButton(onClick = loadMore, modifier = Modifier.testTag("news.showMore")) {
+                                        Text("Show more")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** A publisher at the top of a locale's news: its photo and name. */
+@Composable
+private fun PublisherTile(publication: Publication, onClick: () -> Unit) {
+    val graph = LocalAppGraph.current
+    Column(
+        modifier = Modifier
+            .width(84.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(role = Role.Button, onClick = onClick)
+            .testTag("news.publisher"),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(Space.s1),
+    ) {
+        val photo = graph.audienceKit.url(publication.photoUrl)
+        if (photo != null) {
+            RemoteImage(photo, Modifier.size(64.dp).clip(CircleShape))
+        } else {
+            Surface(Modifier.size(64.dp), shape = CircleShape, color = tokens.surfaceRaised) {}
+        }
+        Text(publication.name, style = HotMessType.caption, maxLines = 2, textAlign = TextAlign.Center)
     }
 }
 

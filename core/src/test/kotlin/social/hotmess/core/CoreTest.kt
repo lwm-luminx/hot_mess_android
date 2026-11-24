@@ -254,6 +254,7 @@ class DeepLinkTest {
         assertEquals(AppRoute.QuickieChat(id), DeepLink.route("https://hotmess.social/venues/$id/quickie"))
         assertEquals(AppRoute.VenueDetail(id), DeepLink.route("https://hotmess.social/venues/$id/quickie/x"))
         assertEquals(AppTab.EVENTS, AppRoute.EventDetail(id).tab)
+        assertEquals(AppTab.NOW, AppRoute.News("l-1", "Salt Lake").tab)
     }
 
     @Test
