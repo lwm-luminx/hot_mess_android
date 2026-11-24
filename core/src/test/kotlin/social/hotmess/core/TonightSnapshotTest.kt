@@ -75,7 +75,7 @@ class TonightSnapshotTest {
             myPing = ping("mine", mine = true), friendPings = listOf(ping("f", joined = true)),
         )
         val snapshot = TonightSnapshot.from(now, base)
-        assertEquals(listOf("ev-1", disco), snapshot.events.map { it.id }, "the event you're at first, nothing past tonight")
+        assertEquals(listOf("ev-1", disco, "ev-3"), snapshot.events.map { it.id }, "the event you're at first, then the next week's")
         assertEquals("https://hotmess.social/events/$disco", snapshot.events[1].url)
         assertEquals("Tonight in Seattle", snapshot.header)
         assertEquals(listOf("mine", "f"), snapshot.pings.map { it.id })
@@ -86,5 +86,87 @@ class TonightSnapshotTest {
         assertEquals(listOf("Sam"), joined.pings[1].people)
         assertEquals(AppRoute.EventDetail(disco), DeepLink.route(snapshot.events[1].url))
         assertTrue(TonightSnapshot(updatedAt = base).isEmpty)
+    }
+
+    @Test
+    fun anEventsLocationIsItsVenueAndStreet() {
+        fun event(place: String?, address: String?) =
+            TonightSnapshot.Event("e", "Bingo", place = place, startsAt = base, url = "u", address = address)
+        assertEquals("Purr · 1518 11th Ave", event("Purr", "1518 11th Ave, Seattle, WA").location)
+        assertEquals("Purr", event("Purr", null).location)
+        assertEquals("Purr", event("Purr", " ").location)
+        assertEquals("1518 11th Ave", event(null, "1518 11th Ave, Seattle").location)
+        assertNull(event(null, null).location)
+    }
+
+    @Test
+    fun upcomingKeepsTheNextWeekSoonestFirstAtMostSix() {
+        val soon = Event("soon", "Soon", startAt = base.plusSeconds(2 * 3600))
+        val later = Event("later", "Later", startAt = base.plusSeconds(30 * 3600))
+        val nextMonth = Event("month", "Month", startAt = base.plusSeconds(30L * 24 * 3600))
+        val over = Event("over", "Over", startAt = base.minusSeconds(7200), endAt = base.minusSeconds(60))
+        assertEquals(listOf("soon", "later"), TonightSnapshot.upcoming(listOf(later, nextMonth, over, soon), at = base).map { it.id })
+        val many = (1..9).map { Event("e$it", "E$it", startAt = base.plusSeconds(it * 3600L)) }
+        assertEquals(TonightSnapshot.LIMIT, TonightSnapshot.upcoming(many, at = base).size)
+    }
+
+    @Test
+    fun goingAndPingedComeFromTheRsvpAndYourPing() {
+        val bingo = Event("bingo", "Bingo", startAt = base.plusSeconds(3600)).withRsvp(Rsvp.ATTENDING)
+        val disco = Event("disco", "Disco", startAt = base.plusSeconds(7200))
+        val mine = ping("mine", mine = true).copy(targets = listOf(PingTarget("t", event = disco)))
+        val snapshot = TonightSnapshot.from(Now(events = listOf(bingo, disco), myPing = mine), base)
+        assertEquals(listOf(true, false), snapshot.events.map { it.going })
+        assertEquals(listOf(false, true), snapshot.events.map { it.pinged })
+        assertEquals(listOf("disco", "bingo"), TonightSnapshot.pingEventIds("bingo", mine))
+        assertEquals(listOf("disco"), TonightSnapshot.pingEventIds("disco", mine))
+        assertEquals(listOf("bingo"), TonightSnapshot.pingEventIds("bingo", null))
+        val going = snapshot.updatingEvent("disco") { it.copy(going = true) }
+        assertEquals(listOf(true, true), going.events.map { it.going })
+    }
+
+    @Test
+    fun onlyEventsTonightOfferPing() {
+        val tonight = TonightSnapshot.Event("a", "A", startsAt = base.plusSeconds(3 * 3600), url = "u")
+        val tomorrow = TonightSnapshot.Event("b", "B", startsAt = base.plusSeconds(30 * 3600), url = "u")
+        assertTrue(tonight.isPingable(base))
+        assertEquals(false, tomorrow.isPingable(base))
+    }
+
+    @Test
+    fun theFeaturedEventRotatesAndWrapsAround() {
+        val slot = TonightSnapshot.ROTATION.seconds
+        val start = Instant.ofEpochSecond(Math.floorDiv(base.epochSecond, slot) * slot)
+        val snapshot = TonightSnapshot(
+            updatedAt = start,
+            events = listOf("a", "b", "c").map { TonightSnapshot.Event(it, it, startsAt = start.plusSeconds(3600), url = "u") },
+        )
+        val ids = (0..3).map { snapshot.featuredEvent(start.plusSeconds(it * slot))?.id }
+        assertEquals(setOf("a", "b", "c"), ids.take(3).toSet())
+        assertEquals(ids[0], ids[3])
+        assertEquals(ids[0], snapshot.featuredEvent(start.plusSeconds(slot - 1))?.id, "it stays put within a slot")
+        assertNull(TonightSnapshot(updatedAt = base).featuredEvent(base))
+    }
+
+    @Test
+    fun aSnapshotSavedBeforeLocationAndButtonsStillReads() {
+        val old = """{"updatedAt":"2026-11-20T00:00:00Z","events":[{"id":"e","name":"Bingo","place":"Purr",""" +
+            """"startsAt":"2026-11-20T03:00:00Z","url":"u"}]}"""
+        val snapshot = TonightSnapshot.decode(old)
+        assertEquals("Purr", snapshot?.events?.first()?.location)
+        assertEquals(false, snapshot?.events?.first()?.going)
+    }
+
+    @Test
+    fun timeLabelsSayTodayTomorrowOrTheDay() {
+        val zone = java.time.ZoneId.of("America/Los_Angeles")
+        val now = Instant.parse("2026-11-24T20:00:00Z") // Tue noon in Seattle
+        fun label(at: String) = TonightSnapshot.Event("e", "E", startsAt = Instant.parse(at), url = "u")
+            .timeLabel(now, zone, java.util.Locale.US)
+        assertEquals("On now", label("2026-11-24T19:00:00Z"))
+        assertTrue(label("2026-11-25T05:00:00Z").startsWith("9:00"))
+        assertTrue(label("2026-11-26T05:00:00Z").startsWith("Tomorrow 9:00"))
+        assertTrue(label("2026-11-28T05:00:00Z").startsWith("Fri 9:00"))
+        assertEquals("Sat, Dec 5", label("2026-12-06T05:00:00Z"))
     }
 }

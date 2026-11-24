@@ -44,12 +44,10 @@ import social.hotmess.android.MainActivity
 import social.hotmess.android.appGraph
 import social.hotmess.core.Now
 import social.hotmess.core.PingPush
+import social.hotmess.core.Rsvp
 import social.hotmess.core.TonightSnapshot
 import java.io.File
 import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-import java.time.format.FormatStyle
 
 /**
  * Where the Tonight widget's snapshot lives: a file in the app's no-backup folder. The widget runs in the app's own
@@ -88,10 +86,11 @@ object TonightStore {
 }
 
 /**
- * The Tonight home screen widget: the Android counterpart of the iOS Tonight widget (hot_mess_ios
- * `HotMessWidgets/HotMessTonightWidget.swift`, #210). It shows the user's Ping and friends' Pings with who's in and
- * an "I'm in" button, then what's on tonight where they are. Tapping a row opens it in the app. Ended Pings and
- * events drop off whenever it redraws (on each save, and every half hour from `tonight_widget_info.xml`).
+ * The "Hot Mess - Tonight" home screen widget: the Android counterpart of the iOS one (hot_mess_ios
+ * `HotMessWidgets/HotMessTonightWidget.swift`). A card rotates through the next few events, with where each one is
+ * and Going and Ping buttons (Ping only for tonight), then the user's Ping and friends' Pings with who's in and an
+ * "I'm in" button, then more coming up. Tapping a row opens it in the app. It redraws on each save and every half
+ * hour (`tonight_widget_info.xml`), which is when the card moves on and ended Pings and events drop off.
  */
 class TonightWidget : GlanceAppWidget() {
     override val sizeMode: SizeMode = SizeMode.Exact
@@ -106,6 +105,8 @@ class TonightWidget : GlanceAppWidget() {
 
     @Composable
     private fun Content(context: Context, snapshot: TonightSnapshot?) {
+        val now = Instant.now()
+        val featured = snapshot?.featuredEvent(now)
         Column(
             modifier = GlanceModifier
                 .fillMaxSize()
@@ -114,12 +115,22 @@ class TonightWidget : GlanceAppWidget() {
                 .background(GlanceTheme.colors.widgetBackground)
                 .padding(14.dp),
         ) {
-            Text(
-                text = snapshot?.header ?: "Tonight",
-                style = TextStyle(color = GlanceTheme.colors.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold),
-                maxLines = 1,
-                modifier = GlanceModifier.clickable(open(context, SITE)),
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = GlanceModifier.fillMaxWidth()) {
+                Text(
+                    text = snapshot?.header ?: "Tonight",
+                    style = TextStyle(color = GlanceTheme.colors.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold),
+                    maxLines = 1,
+                    modifier = GlanceModifier.defaultWeight().clickable(open(context, SITE)),
+                )
+                if (featured != null && snapshot.events.size > 1) {
+                    // One dot per event, the featured one filled, so it reads as rotating.
+                    Text(
+                        text = snapshot.events.joinToString(" ") { if (it.id == featured.id) "●" else "○" },
+                        style = TextStyle(color = GlanceTheme.colors.primary, fontSize = 8.sp),
+                        maxLines = 1,
+                    )
+                }
+            }
             snapshot?.onNow?.let {
                 Text(text = "On now: $it", style = secondary(), maxLines = 1)
             }
@@ -132,11 +143,59 @@ class TonightWidget : GlanceAppWidget() {
                 )
                 return@Column
             }
+            featured?.let { FeaturedCard(context, it, now) }
             LazyColumn {
                 items(snapshot.pings, itemId = { ("p" + it.id).hashCode().toLong() }) { ping -> PingRow(context, ping) }
-                items(snapshot.events, itemId = { ("e" + it.id).hashCode().toLong() }) { event -> EventRow(context, event) }
+                items(snapshot.events.filter { it.id != featured?.id }, itemId = { ("e" + it.id).hashCode().toLong() }) { event ->
+                    EventRow(context, event, now)
+                }
             }
         }
+    }
+
+    /** The rotating card: when, what, where, and the Going and Ping buttons. */
+    @Composable
+    private fun FeaturedCard(context: Context, event: TonightSnapshot.Event, now: Instant) {
+        Column(
+            modifier = GlanceModifier
+                .fillMaxWidth()
+                .cornerRadius(14.dp)
+                .background(GlanceTheme.colors.secondaryContainer)
+                .padding(10.dp)
+                .clickable(open(context, event.url)),
+        ) {
+            Text(
+                text = event.timeLabel(now),
+                style = TextStyle(color = GlanceTheme.colors.primary, fontSize = 12.sp, fontWeight = FontWeight.Medium),
+                maxLines = 1,
+            )
+            Text(
+                text = event.name,
+                style = TextStyle(color = GlanceTheme.colors.onSecondaryContainer, fontSize = 15.sp, fontWeight = FontWeight.Bold),
+                maxLines = 1,
+            )
+            event.location?.let {
+                Text(text = "📍 $it", style = TextStyle(color = GlanceTheme.colors.onSecondaryContainer, fontSize = 12.sp), maxLines = 1)
+            }
+            Spacer(GlanceModifier.height(6.dp))
+            Row {
+                Button(
+                    text = if (event.going) "Going ✓" else "Going",
+                    onClick = actionRunCallback<SetGoingFromWidget>(
+                        actionParametersOf(SetGoingFromWidget.EVENT to event.id, SetGoingFromWidget.GOING to !event.going),
+                    ),
+                )
+                if (event.isPingable(now)) {
+                    Spacer(GlanceModifier.width(8.dp))
+                    Button(
+                        text = if (event.pinged) "Pinged" else "Ping",
+                        enabled = !event.pinged,
+                        onClick = actionRunCallback<PingEventFromWidget>(actionParametersOf(PingEventFromWidget.EVENT to event.id)),
+                    )
+                }
+            }
+        }
+        Spacer(GlanceModifier.height(6.dp))
     }
 
     @Composable
@@ -160,11 +219,10 @@ class TonightWidget : GlanceAppWidget() {
     }
 
     @Composable
-    private fun EventRow(context: Context, event: TonightSnapshot.Event) {
+    private fun EventRow(context: Context, event: TonightSnapshot.Event, now: Instant) {
         Column(modifier = GlanceModifier.fillMaxWidth().padding(vertical = 4.dp).clickable(open(context, event.url))) {
-            Text(text = event.name, style = primary(), maxLines = 1)
-            val time = TIME.format(event.startsAt.atZone(ZoneId.systemDefault()))
-            Text(text = listOfNotNull(time, event.place).joinToString(" · "), style = secondary(), maxLines = 1)
+            Text(text = if (event.going) "${event.name} ✓" else event.name, style = primary(), maxLines = 1)
+            Text(text = listOfNotNull(event.timeLabel(now), event.location).joinToString(" · "), style = secondary(), maxLines = 1)
         }
     }
 
@@ -176,7 +234,6 @@ class TonightWidget : GlanceAppWidget() {
 
     private companion object {
         const val SITE = "https://hotmess.social/"
-        val TIME: DateTimeFormatter = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
 
         /** Opens [url] in the app, as a tapped push does (MainActivity reads its `url`). */
         fun open(context: Context, url: String) = actionStartActivity(
@@ -206,6 +263,65 @@ class JoinPingFromWidget : ActionCallback {
 
     companion object {
         val PING = ActionParameters.Key<String>("ping")
+    }
+}
+
+/** "Going" on an event from the widget, or takes it back, without opening the app. */
+class SetGoingFromWidget : ActionCallback {
+    override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
+        val eventId = parameters[EVENT] ?: return
+        val going = parameters[GOING] ?: true
+        val graph = context.appGraph
+        if (!graph.session.isSignedIn) return
+        try {
+            graph.api.setRsvp(if (going) Rsvp.ATTENDING else Rsvp.UNSURE, eventId)
+            TonightStore.read(context)?.let { TonightStore.save(context, it.updatingEvent(eventId) { e -> e.copy(going = going) }) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // The button stays as it was; opening the app shows what happened.
+        }
+    }
+
+    companion object {
+        val EVENT = ActionParameters.Key<String>("event")
+        val GOING = ActionParameters.Key<Boolean>("going")
+    }
+}
+
+/**
+ * Ping from the widget: adds the event to the user's running Ping (keeping its other picks, note and reach), or
+ * sends a friends-only Ping naming it.
+ */
+class PingEventFromWidget : ActionCallback {
+    override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
+        val eventId = parameters[EVENT] ?: return
+        val graph = context.appGraph
+        if (!graph.session.isSignedIn) return
+        try {
+            val mine = graph.api.myPing()
+            val snapshot = TonightStore.read(context)
+            val ping = graph.api.sendPing(
+                venueIds = mine?.targets?.mapNotNull { it.venue?.id }.orEmpty(),
+                eventIds = TonightSnapshot.pingEventIds(eventId, mine),
+                note = mine?.note,
+                localeId = snapshot?.localeId,
+            )
+            snapshot?.let {
+                // The user's Ping leads, then friends' as they were.
+                val pings = listOf(TonightSnapshot.entry(ping)) + it.pings.filter { p -> !p.isMine }
+                TonightStore.save(context, it.copy(pings = pings).markingPinged(ping, Instant.now()))
+            }
+            graph.pingUpdated(ping.id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // The button stays; opening the app shows what happened.
+        }
+    }
+
+    companion object {
+        val EVENT = ActionParameters.Key<String>("event")
     }
 }
 

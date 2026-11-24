@@ -174,7 +174,7 @@
         <receiver
             android:name=".widget.TonightWidgetReceiver"
             android:exported="true"
-            android:label="Tonight">
+            android:label="Hot Mess - Tonight">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
