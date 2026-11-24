@@ -63,6 +63,7 @@ import social.hotmess.android.session.AuthState
 import social.hotmess.android.ui.screens.ArticleScreen
 import social.hotmess.android.ui.screens.EventScreen
 import social.hotmess.android.ui.screens.PingChatSheet
+import social.hotmess.android.ui.screens.NewsScreen
 import social.hotmess.android.ui.screens.PublicationScreen
 import social.hotmess.android.ui.screens.QuickieChatSheet
 import social.hotmess.android.ui.screens.GetHelpScreen
