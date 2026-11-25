@@ -28,6 +28,7 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.rounded.VolunteerActivism
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
@@ -334,6 +335,8 @@ fun GetHelpScreen(venue: HelpVenue?, alertId: String?, navigator: Navigator) {
     // From a venue's safety poster: straight to "Tell staff quietly", which can send before the app places them there.
     var telling by remember(venue, alertId) { mutableStateOf(venue?.posterCode != null && alertId == null) }
     var addingMore by remember { mutableStateOf(false) }
+    var findingHelp by remember { mutableStateOf(false) }
+    if (findingHelp) ResourcesDialog(focusResourceId = null) { findingHelp = false }
     val haptics = LocalHapticFeedback.current
 
     val context = LocalContext.current
@@ -379,6 +382,11 @@ fun GetHelpScreen(venue: HelpVenue?, alertId: String?, navigator: Navigator) {
                             RowDivider()
                         }
                         EscapeRows(controller) { navigator.openSupport(null) }
+                        // The city's food, shelter, health and support lines, at a venue or away from one.
+                        RowDivider()
+                        HelpRow("Find help nearby", "Food, shelter, health and support in your city.", Icons.Rounded.VolunteerActivism) {
+                            findingHelp = true
+                        }
                     }
                 }
                 item { EmergencySection() }
