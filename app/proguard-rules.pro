@@ -33,3 +33,11 @@
 -keep class androidx.credentials.playservices.** {
   *;
 }
+
+# WorkManager (pulled in by Glance for the Tonight widget) opens its Room database by reflection: Room looks up
+# WorkDatabase_Impl by name and calls its no-argument constructor. The work-runtime that Glance 1.1.1 brings has no
+# rule for that constructor under R8 full mode, so a minified build crashed at launch with "Failed to create an
+# instance of androidx.work.impl.WorkDatabase". Keep every Room database's constructor.
+-keep class * extends androidx.room.RoomDatabase {
+    <init>();
+}
