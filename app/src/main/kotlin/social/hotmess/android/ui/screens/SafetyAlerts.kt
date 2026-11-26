@@ -22,13 +22,14 @@ import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.DirectionsCar
+import androidx.compose.material.icons.rounded.DirectionsTransit
+import androidx.compose.material.icons.rounded.People
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Forum
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Shield
-import androidx.compose.material.icons.rounded.VolunteerActivism
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
@@ -86,6 +87,7 @@ import social.hotmess.core.EmergencyNumber
 import social.hotmess.core.HelpHistory
 import social.hotmess.core.HelpVenue
 import social.hotmess.core.HotMessApi
+import social.hotmess.core.RideOptions
 import social.hotmess.core.RidePickup
 import social.hotmess.core.SafetyAlert
 import social.hotmess.core.SafetyAlertDraft
@@ -345,8 +347,12 @@ fun GetHelpScreen(venue: HelpVenue?, alertId: String?, navigator: Navigator) {
     // From a venue's safety poster: straight to "Tell staff quietly", which can send before the app places them there.
     var telling by remember(venue, alertId) { mutableStateOf(venue?.posterCode != null && alertId == null) }
     var addingMore by remember { mutableStateOf(false) }
-    var findingHelp by remember { mutableStateOf(false) }
-    if (findingHelp) ResourcesDialog(focusResourceId = null) { findingHelp = false }
+    var pickingRide by remember { mutableStateOf(false) }
+    // "Need support?": the support lines and the city's resources, with staff's note when they shared it.
+    var supporting by remember { mutableStateOf(false) }
+    var supportNote by remember { mutableStateOf<String?>(null) }
+    if (supporting) ResourcesDialog(focusResourceId = null, sharedNote = supportNote) { supporting = false }
+    val openSupport: (String?) -> Unit = { note -> supportNote = note; supporting = true }
     val haptics = LocalHapticFeedback.current
 
     val context = LocalContext.current
@@ -378,8 +384,17 @@ fun GetHelpScreen(venue: HelpVenue?, alertId: String?, navigator: Navigator) {
         ) {
             TellStaffForm(controller, sending = telling) { telling = false; addingMore = false }
         }
+        pickingRide -> ScreenScaffold(title = "Get a ride", onBack = { pickingRide = false }) {
+            RideOptionsList(controller.rides, controller.pickup, controller.venue?.pickup)
+        }
         alert != null -> ScreenScaffold(title = title, onBack = navigator::back) {
-            AlertStatus(controller, alert, onAddMore = { addingMore = true }, onSupport = { navigator.openSupport(alert.supportNote) })
+            AlertStatus(
+                controller,
+                alert,
+                onAddMore = { addingMore = true },
+                onRide = { pickingRide = true },
+                onSupport = { openSupport(alert.supportNote) },
+            )
         }
         else -> ScreenScaffold(title = title, onBack = navigator::back) {
             Feed {
@@ -391,12 +406,7 @@ fun GetHelpScreen(venue: HelpVenue?, alertId: String?, navigator: Navigator) {
                             }
                             RowDivider()
                         }
-                        EscapeRows(controller) { navigator.openSupport(null) }
-                        // The city's food, shelter, health and support lines, at a venue or away from one.
-                        RowDivider()
-                        HelpRow("Find help nearby", "Food, shelter, health and support in your city.", Icons.Rounded.VolunteerActivism) {
-                            findingHelp = true
-                        }
+                        EscapeRows(controller, onRide = { pickingRide = true }) { openSupport(null) }
                     }
                 }
                 item { EmergencySection() }
@@ -412,7 +422,7 @@ private fun Footnote(text: String) {
 
 /** A row on the Get help screen: an icon on `accent-soft`, a title and a line. */
 @Composable
-private fun HelpRow(title: String, subtitle: String?, icon: ImageVector, enabled: Boolean = true, onClick: () -> Unit) {
+internal fun HelpRow(title: String, subtitle: String?, icon: ImageVector, enabled: Boolean = true, onClick: () -> Unit) {
     RowButton(if (enabled) onClick else null) {
         Box(Modifier.size(36.dp).background(tokens.accentSoft, CircleShape), contentAlignment = Alignment.Center) {
             Icon(icon, contentDescription = null, tint = tokens.accentInk, modifier = Modifier.size(20.dp))
@@ -424,45 +434,64 @@ private fun HelpRow(title: String, subtitle: String?, icon: ImageVector, enabled
     }
 }
 
-/** "Message a friend", "Get a ride" and "Need support?". */
+/**
+ * "Message a friend", "Get a ride" and "Need support?". "Get a ride" is one row that opens the ride apps, transit and
+ * sharing; "Need support?" opens the support lines and the city's resources together.
+ */
 @Composable
-private fun EscapeRows(controller: SafetyAlertController, onSupport: () -> Unit) {
+private fun EscapeRows(controller: SafetyAlertController, onRide: () -> Unit, onSupport: () -> Unit) {
     val context = LocalContext.current
     val venue = controller.venue
     HelpRow("Message a friend", "Send them where you are.", Icons.Rounded.Forum) {
         context.shareText("${venue?.whereIAm.orEmpty()} Can you come find me?".trim())
     }
     RowDivider()
-    RideRows(controller.rides, controller.pickup, venue?.pickup ?: "Pick me up here.")
+    GetARideRow(controller.rides, onRide)
     RowDivider()
-    HelpRow("Need support?", "Free, confidential lines, any time.", Icons.Rounded.Favorite, onClick = onSupport)
+    HelpRow("Need support?", "Someone to talk to, and food, shelter and health nearby.", Icons.Rounded.Favorite, onClick = onSupport)
+}
+
+/** "Get a ride": one row, whatever the region's ride apps; the user picks how after. */
+@Composable
+internal fun GetARideRow(rides: List<SupportRide>, onClick: () -> Unit) {
+    HelpRow("Get a ride", RideOptions.summary(rides), Icons.Rounded.DirectionsCar, onClick = onClick)
 }
 
 /**
- * "Get a ride": a row for each ride app the API lists for the region, with the pickup at the venue or where the
- * phone is, then sharing the pickup for any other app or a friend who can drive. Plain links: the app opens if
- * it's installed, its site if not.
+ * The ways home, picked after "Get a ride": each ride app the API lists for the region with the pickup already set,
+ * transit directions, asking a friend to send a ride (they book it with the user as the rider), and sharing where to
+ * be picked up. Plain links: an app opens if it's installed, its site if not. Nothing here is sent to Hot Mess.
  */
 @Composable
-private fun RideRows(rides: List<SupportRide>, pickup: RidePickup?, shareMessage: String) {
+internal fun RideOptionsList(rides: List<SupportRide>, pickup: RidePickup?, place: String?) {
     val context = LocalContext.current
-    val pickupLine = when {
-        pickup == null -> "Opens the app to set your pickup."
-        pickup.name != null -> "Pickup at ${pickup.name}."
-        else -> "Pickup where you are now."
-    }
-    rides.forEach { ride ->
-        HelpRow("Get a ride with ${ride.name}", pickupLine, Icons.Rounded.DirectionsCar) { context.openUrl(ride.link(pickup)) }
-        RowDivider()
-    }
-    if (rides.isEmpty()) {
-        HelpRow("Get a ride", "Share where to pick you up with a ride app.", Icons.Rounded.DirectionsCar) {
-            context.shareText(shareMessage)
+    Feed {
+        if (rides.isNotEmpty()) {
+            item {
+                DetailSection("Ride apps") {
+                    rides.forEachIndexed { index, ride ->
+                        if (index > 0) RowDivider()
+                        HelpRow(ride.name, RideOptions.pickupLine(pickup), Icons.Rounded.DirectionsCar) { context.openUrl(ride.link(pickup)) }
+                    }
+                }
+            }
         }
-    } else {
-        HelpRow("Share where to pick me up", "For another ride app, or a friend who can drive.", Icons.Rounded.Share) {
-            context.shareText(shareMessage)
+        item {
+            DetailSection("Other ways home", footer = { Footnote("Nothing here is sent to Hot Mess.") }) {
+                HelpRow("Take transit", "Directions by bus or train in Maps.", Icons.Rounded.DirectionsTransit) {
+                    context.openUrl(RideOptions.transitUrl(pickup))
+                }
+                RowDivider()
+                HelpRow("Ask a friend to send a ride", "They book it in their Uber or Lyft, with you as the rider.", Icons.Rounded.People) {
+                    context.shareText(RideOptions.sendMeARide(place, pickup))
+                }
+                RowDivider()
+                HelpRow("Share where to pick me up", "For another ride app, or a friend who can drive.", Icons.Rounded.Share) {
+                    context.shareText(RideOptions.pickMeUp(place, pickup))
+                }
+            }
         }
+        item { EmergencySection() }
     }
 }
 
@@ -570,7 +599,13 @@ private fun time(iso: String?): String? =
 
 /** The alert once sent: steps, what was sent, the private thread, and "I'm OK now"; other ways to get help after 2 minutes. */
 @Composable
-private fun AlertStatus(controller: SafetyAlertController, alert: SafetyAlert, onAddMore: () -> Unit, onSupport: () -> Unit) {
+private fun AlertStatus(
+    controller: SafetyAlertController,
+    alert: SafetyAlert,
+    onAddMore: () -> Unit,
+    onRide: () -> Unit,
+    onSupport: () -> Unit,
+) {
     var confirmingCancel by remember { mutableStateOf(false) }
     var reply by remember { mutableStateOf("") }
 
@@ -590,7 +625,7 @@ private fun AlertStatus(controller: SafetyAlertController, alert: SafetyAlert, o
                 DetailSection("Nobody's picked it up yet", footer = { Footnote("Stay where you feel safest. These can help while you wait.") }) {
                     HelpRow("Tell staff again", "It goes to the managers too.", Icons.Rounded.Refresh, enabled = !controller.busy) { controller.remind() }
                     RowDivider()
-                    EscapeRows(controller, onSupport)
+                    EscapeRows(controller, onRide, onSupport)
                     RowDivider()
                     InfoRow("Keep waiting for staff", onClick = { controller.keepsWaiting = true })
                 }
@@ -733,77 +768,22 @@ private fun Step(title: String, note: String?, state: StepState) {
     }
 }
 
-/**
- * "Need support?": free, confidential crisis and support lines for where the user is, with Call and Text and
- * the numbers written out, then ride apps to get home. 911 comes last. When staff shared it from an alert, their note comes first.
- */
+/** "Talk to someone, any time": the region's crisis and support lines. Part of "Need support?" (ResourcesDialog). */
 @Composable
-fun SupportScreen(sharedNote: String?, navigator: Navigator) {
-    val graph = LocalAppGraph.current
-    val context = LocalContext.current
-    var resources by remember { mutableStateOf<SupportResources?>(null) }
-    var failed by remember { mutableStateOf(false) }
-    var rides by remember { mutableStateOf<List<SupportRide>>(emptyList()) }
-    val position = graph.location.coordinates.value
-    val pickup = position?.let { RidePickup(it.latitude, it.longitude) }
-    val pickupMessage = position
-        ?.let { "Can you pick me up? I'm here: https://maps.google.com/?q=%.6f,%.6f".format(Locale.US, it.latitude, it.longitude) }
-        ?: "Can you pick me up?"
-
-    LaunchedEffect(Unit) {
-        val region = supportRegion(context, position?.latitude, position?.longitude)
-        try {
-            resources = graph.api.supportResources(region)
-            rides = try {
-                graph.api.supportRides(region)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                emptyList()
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            failed = true
-        }
-    }
-
-    ScreenScaffold(title = "Need support?", onBack = navigator::back) {
-        Feed {
-            sharedNote?.takeIf { it.isNotBlank() }?.let { note ->
-                item { DetailSection("A note from the venue") { TextRow(note) } }
-            }
-            item {
-                DetailSection(null) {
-                    TextRow("You don't have to be in crisis to reach out. The people who answer are there to listen.")
-                }
-            }
-            val loaded = resources
-            when {
-                loaded != null -> {
-                    item {
-                        val checked = loaded.checkedDate?.let { DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).format(it) }
-                        DetailSection(
-                            "Talk to someone, any time",
-                            footer = { Footnote(if (checked != null) "Numbers for ${loaded.name}, last checked $checked." else "Numbers for ${loaded.name}.") },
-                        ) {
-                            loaded.lines.forEachIndexed { index, line ->
-                                if (index > 0) RowDivider()
-                                SupportLineRow(line, first = index == 0)
-                            }
-                        }
-                    }
-                    if (rides.isNotEmpty()) {
-                        item { DetailSection("Get home safe") { RideRows(rides, pickup, pickupMessage) } }
-                    }
-                    item { EmergencySection(loaded.emergency) }
-                }
-                failed -> {
-                    item { DetailSection(null) { TextRow("Couldn't load support lines. In the US, call or text 988 any time.") } }
-                    item { EmergencySection() }
-                }
-                else -> item { DetailSection(null) { EmptyRow("Loading…") } }
-            }
+internal fun SupportLinesSection(resources: SupportResources) {
+    val checked = resources.checkedDate?.let { DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).format(it) }
+    DetailSection(
+        "Talk to someone, any time",
+        footer = {
+            Footnote(
+                "You don't have to be in crisis to reach out. " +
+                    if (checked != null) "Numbers for ${resources.name}, last checked $checked." else "Numbers for ${resources.name}.",
+            )
+        },
+    ) {
+        resources.lines.forEachIndexed { index, line ->
+            if (index > 0) RowDivider()
+            SupportLineRow(line, first = index == 0)
         }
     }
 }
@@ -834,7 +814,7 @@ private fun SupportLineRow(line: SupportLine, first: Boolean) {
 }
 
 /** Where the user is as ISO 3166-2 (US-UT) when the phone can tell from their position, else their country. */
-private suspend fun supportRegion(context: Context, latitude: Double?, longitude: Double?): String? {
+internal suspend fun supportRegion(context: Context, latitude: Double?, longitude: Double?): String? {
     val country = Locale.getDefault().country.takeIf { it.isNotBlank() }
     if (latitude == null || longitude == null || !Geocoder.isPresent()) return country
     return withContext(Dispatchers.IO) {
