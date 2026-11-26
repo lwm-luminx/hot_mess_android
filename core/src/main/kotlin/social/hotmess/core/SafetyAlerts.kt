@@ -60,7 +60,27 @@ data class SafetyAlertMessage(
     val fromStaff: Boolean = false,
     val senderName: String = "",
     val createdAt: String? = null,
+    /** A place a responder or the staff on shift shared from the community resources; its details are in [body] too. */
+    val resource: SharedResource? = null,
 )
+
+/** A shelter, a food bank, a clinic or a line shared in an alert's thread. [sensitive] ones (DV, stalking) are never kept in [HelpHistory]. */
+@Serializable
+data class SharedResource(
+    val id: String,
+    val title: String,
+    val phone: String? = null,
+    val textNumber: String? = null,
+    val address: String? = null,
+    val url: String? = null,
+    val intakeNote: String? = null,
+    val sensitive: Boolean = false,
+) {
+    val callUri: String? get() = phone?.filter { it.isDigit() || it == '+' }?.ifEmpty { null }?.let { "tel:$it" }
+    val textUri: String? get() = textNumber?.filter { it.isDigit() || it == '+' }?.ifEmpty { null }?.let { "sms:$it" }
+    /** The address in maps, without the place's name. */
+    val mapUri: String? get() = address?.takeIf { it.isNotBlank() }?.let { "geo:0,0?q=" + URLEncoder.encode(it, "UTF-8") }
+}
 
 /** `SafetyAlertState`; anything newer reads as [UNKNOWN] thanks to `coerceInputValues`. */
 @Serializable
@@ -216,7 +236,8 @@ data class HelpVenue(
 internal object SafetyAlertDocuments {
     private const val ALERT = "id state place concerns description summary seen acknowledgedByName acknowledgedAt " +
         "escalatedAt closedAt supportSharedAt supportNote createdAt venue { id name } " +
-        "messages { id body fromStaff senderName createdAt }"
+        "messages { id body fromStaff senderName createdAt " +
+        "resource { id title phone textNumber address url intakeNote sensitive } }"
 
     val VENUE_SAFETY: String = """
         query VenueSafety(${'$'}id: ID!) {
