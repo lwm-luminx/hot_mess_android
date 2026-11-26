@@ -463,7 +463,7 @@ private fun Context.shareText(text: String) {
 
 /** "In danger right now? Call 911" (or the local number): the one red thing, always last. */
 @Composable
-private fun EmergencySection(number: String = EmergencyNumber.current) {
+internal fun EmergencySection(number: String = EmergencyNumber.current) {
     val context = LocalContext.current
     DetailSection("In danger right now?", footer = { Footnote("Hot Mess isn't a crisis service. In an emergency, call $number.") }) {
         Surface(color = tokens.dangerSoft, modifier = Modifier.fillMaxWidth()) {
