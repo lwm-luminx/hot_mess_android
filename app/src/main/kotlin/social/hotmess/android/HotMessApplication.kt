@@ -100,6 +100,9 @@ class AppGraph(
         context.applicationContext, audienceKit, configuration.audienceId ?: "hotmess", scope,
     )
 
+    /** Help requests and the places shared in them, kept on this phone only (out of backups), with a Clear button. */
+    val helpHistory = social.hotmess.core.HelpHistory(java.io.File(context.applicationContext.noBackupFilesDir, "help-history.json"))
+
     /** The user's tribes and whether the API has them; chat shows who shares one only when it does. */
     val tribes = TribeStore(api)
 
@@ -163,6 +166,7 @@ class AppGraph(
                         api.friends.clear()
                         notifications.clear()
                         safety.clear()
+                        helpHistory.clear()
                         listings.clear()
                         ongoing.clear()
                         scope.launch { social.hotmess.android.widget.TonightStore.clear(context.applicationContext) }

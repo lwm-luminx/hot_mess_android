@@ -8,22 +8,33 @@ import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Chat
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.Forum
+import androidx.compose.material.icons.rounded.Hotel
 import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.LocalHospital
 import androidx.compose.material.icons.rounded.Map
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Phone
+import androidx.compose.material.icons.rounded.Restaurant
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.SupportAgent
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -31,6 +42,8 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -43,8 +56,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -282,6 +299,8 @@ fun ResourcesDialog(focusResourceId: String?, onClose: () -> Unit) {
     val failed by settings.directoryFailed.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var need by remember { mutableStateOf<ResourceNeed?>(null) }
+    // Typed and matched on this phone only; it isn't saved, so closing the dialog forgets it.
+    var search by remember { mutableStateOf("") }
     var opened by remember { mutableStateOf<CommunityResource?>(null) }
     var focused by remember { mutableStateOf(false) }
     LaunchedEffect(locale?.id) { settings.prefetchDirectory(locale?.id) }
@@ -296,6 +315,7 @@ fun ResourcesDialog(focusResourceId: String?, onClose: () -> Unit) {
 
     val leaveNow: () -> Unit = {
         need = null
+        search = ""
         opened = null
         onClose()
         context.findActivity()?.moveTaskToBack(true)
@@ -322,69 +342,150 @@ fun ResourcesDialog(focusResourceId: String?, onClose: () -> Unit) {
                 val loaded = directory
                 when {
                     resource != null -> ResourceDetail(resource, loaded?.advocacy.orEmpty())
-                    loaded != null -> ResourceList(loaded, need, { need = it }) { opened = it }
+                    loaded != null -> ResourceList(loaded, need, search, { need = it }, { search = it }) { opened = it }
                     locale == null -> Feed { item { DetailSection { EmptyRow("Choose a city first. Resources are listed by city.") } } }
                     failed -> Feed {
                         item {
                             DetailSection {
-                                EmptyRow("Couldn't load resources. In danger right now? Call your local emergency number.")
+                                EmptyRow("Couldn't load resources. Check your connection and try again. The emergency number below works without it.")
                                 RowDivider()
                                 InfoRow("Try again", onClick = { settings.retry(locale?.id) })
                             }
                         }
+                        item { EmergencySection() }
                     }
-                    else -> Feed { item { DetailSection { EmptyRow("Loading…") } } }
+                    else -> Feed {
+                        item { DetailSection { EmptyRow("Loading help near you…") } }
+                        item { EmergencySection() }
+                    }
                 }
             }
         }
     }
 }
 
+/**
+ * The list, in order of urgency: the needs (short labels from the server, only the ones with something listed here),
+ * a search, then crisis lines with a call button on the row, then everything else, then the emergency number. No state
+ * is a dead end: an empty search still offers the crisis lines and a way back.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ResourceList(
     directory: CommunityDirectory,
     need: ResourceNeed?,
+    search: String,
     choose: (ResourceNeed?) -> Unit,
+    onSearch: (String) -> Unit,
     open: (CommunityResource) -> Unit,
 ) {
-    val resources = need?.let(directory::resourcesFor) ?: directory.resources
+    val results = remember(directory, need, search) { ResourceBrowser.results(directory, need, search) }
+    val needs = remember(directory) { ResourceBrowser.offeredNeeds(directory) }
+    val browsing = need == null && search.isBlank()
     Feed {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(Space.s2)) {
-                Text("I need…", style = HotMessType.subheading, color = tokens.ink)
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Space.s2)) {
+                Text("I need…", style = HotMessType.subheading, color = tokens.ink, modifier = Modifier.semantics { heading() })
+                // Wraps, so every choice is on screen without scrolling sideways.
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.s2)) {
                     FilterChip(selected = need == null, onClick = { choose(null) }, label = { Text("Everything") })
-                    directory.needs.forEach { choice ->
-                        FilterChip(selected = need?.key == choice.key, onClick = { choose(choice) }, label = { Text(choice.label) })
+                    needs.forEach { choice ->
+                        FilterChip(
+                            selected = need?.key == choice.key,
+                            onClick = { choose(choice) },
+                            label = { Text(choice.label) },
+                            modifier = Modifier.testTag("resources.need.${choice.key}"),
+                        )
                     }
                 }
+                OutlinedTextField(
+                    value = search,
+                    onValueChange = onSearch,
+                    placeholder = { Text("Search this list") },
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (search.isNotEmpty()) {
+                            IconButton(onClick = { onSearch("") }) { Icon(Icons.Rounded.Close, contentDescription = "Clear search") }
+                        }
+                    },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    modifier = Modifier.fillMaxWidth().testTag("resources.search"),
+                )
                 Text(
-                    "This list is for ${directory.locale.name} and is filtered on your phone. What you choose here isn't sent anywhere.",
+                    "For ${directory.locale.name}. Filtered on your phone: what you tap or type here isn't sent anywhere.",
                     style = HotMessType.bodySmall,
                     color = tokens.inkMuted,
                 )
             }
         }
-        item {
-            DetailSection {
-                if (resources.isEmpty()) EmptyRow("Nothing listed for this yet in ${directory.locale.name}.")
-                resources.forEachIndexed { index, resource ->
-                    if (index > 0) RowDivider()
-                    val details = listOfNotNull(ResourceWords.nextSummary(resource), ResourceWords.badges(resource).joinToString(" · ").ifEmpty { null })
-                    InfoRow(resource.title, details.joinToString("\n").ifEmpty { null }, onClick = { open(resource) })
+        when {
+            results.isEmpty -> {
+                item {
+                    DetailSection {
+                        EmptyRow("Nothing listed here matches that. Try another word, or see everything in ${directory.locale.name}.")
+                        RowDivider()
+                        InfoRow("Show everything", onClick = {
+                            choose(null)
+                            onSearch("")
+                        })
+                    }
                 }
+                // Never a dead end: the crisis lines are still here.
+                val lines = ResourceBrowser.urgent(directory.resources)
+                if (lines.isNotEmpty()) item { ResourceSection("Help right now", lines, open) }
             }
+            browsing && results.urgent.isNotEmpty() -> {
+                item { ResourceSection("Help right now", results.urgent, open) }
+                if (results.rest.isNotEmpty()) item { ResourceSection("More in ${directory.locale.name}", results.rest, open) }
+            }
+            else -> item { ResourceSection(need?.label ?: "Results", results.urgent + results.rest, open) }
         }
-        item {
-            Text(
-                "In danger right now? Call your local emergency number.",
-                style = HotMessType.bodySmall,
-                color = tokens.inkMuted,
-            )
+        item { EmergencySection() }
+    }
+}
+
+@Composable
+private fun ResourceSection(title: String, resources: List<CommunityResource>, open: (CommunityResource) -> Unit) {
+    DetailSection(title) {
+        resources.forEachIndexed { index, resource ->
+            if (index > 0) RowDivider()
+            ResourceRow(resource) { open(resource) }
         }
     }
 }
 
+/**
+ * A resource in the list: what it is, its title (neutral for DV and stalking), when it's next on and who it's for,
+ * with a call button of its own so the number is one tap from the list.
+ */
+@Composable
+private fun ResourceRow(resource: CommunityResource, open: () -> Unit) {
+    val context = LocalContext.current
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = open).padding(horizontal = Space.s4, vertical = Space.s3),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Space.s3),
+    ) {
+        Icon(ResourceBrowser.icon(resource), contentDescription = null, tint = tokens.inkMuted, modifier = Modifier.size(24.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(resource.title, style = HotMessType.subheading, color = tokens.ink)
+            val about = ResourceBrowser.kinds(resource) + ResourceWords.badges(resource)
+            if (about.isNotEmpty()) Text(about.joinToString(" · "), style = HotMessType.bodySmall, color = tokens.inkMuted)
+            ResourceWords.nextSummary(resource)?.let { Text(it, style = HotMessType.caption, color = tokens.inkMuted) }
+        }
+        resource.phone?.let(ResourceBrowser::dialUri)?.let { uri ->
+            IconButton(
+                onClick = { context.startSafely(Intent(Intent.ACTION_DIAL, Uri.parse(uri))) },
+                modifier = Modifier.size(48.dp).background(tokens.accentSoft, CircleShape),
+            ) {
+                Icon(Icons.Rounded.Phone, contentDescription = "Call ${resource.title}", tint = tokens.accentInk)
+            }
+        }
+    }
+}
+
+/** A resource's page: how to reach it first, then when and where. */
 @Composable
 private fun ResourceDetail(resource: CommunityResource, advocacy: List<String>) {
     val context = LocalContext.current
@@ -392,35 +493,45 @@ private fun ResourceDetail(resource: CommunityResource, advocacy: List<String>) 
         item {
             Column(verticalArrangement = Arrangement.spacedBy(Space.s1)) {
                 // The page names it; the title bar keeps the neutral title.
-                Text(resource.name, style = HotMessType.title, color = tokens.ink)
+                Text(resource.name, style = HotMessType.title, color = tokens.ink, modifier = Modifier.semantics { heading() })
                 resource.description?.takeIf { it.isNotBlank() }?.let { Text(it, style = HotMessType.body, color = tokens.inkMuted) }
-                ResourceWords.badges(resource).takeIf { it.isNotEmpty() }?.let {
+                (ResourceBrowser.kinds(resource) + ResourceWords.badges(resource)).takeIf { it.isNotEmpty() }?.let {
                     Text(it.joinToString(" · "), style = HotMessType.label, color = tokens.ink)
                 }
                 resource.intakeNote?.takeIf { it.isNotBlank() }?.let { Text(it, style = HotMessType.bodySmall, color = tokens.ink) }
             }
         }
-        if (resource.sensitive && advocacy.isNotEmpty()) {
-            item { DetailSection { advocacy.forEach { Text(it, style = HotMessType.body, modifier = Modifier.padding(Space.s4)) } } }
-        }
         item {
-            DetailSection("Get in touch") {
+            Column(verticalArrangement = Arrangement.spacedBy(Space.s2)) {
                 resource.phone?.let { phone ->
-                    InfoRow(phone, icon = Icons.Rounded.Phone, onClick = { context.startSafely(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${phone.filter(Char::isDigit)}"))) })
+                    ResourceBrowser.dialUri(phone)?.let { uri ->
+                        Button(
+                            onClick = { context.startSafely(Intent(Intent.ACTION_DIAL, Uri.parse(uri))) },
+                            modifier = Modifier.fillMaxWidth().testTag("resource.call"),
+                        ) {
+                            Icon(Icons.Rounded.Phone, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Text("Call ${ResourceBrowser.phoneText(phone)}", modifier = Modifier.padding(start = Space.s2))
+                        }
+                    }
                 }
                 resource.textNumber?.let { text ->
-                    RowDivider()
-                    InfoRow("Text $text", icon = Icons.AutoMirrored.Rounded.Chat, onClick = { context.startSafely(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${text.filter(Char::isDigit)}"))) })
-                }
-                resource.url?.takeIf { it.startsWith("https://") }?.let { url ->
-                    RowDivider()
-                    InfoRow("Website", icon = Icons.Rounded.Language, onClick = { context.openHttps(url) })
+                    ResourceBrowser.dialUri(text, "smsto")?.let { uri ->
+                        ResourceAction("Text ${ResourceBrowser.phoneText(text)}", Icons.AutoMirrored.Rounded.Chat) {
+                            context.startSafely(Intent(Intent.ACTION_SENDTO, Uri.parse(uri)))
+                        }
+                    }
                 }
                 if (resource.address != null || (resource.latitude != null && resource.longitude != null)) {
-                    RowDivider()
-                    InfoRow(resource.address ?: "Directions", icon = Icons.Rounded.Map, onClick = { context.startSafely(directions(resource)) })
+                    ResourceAction("Directions", Icons.Rounded.Map) { context.startSafely(directions(resource)) }
                 }
+                resource.url?.takeIf { it.startsWith("https://") }?.let { url ->
+                    ResourceAction("Website", Icons.Rounded.Language) { context.openHttps(url) }
+                }
+                resource.address?.let { Text(it, style = HotMessType.bodySmall, color = tokens.inkMuted) }
             }
+        }
+        if (resource.sensitive && advocacy.isNotEmpty()) {
+            item { DetailSection { advocacy.forEach { Text(it, style = HotMessType.body, modifier = Modifier.padding(Space.s4)) } } }
         }
         if (resource.hours.isNotEmpty()) {
             item { DetailSection("Hours") { SlotRows(resource.hours) } }
@@ -442,6 +553,15 @@ private fun ResourceDetail(resource: CommunityResource, advocacy: List<String>) 
                 }
             }
         }
+        item { EmergencySection() }
+    }
+}
+
+@Composable
+private fun ResourceAction(text: String, icon: ImageVector, onClick: () -> Unit) {
+    OutlinedButton(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
+        Text(text, modifier = Modifier.padding(start = Space.s2))
     }
 }
 
@@ -500,6 +620,84 @@ fun FlyerCategoriesSection() {
     }
 }
 
+/**
+ * How the resource browser filters, orders and names things. All of it runs on the phone over the directory already
+ * fetched: nothing here asks the server for anything.
+ */
+object ResourceBrowser {
+    /** Crisis and any-time lines carry this facet; they lead the list. */
+    const val URGENT_FACET = "crisis"
+
+    data class Results(val urgent: List<CommunityResource>, val rest: List<CommunityResource>) {
+        val isEmpty: Boolean get() = urgent.isEmpty() && rest.isEmpty()
+    }
+
+    /** The needs with at least one resource in this city, so no chip leads to an empty list. */
+    fun offeredNeeds(directory: CommunityDirectory): List<ResourceNeed> =
+        directory.needs.filter { directory.resourcesFor(it).isNotEmpty() }
+
+    fun urgent(resources: List<CommunityResource>): List<CommunityResource> = resources.filter { it.has(URGENT_FACET) }
+
+    /** The resources for a need and a search, crisis lines apart from the rest, each in the server's order. */
+    fun results(directory: CommunityDirectory, need: ResourceNeed?, search: String): Results {
+        val words = search.trim().lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
+        val found = (need?.let(directory::resourcesFor) ?: directory.resources).filter { matches(it, words) }
+        return Results(urgent(found), found.filterNot { it.has(URGENT_FACET) })
+    }
+
+    /** Every word is somewhere in its title, name, description, kinds, badges or address. */
+    fun matches(resource: CommunityResource, words: List<String>): Boolean {
+        if (words.isEmpty()) return true
+        val text = (listOfNotNull(resource.title, resource.name, resource.description, resource.address) +
+            kinds(resource) + ResourceWords.badges(resource)).joinToString(" ").lowercase()
+        return words.all { it in text }
+    }
+
+    private val kindFacets = listOf(
+        "crisis" to "Crisis support",
+        "food" to "Food",
+        "shelter" to "Shelter",
+        "health-coverage" to "Health coverage",
+        "sti-testing" to "Testing",
+        "mental-health" to "Mental health",
+    )
+
+    /**
+     * What it offers, in a word or two. A DV or stalking resource says nothing here: its neutral title is all a glance
+     * at the list should give away.
+     */
+    fun kinds(resource: CommunityResource): List<String> =
+        if (resource.sensitive) emptyList() else kindFacets.filter { resource.has(it.first) }.map { it.second }
+
+    /** The row's icon, by the most urgent thing it offers. Sensitive resources get the same one as any other line. */
+    fun icon(resource: CommunityResource): ImageVector = when {
+        resource.sensitive || resource.has("crisis") -> Icons.Rounded.SupportAgent
+        resource.has("food") -> Icons.Rounded.Restaurant
+        resource.has("shelter") -> Icons.Rounded.Hotel
+        resource.has("health-coverage") || resource.has("sti-testing") -> Icons.Rounded.LocalHospital
+        resource.has("mental-health") -> Icons.Rounded.Forum
+        else -> Icons.Rounded.Favorite
+    }
+
+    /** A tel: (or smsto:) link for a number as the API stores it: digits, maybe a leading +. */
+    fun dialUri(number: String, scheme: String = "tel"): String? {
+        val digits = number.filter { it in '0'..'9' }
+        if (digits.isEmpty()) return null
+        return "$scheme:${if (number.startsWith("+")) "+" else ""}$digits"
+    }
+
+    /** A number for reading: North American numbers as (801) 264-9999, anything else as stored. */
+    fun phoneText(number: String): String {
+        val digits = number.filter { it in '0'..'9' }
+        val national = when {
+            digits.length == 11 && digits.startsWith("1") && (number.startsWith("+1") || !number.startsWith("+")) -> digits.drop(1)
+            digits.length == 10 && !number.startsWith("+") -> digits
+            else -> return number
+        }
+        return "(${national.take(3)}) ${national.substring(3, 6)}-${national.takeLast(4)}"
+    }
+}
+
 /** Words for when a resource is on, and who it's for. */
 object ResourceWords {
     private val badgeFacets = listOf(
@@ -515,7 +713,7 @@ object ResourceWords {
     /** "Thursday · 10:00–14:00" style, with "Every day". Days are 0 (Sunday) to 6. */
     fun describe(slot: ResourceSlot, locale: Locale = Locale.getDefault()): String {
         val names = DateFormatSymbols.getInstance(locale).weekdays // index 1 = Sunday
-        val days = if (slot.days.isEmpty()) "Every day" else slot.days.sorted().mapNotNull { names.getOrNull(it + 1) }.joinToString(", ")
+        val days = dayText(slot.days, locale)
         val from = slot.from?.let { clock(it, locale) }
         val until = slot.until?.let { clock(it, locale) }
         return when {
@@ -524,6 +722,16 @@ object ResourceWords {
             until != null -> "$days · until $until"
             else -> days
         }
+    }
+
+    /** "Every day", "Thursday", "Monday–Friday" (three or more days in a row) or "Tuesday, Thursday". */
+    fun dayText(days: List<Int>, locale: Locale = Locale.getDefault()): String {
+        val names = DateFormatSymbols.getInstance(locale).weekdays // index 1 = Sunday
+        val sorted = days.distinct().sorted().filter { it in 0..6 }
+        if (sorted.isEmpty() || sorted.size == 7) return "Every day"
+        val inARow = sorted.zipWithNext().all { (a, b) -> b == a + 1 }
+        if (inARow && sorted.size > 2) return "${names[sorted.first() + 1]}–${names[sorted.last() + 1]}"
+        return sorted.joinToString(", ") { names[it + 1] }
     }
 
     fun nextSummary(resource: CommunityResource, now: OffsetDateTime = OffsetDateTime.now()): String? {

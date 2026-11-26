@@ -38,6 +38,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -82,6 +83,7 @@ import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
 import social.hotmess.core.ApiError
 import social.hotmess.core.EmergencyNumber
+import social.hotmess.core.HelpHistory
 import social.hotmess.core.HelpVenue
 import social.hotmess.core.HotMessApi
 import social.hotmess.core.RidePickup
@@ -90,6 +92,7 @@ import social.hotmess.core.SafetyAlertDraft
 import social.hotmess.core.SafetyAlertState
 import social.hotmess.core.SafetyConcern
 import social.hotmess.core.SafetyPlace
+import social.hotmess.core.SharedResource
 import social.hotmess.core.Venue
 import social.hotmess.core.SupportLine
 import social.hotmess.core.SupportResources
@@ -108,7 +111,13 @@ import java.util.Locale
  * One Get help screen's state: what the user fills in, the alert once it's sent, and keeping it fresh. There's
  * no subscription for alerts, so it reads the alert again every few seconds while the screen is open.
  */
-class SafetyAlertController(private val api: HotMessApi, private val scope: CoroutineScope, venue: HelpVenue?, alertId: String?) {
+class SafetyAlertController(
+    private val api: HotMessApi,
+    private val scope: CoroutineScope,
+    venue: HelpVenue?,
+    alertId: String?,
+    private val history: HelpHistory? = null,
+) {
     var venue by mutableStateOf(venue)
         private set
     var alert by mutableStateOf<SafetyAlert?>(null)
@@ -224,6 +233,7 @@ class SafetyAlertController(private val api: HotMessApi, private val scope: Coro
     private fun apply(fresh: SafetyAlert) {
         if (alert?.state == SafetyAlertState.OPEN && fresh.state == SafetyAlertState.ACKNOWLEDGED) pickedUp += 1
         alert = fresh
+        history?.record(fresh)
         if (venue == null) venue = HelpVenue(fresh.venue.id, fresh.venue.name ?: "the venue")
     }
 
@@ -331,7 +341,7 @@ private fun HeroPill(text: String, icon: ImageVector, onClick: () -> Unit) {
 fun GetHelpScreen(venue: HelpVenue?, alertId: String?, navigator: Navigator) {
     val graph = LocalAppGraph.current
     val scope = rememberCoroutineScope()
-    val controller = remember(venue, alertId) { SafetyAlertController(graph.api, scope, venue, alertId) }
+    val controller = remember(venue, alertId) { SafetyAlertController(graph.api, scope, venue, alertId, graph.helpHistory) }
     // From a venue's safety poster: straight to "Tell staff quietly", which can send before the app places them there.
     var telling by remember(venue, alertId) { mutableStateOf(venue?.posterCode != null && alertId == null) }
     var addingMore by remember { mutableStateOf(false) }
@@ -463,7 +473,7 @@ private fun Context.shareText(text: String) {
 
 /** "In danger right now? Call 911" (or the local number): the one red thing, always last. */
 @Composable
-private fun EmergencySection(number: String = EmergencyNumber.current) {
+internal fun EmergencySection(number: String = EmergencyNumber.current) {
     val context = LocalContext.current
     DetailSection("In danger right now?", footer = { Footnote("Hot Mess isn't a crisis service. In an emergency, call $number.") }) {
         Surface(color = tokens.dangerSoft, modifier = Modifier.fillMaxWidth()) {
@@ -651,6 +661,7 @@ private fun AlertStatus(controller: SafetyAlertController, alert: SafetyAlert, o
                                         .background(if (message.fromStaff) tokens.controlFill else tokens.accentSoft, Radius.bubble)
                                         .padding(horizontal = 12.dp, vertical = 8.dp),
                                 )
+                                message.resource?.let { SharedResourceButtons(it) }
                             }
                         }
                         if (alert.isActive) {
@@ -853,19 +864,33 @@ private val US_STATES = mapOf(
     "Virginia" to "VA", "Washington" to "WA", "West Virginia" to "WV", "Wisconsin" to "WI", "Wyoming" to "WY",
 )
 
-/** Me > Your safety alerts: still open, and closed in the last day. Each opens its Get help screen. */
+/**
+ * Me > Your safety alerts: still open, and closed in the last day. Each opens its Get help screen. Below them, Help
+ * history: what the user asked for help with and the places shared with them, kept on this phone ([HelpHistory]).
+ */
 @Composable
 fun SafetyAlertsScreen(navigator: Navigator) {
     val graph = LocalAppGraph.current
     var alerts by remember { mutableStateOf<List<SafetyAlert>?>(null) }
+    val history by graph.helpHistory.entries.collectAsState()
+    var confirmingClear by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         alerts = try {
-            graph.api.safetyAlerts()
+            graph.api.safetyAlerts().also(graph.helpHistory::record)
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
             emptyList()
         }
+    }
+    if (confirmingClear) {
+        AlertDialog(
+            onDismissRequest = { confirmingClear = false },
+            title = { Text("Clear your help history?") },
+            text = { Text("This removes every request and shared place from this phone. Open alerts stay open.") },
+            confirmButton = { TextButton(onClick = { confirmingClear = false; graph.helpHistory.clear() }) { Text("Clear history") } },
+            dismissButton = { TextButton(onClick = { confirmingClear = false }) { Text("Keep it") } },
+        )
     }
     ScreenScaffold(title = "Your safety alerts", onBack = navigator::back) {
         Feed {
@@ -886,7 +911,49 @@ fun SafetyAlertsScreen(navigator: Navigator) {
                     }
                 }
             }
+            item {
+                DetailSection("Help history") {
+                    if (history.isEmpty()) {
+                        EmptyRow("Places people share with you when you ask for help are saved here, on this phone only, so you can find them later.")
+                    } else {
+                        history.forEachIndexed { index, entry ->
+                            if (index > 0) RowDivider()
+                            Column(Modifier.fillMaxWidth().padding(DetailRowPadding), verticalArrangement = Arrangement.spacedBy(Space.s2)) {
+                                Text(
+                                    listOfNotNull(entry.venueName ?: "Help request", time(entry.createdAt)).joinToString(" · "),
+                                    style = HotMessType.bodySmall, color = tokens.inkMuted,
+                                )
+                                if (entry.summary.isNotBlank()) Text(entry.summary, style = HotMessType.body, color = tokens.ink)
+                                entry.resources.forEach { resource ->
+                                    Text(resource.title, style = HotMessType.heading, color = tokens.ink)
+                                    resource.intakeNote?.takeIf { it.isNotBlank() }?.let {
+                                        Text(it, style = HotMessType.bodySmall, color = tokens.inkMuted)
+                                    }
+                                    SharedResourceButtons(resource)
+                                }
+                            }
+                        }
+                        RowDivider()
+                        Column(Modifier.fillMaxWidth().padding(DetailRowPadding)) {
+                            SecondaryButton("Clear history", onClick = { confirmingClear = true })
+                        }
+                    }
+                }
+            }
+            item { Footnote("Help history is kept on this phone only. Signing out clears it too.") }
         }
+    }
+}
+
+/** Call, Text, Map and Website for a place shared in a help request, in its thread and in Help history. */
+@Composable
+private fun SharedResourceButtons(resource: SharedResource) {
+    val context = LocalContext.current
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.s2)) {
+        resource.callUri?.let { uri -> SecondaryButton("Call", onClick = { context.openUrl(uri) }) }
+        resource.textUri?.let { uri -> SecondaryButton("Text", onClick = { context.openUrl(uri) }) }
+        resource.mapUri?.let { uri -> SecondaryButton("Map", onClick = { context.openUrl(uri) }) }
+        resource.url?.takeIf { it.isNotBlank() }?.let { url -> SecondaryButton("Website", onClick = { context.openUrl(url) }) }
     }
 }
 
