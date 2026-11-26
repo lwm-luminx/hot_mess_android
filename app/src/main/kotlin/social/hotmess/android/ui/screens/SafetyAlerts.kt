@@ -4,6 +4,9 @@ import android.content.Context
 import android.content.Intent
 import android.location.Geocoder
 import android.net.Uri
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -12,6 +15,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -606,6 +611,7 @@ private fun time(iso: String?): String? =
     iso?.let { runCatching { timeFormat.format(Instant.parse(it).atZone(ZoneId.systemDefault())) }.getOrNull() }
 
 /** The alert once sent: steps, what was sent, the private thread, and "I'm OK now"; other ways to get help after 2 minutes. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AlertStatus(
     controller: SafetyAlertController,
@@ -616,6 +622,11 @@ private fun AlertStatus(
 ) {
     var confirmingCancel by remember { mutableStateOf(false) }
     var reply by remember { mutableStateOf("") }
+    // Opens at the newest line of the thread and follows new ones, like any chat.
+    val threadEnd = remember { BringIntoViewRequester() }
+    LaunchedEffect(alert.id, alert.messages.size) {
+        if (alert.messages.isNotEmpty()) runCatching { threadEnd.bringIntoView() }
+    }
 
     if (confirmingCancel) {
         AlertDialog(
@@ -724,6 +735,7 @@ private fun AlertStatus(
                                 }
                             }
                         }
+                        Spacer(Modifier.height(1.dp).bringIntoViewRequester(threadEnd))
                     }
                 }
             }
