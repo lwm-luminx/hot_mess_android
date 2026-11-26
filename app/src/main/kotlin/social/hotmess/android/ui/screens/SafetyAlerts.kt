@@ -400,8 +400,16 @@ fun GetHelpScreen(venue: HelpVenue?, alertId: String?, navigator: Navigator) {
             Feed {
                 item {
                     DetailSection(null, footer = { Footnote("Nothing here shows in chat or on your profile.") }) {
-                        if (controller.venue != null && (controller.staffOnShift || controller.venue?.posterCode != null)) {
-                            HelpRow("Tell staff I feel unsafe", "The staff on shift hear it quietly and can come find you.", Icons.Rounded.Shield) {
+                        // Always offered at a venue: with nobody on shift the alert goes to the managers (and the area's
+                        // safety responders).
+                        if (controller.venue != null) {
+                            val onShift = controller.staffOnShift || controller.venue?.posterCode != null
+                            HelpRow(
+                                "Contact staff",
+                                if (onShift) "Tell them quietly you feel unsafe. The staff on shift can come find you."
+                                else "Nobody has alerts on right now, so it goes to the managers. Finding staff in person may be faster.",
+                                Icons.Rounded.Shield,
+                            ) {
                                 telling = true
                             }
                             RowDivider()
