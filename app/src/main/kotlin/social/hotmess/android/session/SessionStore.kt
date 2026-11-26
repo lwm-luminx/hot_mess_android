@@ -416,15 +416,14 @@ class SessionStore(
         /** The app's own preferences (the remembered locale and the like). */
         const val PREFERENCES = "social.hotmess.preferences"
 
-        /** Permissions Meta's App Review approved for everyone on the production Hot Mess app. */
-        val APPROVED_PERMISSIONS = listOf("public_profile", "openid")
+        /** Permissions Meta's App Review approved for everyone on the production Hot Mess app (email: 2026-11-26). */
+        val APPROVED_PERMISSIONS = listOf("public_profile", "openid", "email")
 
         /**
-         * Permissions App Review turned down on the production Hot Mess app (twice): email, and user_friends
-         * (friends who also use the app at the same venue). Without them everyone's friends list is empty and no
-         * email comes from Facebook.
+         * Permissions App Review turned down on the production Hot Mess app: user_friends (friends who also use the
+         * app at the same venue). Without it everyone's friends list is empty.
          */
-        val REVIEW_PENDING_PERMISSIONS = listOf("email", "user_friends")
+        val REVIEW_PENDING_PERMISSIONS = listOf("user_friends")
 
         /**
          * Whether sign-in also asks for [REVIEW_PENDING_PERMISSIONS]: only debug builds and emulators, so the friends

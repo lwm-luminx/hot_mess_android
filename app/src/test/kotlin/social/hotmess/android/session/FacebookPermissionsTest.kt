@@ -8,12 +8,12 @@ import org.junit.Test
 
 class FacebookPermissionsTest {
     @Test
-    fun playBuildsAskOnlyForApprovedPermissions() {
-        assertEquals(listOf("public_profile", "openid"), SessionStore.permissions(asksForReviewed = false))
+    fun playBuildsAskOnlyForApprovedPermissionsIncludingEmail() {
+        assertEquals(listOf("public_profile", "openid", "email"), SessionStore.permissions(asksForReviewed = false))
     }
 
     @Test
-    fun debugAndEmulatorBuildsAlsoAskForEmailAndFriends() {
+    fun debugAndEmulatorBuildsAlsoAskForFriends() {
         assertEquals(
             listOf("public_profile", "openid", "email", "user_friends"),
             SessionStore.permissions(asksForReviewed = true),
@@ -29,7 +29,10 @@ class FacebookPermissionsTest {
 
     @Test
     fun fallsBackToTheBuiltInListsWithoutBranding() {
-        assertEquals(listOf("public_profile", "openid"), SessionStore.permissions(null, asksForReviewed = false))
+        assertEquals(
+            listOf("public_profile", "openid", "email"),
+            SessionStore.permissions(null, asksForReviewed = false),
+        )
         assertEquals(
             listOf("public_profile", "openid", "email", "user_friends"),
             SessionStore.permissions(Branding.FacebookScopes(), asksForReviewed = true),
