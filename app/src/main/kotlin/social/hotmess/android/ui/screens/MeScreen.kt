@@ -469,12 +469,10 @@ fun MeScreen(navigator: Navigator) {
                 }
             }
             // "Need support?" is here whether or not the user is out; a venue's Get help only on the venue they're at.
+            // One entry: the support lines and the city's food, shelter and health resources, filtered on the phone.
             item {
                 DetailSection("Help and safety") {
-                    InfoRow("Need support?", icon = Icons.Rounded.Favorite, onClick = { navigator.openSupport(null) }, trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight)
-                    RowDivider()
-                    // Food, shelter, health and support in the city, filtered on the phone.
-                    InfoRow("Find help nearby", icon = Icons.Rounded.Favorite, onClick = { findingHelp = true }, trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight)
+                    InfoRow("Need support?", icon = Icons.Rounded.Favorite, onClick = { findingHelp = true }, trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight)
                     RowDivider()
                     InfoRow("Getting help at a venue", icon = Icons.Rounded.Shield, onClick = navigator::openGettingHelp, trailing = Icons.AutoMirrored.Rounded.KeyboardArrowRight)
                     RowDivider()
