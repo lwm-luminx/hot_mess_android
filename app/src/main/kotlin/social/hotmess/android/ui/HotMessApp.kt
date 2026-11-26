@@ -77,8 +77,8 @@ import social.hotmess.android.ui.screens.YourSuggestionsScreen
 import social.hotmess.android.ui.screens.CardsYouSeeScreen
 import social.hotmess.android.ui.screens.PrivacyChoicesScreen
 import social.hotmess.android.ui.screens.GettingHelpScreen
+import social.hotmess.android.ui.screens.ResourcesDialog
 import social.hotmess.android.ui.screens.SafetyAlertsScreen
-import social.hotmess.android.ui.screens.SupportScreen
 import social.hotmess.android.ui.screens.TribePickerScreen
 import social.hotmess.android.ui.screens.EventsScreen
 import social.hotmess.android.ui.screens.LaunchScreen
@@ -514,7 +514,10 @@ private fun MainShell(links: Flow<AppRoute>) {
                 }
                 composable<HelpAnywhereRoute> { GetHelpScreen(null, null, navigator) }
                 composable<SafetyAlertRoute> { GetHelpScreen(null, it.toRoute<SafetyAlertRoute>().id, navigator) }
-                composable<SupportRoute> { SupportScreen(it.toRoute<SupportRoute>().note.ifBlank { null }, navigator) }
+                composable<SupportRoute> {
+                    // "Need support?" is a secure dialog of its own; the route only hosts it, for links that open it.
+                    ResourcesDialog(focusResourceId = null, sharedNote = it.toRoute<SupportRoute>().note.ifBlank { null }, onClose = navigator::back)
+                }
                 composable<SafetyAlertsRoute> { SafetyAlertsScreen(navigator) }
                 composable<GettingHelpRoute> { GettingHelpScreen(navigator) }
                 composable<CardsYouSeeRoute> { CardsYouSeeScreen(navigator) }

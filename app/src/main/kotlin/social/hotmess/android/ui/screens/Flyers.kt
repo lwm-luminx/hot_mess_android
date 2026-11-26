@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Chat
 import androidx.compose.material.icons.rounded.Close
@@ -93,10 +94,15 @@ import social.hotmess.android.ui.components.EmptyRow
 import social.hotmess.android.ui.components.Feed
 import social.hotmess.android.ui.components.InfoRow
 import social.hotmess.android.ui.components.RowDivider
+import social.hotmess.android.ui.components.TextRow
 import social.hotmess.android.ui.theme.HotMessType
 import social.hotmess.android.ui.theme.Radius
 import social.hotmess.android.ui.theme.Space
 import social.hotmess.android.ui.theme.tokens
+import social.hotmess.core.EmergencyNumber
+import social.hotmess.core.RidePickup
+import social.hotmess.core.SupportResources
+import social.hotmess.core.SupportRide
 import java.text.DateFormatSymbols
 import java.time.LocalDate
 import java.time.LocalTime
@@ -283,7 +289,8 @@ private fun FlyerView(flyer: DigitalFlyer, content: FlyersCardContent, category:
 }
 
 /**
- * Find Help Nearby: the city's food, shelter, health, support and safety resources, from the directory fetched whole.
+ * "Need support?": the region's support lines (they work with no city chosen), then the city's food, shelter, health,
+ * support and safety resources, from the directory fetched whole, and one "Get a ride" row.
  * "I need…" filters it on this phone, so choosing a need sends nothing anywhere and nothing is logged.
  *
  * It's a full-screen dialog with its own state, not a navigation route, so nothing lands in the back stack, restored
@@ -291,7 +298,7 @@ private fun FlyerView(flyer: DigitalFlyer, content: FlyersCardContent, category:
  * sends the app to the background at once. DV and stalking resources go by their neutral titles in lists and titles.
  */
 @Composable
-fun ResourcesDialog(focusResourceId: String?, onClose: () -> Unit) {
+fun ResourcesDialog(focusResourceId: String?, sharedNote: String? = null, onClose: () -> Unit) {
     val graph = LocalAppGraph.current
     val settings = graph.flyers
     val locale by graph.location.locale.collectAsStateWithLifecycle()
@@ -303,6 +310,17 @@ fun ResourcesDialog(focusResourceId: String?, onClose: () -> Unit) {
     var search by remember { mutableStateOf("") }
     var opened by remember { mutableStateOf<CommunityResource?>(null) }
     var focused by remember { mutableStateOf(false) }
+    var pickingRide by remember { mutableStateOf(false) }
+    // The support lines and ride apps for where the phone is: only the region (US-UT) is sent.
+    var support by remember { mutableStateOf<SupportResources?>(null) }
+    var rides by remember { mutableStateOf<List<SupportRide>>(emptyList()) }
+    val position = graph.location.coordinates.value
+    val pickup = position?.let { RidePickup(it.latitude, it.longitude) }
+    LaunchedEffect(Unit) {
+        val region = supportRegion(context, position?.latitude, position?.longitude)
+        support = runCatchingUnlessCancelled { graph.api.supportResources(region) }
+        rides = runCatchingUnlessCancelled { graph.api.supportRides(region) }.orEmpty()
+    }
     LaunchedEffect(locale?.id) { settings.prefetchDirectory(locale?.id) }
     LaunchedEffect(directory) {
         if (!focused && focusResourceId != null) {
@@ -317,6 +335,7 @@ fun ResourcesDialog(focusResourceId: String?, onClose: () -> Unit) {
         need = null
         search = ""
         opened = null
+        pickingRide = false
         onClose()
         context.findActivity()?.moveTaskToBack(true)
     }
@@ -327,10 +346,16 @@ fun ResourcesDialog(focusResourceId: String?, onClose: () -> Unit) {
     ) {
         Box(Modifier.fillMaxSize().background(tokens.surface)) {
             val resource = opened
-            BackHandler(enabled = resource != null) { opened = null }
+            BackHandler(enabled = resource != null || pickingRide) { if (resource != null) opened = null else pickingRide = false }
             ScreenScaffold(
-                title = resource?.title ?: "Find help nearby",
-                onBack = { if (resource != null) opened = null else onClose() },
+                title = resource?.title ?: if (pickingRide) "Get a ride" else "Need support?",
+                onBack = {
+                    when {
+                        resource != null -> opened = null
+                        pickingRide -> pickingRide = false
+                        else -> onClose()
+                    }
+                },
                 actions = {
                     Button(
                         onClick = leaveNow,
@@ -340,11 +365,18 @@ fun ResourcesDialog(focusResourceId: String?, onClose: () -> Unit) {
                 },
             ) {
                 val loaded = directory
+                val extras = SupportExtras(sharedNote, support, rides) { pickingRide = true }
                 when {
                     resource != null -> ResourceDetail(resource, loaded?.advocacy.orEmpty())
-                    loaded != null -> ResourceList(loaded, need, search, { need = it }, { search = it }) { opened = it }
-                    locale == null -> Feed { item { DetailSection { EmptyRow("Choose a city first. Resources are listed by city.") } } }
+                    pickingRide -> RideOptionsList(rides, pickup, null)
+                    loaded != null -> ResourceList(loaded, need, search, extras, { need = it }, { search = it }) { opened = it }
+                    locale == null -> Feed {
+                        noteItem(extras)
+                        item { DetailSection { EmptyRow("Choose a city to see food, shelter and health near you.") } }
+                        supportItems(extras)
+                    }
                     failed -> Feed {
+                        noteItem(extras)
                         item {
                             DetailSection {
                                 EmptyRow("Couldn't load resources. Check your connection and try again. The emergency number below works without it.")
@@ -352,11 +384,12 @@ fun ResourcesDialog(focusResourceId: String?, onClose: () -> Unit) {
                                 InfoRow("Try again", onClick = { settings.retry(locale?.id) })
                             }
                         }
-                        item { EmergencySection() }
+                        supportItems(extras)
                     }
                     else -> Feed {
+                        noteItem(extras)
                         item { DetailSection { EmptyRow("Loading help near you…") } }
-                        item { EmergencySection() }
+                        supportItems(extras)
                     }
                 }
             }
@@ -375,6 +408,7 @@ private fun ResourceList(
     directory: CommunityDirectory,
     need: ResourceNeed?,
     search: String,
+    extras: SupportExtras,
     choose: (ResourceNeed?) -> Unit,
     onSearch: (String) -> Unit,
     open: (CommunityResource) -> Unit,
@@ -383,6 +417,7 @@ private fun ResourceList(
     val needs = remember(directory) { ResourceBrowser.offeredNeeds(directory) }
     val browsing = need == null && search.isBlank()
     Feed {
+        noteItem(extras)
         item {
             Column(verticalArrangement = Arrangement.spacedBy(Space.s2)) {
                 Text("I need…", style = HotMessType.subheading, color = tokens.ink, modifier = Modifier.semantics { heading() })
@@ -437,12 +472,46 @@ private fun ResourceList(
             }
             browsing && results.urgent.isNotEmpty() -> {
                 item { ResourceSection("Help right now", results.urgent, open) }
+                // The lines that work anywhere sit with the city's crisis lines.
+                extras.support?.takeIf { it.lines.isNotEmpty() }?.let { item { SupportLinesSection(it) } }
                 if (results.rest.isNotEmpty()) item { ResourceSection("More in ${directory.locale.name}", results.rest, open) }
             }
             else -> item { ResourceSection(need?.label ?: "Results", results.urgent + results.rest, open) }
         }
-        item { EmergencySection() }
+        when {
+            browsing && results.urgent.isNotEmpty() -> supportItems(extras, lines = false)
+            browsing || results.isEmpty -> supportItems(extras)
+            else -> item { EmergencySection(extras.support?.emergency ?: EmergencyNumber.current) }
+        }
     }
+}
+
+/** What "Need support?" adds around the city's resources: staff's note, the support lines and the way home. */
+private class SupportExtras(
+    val sharedNote: String?,
+    val support: SupportResources?,
+    val rides: List<SupportRide>,
+    val onRide: () -> Unit,
+)
+
+/** Staff's note when they shared this from an alert, first in every state. */
+private fun LazyListScope.noteItem(extras: SupportExtras) {
+    extras.sharedNote?.takeIf { it.isNotBlank() }?.let { note -> item { DetailSection("A note from the venue") { TextRow(note) } } }
+}
+
+/** The support lines, the way home and the emergency number: what every state ends with, so none is a dead end. */
+private fun LazyListScope.supportItems(extras: SupportExtras, lines: Boolean = true) {
+    if (lines) extras.support?.takeIf { it.lines.isNotEmpty() }?.let { item { SupportLinesSection(it) } }
+    item { DetailSection("Get home safe") { GetARideRow(extras.rides, extras.onRide) } }
+    item { EmergencySection(extras.support?.emergency ?: EmergencyNumber.current) }
+}
+
+private suspend fun <T> runCatchingUnlessCancelled(block: suspend () -> T): T? = try {
+    block()
+} catch (e: CancellationException) {
+    throw e
+} catch (_: Exception) {
+    null
 }
 
 @Composable
