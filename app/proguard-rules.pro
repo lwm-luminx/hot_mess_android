@@ -41,3 +41,10 @@
 -keep class * extends androidx.room.RoomDatabase {
     <init>();
 }
+
+# WorkManager also creates the input merger named on each work request (OverwritingInputMerger by default) by
+# reflection. Without its no-argument constructor Glance's work never ran, so the Tonight widget stayed on its
+# loading spinner.
+-keep class * extends androidx.work.InputMerger {
+    <init>();
+}
