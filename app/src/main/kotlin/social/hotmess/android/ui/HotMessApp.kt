@@ -63,6 +63,7 @@ import social.hotmess.android.session.AuthState
 import social.hotmess.android.ui.screens.ArticleScreen
 import social.hotmess.android.ui.screens.EventScreen
 import social.hotmess.android.ui.screens.PingChatSheet
+import social.hotmess.android.ui.screens.NewsScreen
 import social.hotmess.android.ui.screens.PublicationScreen
 import social.hotmess.android.ui.screens.QuickieChatSheet
 import social.hotmess.android.ui.screens.GetHelpScreen
@@ -126,6 +127,7 @@ import social.hotmess.core.postsSubject
 @Serializable data class LocaleRoute(val id: String, val name: String)
 @Serializable data class ArticleRoute(val id: String)
 @Serializable data class PublicationRoute(val id: String)
+@Serializable data class NewsRoute(val localeId: String, val localeName: String)
 @Serializable data object PassesRoute
 /** Get help at a venue the user is at ([address] for a friend or a ride). */
 @Serializable data class HelpRoute(
@@ -318,6 +320,7 @@ private fun MainShell(links: Flow<AppRoute>) {
                     is AppRoute.LocaleDetail -> LocaleRoute(route.id, route.name)
                     is AppRoute.ArticleDetail -> ArticleRoute(route.id)
                     is AppRoute.PublicationDetail -> PublicationRoute(route.id)
+                    is AppRoute.News -> NewsRoute(route.localeId, route.localeName)
                     is AppRoute.SafetyAlertHelp -> SafetyAlertRoute(route.id)
                 },
             )
@@ -541,6 +544,10 @@ private fun MainShell(links: Flow<AppRoute>) {
                 }
                 composable<ArticleRoute> { ArticleScreen(it.toRoute<ArticleRoute>().id, navigator) }
                 composable<PublicationRoute> { PublicationScreen(it.toRoute<PublicationRoute>().id, navigator) }
+                composable<NewsRoute> {
+                    val route = it.toRoute<NewsRoute>()
+                    NewsScreen(route.localeId, route.localeName, navigator)
+                }
             }
         }
     }

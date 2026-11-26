@@ -39,6 +39,9 @@ sealed interface AppRoute {
     /** A Soapbox publication's page: its articles and "Write an op-ed". */
     data class PublicationDetail(val id: String) : AppRoute
 
+    /** A locale's news in full ("Show more" under its news): its publishers, then all their articles. */
+    data class News(val localeId: String, val localeName: String) : AppRoute
+
     /** One of the user's safety alerts, from a push about it (`/safety-alerts/<id>`); it opens over Me. */
     data class SafetyAlertHelp(val id: String) : AppRoute
 
@@ -91,7 +94,7 @@ sealed interface AppRoute {
             // A post opens wherever it's linked from; a link from outside lands on Now.
             is PostDetail, is Updates -> AppTab.NOW
             // News opens wherever it's linked from; a link from outside lands on Now.
-            is ArticleDetail, is PublicationDetail -> AppTab.NOW
+            is ArticleDetail, is PublicationDetail, is News -> AppTab.NOW
             // Me lists the user's safety alerts, so Back from one lands there.
             is SafetyAlertHelp -> AppTab.ME
             is Posts -> when (subject) {

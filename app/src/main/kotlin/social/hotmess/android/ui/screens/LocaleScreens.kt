@@ -153,7 +153,8 @@ fun LocaleScreen(id: String, name: String, navigator: Navigator) {
     }
     LaunchedEffect(id) { loader.load(id, fetch = fetch) }
     val served = rememberScreenCards(LayoutScreen.LOCALE, LOCALE_CARD_KINDS, LOCALE_FALLBACK_CARDS, forLocale = id)
-    val news = rememberNews(remember(id) { ArticleTopic.Locale(id) }, limit = 5)
+    // One more than it shows tells it whether to offer "Show more".
+    val news = rememberNews(remember(id) { ArticleTopic.Locale(id) }, limit = LOCALE_NEWS_LIMIT + 1)
 
     ScreenScaffold(name, onBack = navigator::back) {
         LoadStateView(state, onRetry = { loader.load(id, refresh = true, fetch = fetch) }) { page ->
@@ -189,7 +190,13 @@ fun LocaleScreen(id: String, name: String, navigator: Navigator) {
                             CardKind.PROMO_SLOT -> item(key = card.id) { PromoSlotView(card, cards.id, navigator) }
                         }
                     }
-                    newsSection(SoapboxCopy.NEWS, news, navigator)
+                    newsSection(
+                        SoapboxCopy.NEWS,
+                        news,
+                        navigator,
+                        limit = LOCALE_NEWS_LIMIT,
+                        showMore = AppRoute.News(id, name),
+                    )
                 }
             }
         }

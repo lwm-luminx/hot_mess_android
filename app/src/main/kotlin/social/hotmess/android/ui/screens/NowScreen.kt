@@ -435,7 +435,7 @@ fun NowScreen(navigator: Navigator) {
                             CardKind.ARTICLES_LOCALE -> (card.localeId ?: now.locale?.id)?.let { localeId ->
                                 val name = now.locale?.name.orEmpty()
                                 item(key = "local-news") {
-                                    LocalNewsSection(if (name.isBlank()) SoapboxCopy.NEWS else "News in $name", localeId, navigator)
+                                    LocalNewsSection(if (name.isBlank()) SoapboxCopy.NEWS else "News in $name", localeId, name, navigator)
                                 }
                             }
                             // Away from venues, the locale's updates.
