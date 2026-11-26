@@ -428,7 +428,8 @@ private fun ResourceList(
                         FilterChip(
                             selected = need?.key == choice.key,
                             onClick = { choose(choice) },
-                            label = { Text(choice.label) },
+                            // One line per chip; the labels are 18 characters at most.
+                            label = { Text(choice.label, maxLines = 1, softWrap = false) },
                             modifier = Modifier.testTag("resources.need.${choice.key}"),
                         )
                     }
