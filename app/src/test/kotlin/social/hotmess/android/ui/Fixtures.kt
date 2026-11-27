@@ -81,6 +81,7 @@ fun StubApi.stubVenueSideLoads() {
     error("VenueLineup", "No lineup in the stub")
     error("VenueSuggestionState", "No suggestions in the stub")
     error("ArticlesAbout", "No articles in the stub")
+    error("Reviews", "No reviews in the stub")
     error("VenuePosts", "No posts in the stub")
     error("EventPosts", "No posts in the stub")
 }
