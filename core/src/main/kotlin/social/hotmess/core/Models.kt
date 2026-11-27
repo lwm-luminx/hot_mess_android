@@ -861,6 +861,11 @@ data class Now(
     /** Venues nearby, nearest first; null when the user is in a venue. */
     val venues: List<Venue>? = null,
     val events: List<Event> = emptyList(),
+    /**
+     * The locale's upcoming events, soonest first, all `reportLocation` asked for (more than [events] lists), even
+     * while the user is in a venue: the Tonight widget's list of what's on around town.
+     */
+    val cityEvents: List<Event> = emptyList(),
     /** Friends out at the venue the user is in, or at venues in their locale. */
     val friends: List<Friend> = emptyList(),
     /** Where friends have been lately, most friends first, when the user isn't in a venue. */

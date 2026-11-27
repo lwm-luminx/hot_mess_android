@@ -1212,6 +1212,7 @@ private data class LocationReport(
                 venues = nearbyVenues,
                 // The event the user is at leads the screen, so it isn't listed again.
                 events = mixins.events?.events.orEmpty().filterNot { it.id == event?.id },
+                cityEvents = locale?.events?.events.orEmpty(),
                 friends = mixins.friends?.list.orEmpty(),
                 locale = nowLocale,
                 myPing = ping?.myPing,
@@ -1224,6 +1225,7 @@ private data class LocationReport(
             event = event,
             venues = nearbyVenues,
             events = locale?.events?.events.orEmpty().filterNot { it.id == event?.id }.take(Documents.LOCALE_EVENT_LIMIT),
+            cityEvents = locale?.events?.events.orEmpty(),
             friends = locale?.friends?.list.orEmpty(),
             friendVenues = locale?.friends?.venues.orEmpty(),
             locale = nowLocale,

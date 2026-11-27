@@ -121,14 +121,44 @@ data class TonightSnapshot(
         (pings.map { it.expiresAt } + events.map { it.dropsAt }).filter { it.isAfter(after) }.minOrNull()
 
     /**
-     * The event the widget's card features at [now]. It moves on to the next one every [ROTATION], counted from a
-     * fixed point so a redraw (after a button, or when the app saves) keeps the same one up.
+     * The events the card takes turns featuring at [now]: those on tonight (on now, or starting within [TONIGHT]),
+     * else just the next one, so a Thursday evening never features Sunday's karaoke ahead of Friday's party. The list
+     * under the card has the rest, in order.
+     */
+    fun featuredEvents(now: Instant): List<Event> {
+        val on = events.filter { it.isOn(now) }
+        return on.filter { it.isPingable(now) }.ifEmpty { on.take(1) }
+    }
+
+    /**
+     * The event the widget's card features at [now]. While more than one is on tonight it moves on to the next every
+     * [ROTATION], counted from a fixed point so a redraw (after a button, or when the app saves) keeps the same one up.
      */
     fun featuredEvent(now: Instant): Event? {
-        val on = events.filter { it.isOn(now) }
+        val on = featuredEvents(now)
         if (on.isEmpty()) return null
         val slot = Math.floorDiv(now.epochSecond, ROTATION.seconds)
         return on[Math.floorMod(slot, on.size.toLong()).toInt()]
+    }
+
+    /**
+     * The event the card shows at [now]: the one the user stepped to with the large widget's previous and next buttons
+     * while that lasts (and the event is still on), else the rotation's.
+     */
+    fun featuredEvent(now: Instant, browsing: TonightBrowse?): Event? {
+        val picked = browsing?.takeIf { it.until.isAfter(now) }?.let { b -> events.firstOrNull { it.id == b.eventId && it.isOn(now) } }
+        return picked ?: featuredEvent(now)
+    }
+
+    /**
+     * The event [step] places from [featured] among all the events still on at [now] (soonest first, wrapping): the
+     * previous and next buttons go through every one, tonight's and later.
+     */
+    fun event(step: Int, from: Event?, now: Instant): Event? {
+        val on = events.filter { it.isOn(now) }
+        if (on.isEmpty()) return null
+        val index = on.indexOfFirst { it.id == from?.id }.coerceAtLeast(0)
+        return on[Math.floorMod(index + step, on.size)]
     }
 
     /** With the event [id] changed by [change] (after a button). */
@@ -166,8 +196,8 @@ data class TonightSnapshot(
         /** How long the card features one event; the widget redraws about this often (`tonight_widget_info.xml`). */
         val ROTATION: Duration = Duration.ofMinutes(30)
 
-        /** The most events and Pings kept: the large widget shows about this many. */
-        const val LIMIT = 6
+        /** The most events and Pings kept: enough to fill a tall widget (its list scrolls past that). */
+        const val LIMIT = 12
 
         private val JSON = Json { ignoreUnknownKeys = true; encodeDefaults = false }
 
@@ -175,14 +205,17 @@ data class TonightSnapshot(
         fun decode(text: String?): TonightSnapshot? =
             text?.let { runCatching { JSON.decodeFromString(serializer(), it) }.getOrNull() }
 
-        /** From a freshly loaded Now: the event the user is at, the next week's events, who's on, and the Pings. */
+        /**
+         * From a freshly loaded Now: the event the user is at, the next week's events (their venue's and the rest of
+         * the city's, soonest first), who's on, and the Pings.
+         */
         fun from(now: social.hotmess.core.Now, at: Instant = Instant.now()): TonightSnapshot = TonightSnapshot(
             updatedAt = at,
             localeName = now.locale?.name,
             localeId = now.locale?.id,
             venueName = now.venue?.name ?: now.event?.venue?.name,
             onNow = now.onNow.firstOrNull()?.person?.name?.takeIf { it.isNotBlank() },
-            events = upcoming(now.events, now.event, at),
+            events = upcoming(now.events + now.cityEvents, now.event, at),
             pings = pings(now.myPing, now.friendPings, at),
         ).markingPinged(now.myPing, at)
 
@@ -241,5 +274,24 @@ data class TonightSnapshot(
             address = event.venue?.address?.takeIf { it.isNotBlank() },
             going = event.rsvp == social.hotmess.core.Rsvp.ATTENDING,
         )
+    }
+}
+
+/** The event the user stepped to with the large widget's previous and next buttons, held until [until]. */
+@Serializable
+data class TonightBrowse(
+    val eventId: String,
+    @Serializable(with = InstantSerializer::class) val until: Instant,
+) {
+    fun encode(): String = JSON.encodeToString(serializer(), this)
+
+    companion object {
+        /** How long a step keeps its event up before the card goes back to rotating. */
+        val HOLD: Duration = Duration.ofMinutes(30)
+
+        private val JSON = Json { ignoreUnknownKeys = true }
+
+        fun decode(text: String?): TonightBrowse? =
+            text?.let { runCatching { JSON.decodeFromString(serializer(), it) }.getOrNull() }
     }
 }
