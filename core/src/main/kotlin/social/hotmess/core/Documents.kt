@@ -262,6 +262,7 @@ object Documents {
           people {
             person(id: ${'$'}id) {
               $PERSON_FIELDS
+              description
               events { upcoming { nodes { $EVENT_FIELDS } } }
               $PROFILE_SOCIAL_LINKS
               members { id name avatarUrl }

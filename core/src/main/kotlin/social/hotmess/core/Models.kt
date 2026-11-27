@@ -335,6 +335,8 @@ data class PersonDetail(
     val name: String = "",
     val avatarUrl: String? = null,
     val bannerUrl: String? = null,
+    /** Their bio, or what an organization does, as the API gave it. Read through [about]. */
+    private val description: String? = null,
     @SerialName("events") private val eventsMixin: UpcomingEvents? = null,
     /** Their profile mixin: links and Facebook Page. Read through [socialLinks], [facebookId] and [isLiked]. */
     private val profile: ListingProfile? = null,
@@ -342,6 +344,9 @@ data class PersonDetail(
     val members: List<Person> = emptyList(),
     val groups: List<Person> = emptyList(),
 ) {
+    /** Their bio, or what an organization does, in their own words; null when they have none (or it's blank). */
+    val about: String? get() = description?.trim()?.takeIf { it.isNotEmpty() }
+
     /** Their upcoming events, from the events mixin; empty when the audience has no events. */
     val events: List<Event> get() = eventsMixin?.events.orEmpty()
 

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -58,6 +59,7 @@ import social.hotmess.android.ui.rememberShareLinks
 import social.hotmess.android.ui.components.Avatar
 import social.hotmess.android.ui.components.CardRows
 import social.hotmess.android.ui.components.DetailInset
+import social.hotmess.android.ui.components.DetailRowPadding
 import social.hotmess.android.ui.components.DetailSection
 import social.hotmess.android.ui.components.EmptyRow
 import social.hotmess.android.ui.components.EventCard
@@ -263,6 +265,13 @@ fun PersonScreen(id: String, navigator: Navigator) {
             val open = { person: Person -> navigator.open(AppRoute.PersonDetail(person.id)) }
             HeroFeed(listState, hero = { Hero(detail, topInset) { heroTone = it } }) {
                 if (manages) item(key = "managed") { ManagedListingNotice(ManagedKind.PERSON, id) }
+                detail.about?.let { about ->
+                    item(key = "about") {
+                        DetailSection("About") {
+                            Text(about, style = HotMessType.body, modifier = Modifier.fillMaxWidth().padding(DetailRowPadding))
+                        }
+                    }
+                }
                 if (detail.tipLinks.isNotEmpty()) {
                     item {
                         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Space.s2)) {
