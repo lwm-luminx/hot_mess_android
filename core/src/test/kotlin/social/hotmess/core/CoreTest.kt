@@ -96,6 +96,19 @@ class ModelDecodingTest {
     }
 
     @Test
+    fun readsADescriptionAndTreatsABlankOneAsNone() {
+        val described = json.decodeFromString(
+            PersonDetail.serializer(),
+            """{"id": "p1", "name": "Love Wins Media", "description": "  Makes Hot Mess.\n"}""",
+        )
+        val blank = json.decodeFromString(PersonDetail.serializer(), """{"id": "p2", "name": "Nobody", "description": " "}""")
+
+        assertEquals("Makes Hot Mess.", described.about)
+        assertEquals(null, blank.about)
+        assertEquals(null, json.decodeFromString(PersonDetail.serializer(), Fixtures.PERSON).about)
+    }
+
+    @Test
     fun decodesATroupesMembersAndAPerformersGroups() {
         val troupe = json.decodeFromString(PersonDetail.serializer(), Fixtures.TROUPE)
 
