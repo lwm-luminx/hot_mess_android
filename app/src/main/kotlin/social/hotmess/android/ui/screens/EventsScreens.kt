@@ -193,6 +193,7 @@ fun EventScreen(id: String, navigator: Navigator) {
     LaunchedEffect(id) { loader.load(id) { graph.api.event(id) } }
     val postsSubject = remember(id) { PostsSubject.Event(id) }
     val news = rememberNews(remember(id) { ArticleTopic.Event(id) })
+    val reviews = rememberReviews(remember(id) { ArticleTopic.Event(id) })
     val postsLoader = rememberPosts(postsSubject)
     val posts by postsLoader.state.collectAsStateWithLifecycle()
     val postActions = rememberPostActions(navigator) { poster -> postsLoader.update { list -> list.filterNot { it.poster == poster } } }
@@ -343,6 +344,7 @@ fun EventScreen(id: String, navigator: Navigator) {
                     }
                 }
                 postsSection("From the venue and hosts", postsSubject, posts, postActions)
+                reviewsSection(reviews, navigator)
                 newsSection(SoapboxCopy.IN_THE_NEWS, news, navigator)
                 item(key = "photos") { PhotosSection(postsSubject, navigator) }
                 item {

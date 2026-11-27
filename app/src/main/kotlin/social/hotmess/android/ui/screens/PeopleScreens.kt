@@ -230,6 +230,7 @@ fun PersonScreen(id: String, navigator: Navigator) {
     LaunchedEffect(id) { loader.load(id) { graph.api.person(id) } }
     val postsSubject = remember(id) { PostsSubject.Person(id) }
     val news = rememberNews(remember(id) { ArticleTopic.Person(id) })
+    val reviews = rememberReviews(remember(id) { ArticleTopic.Person(id) })
     val titles = rememberTitles(id)
     val postsLoader = rememberPosts(postsSubject)
     val posts by postsLoader.state.collectAsStateWithLifecycle()
@@ -316,6 +317,7 @@ fun PersonScreen(id: String, navigator: Navigator) {
                     }
                 }
                 postsSection("Posts", postsSubject, posts, postActions)
+                reviewsSection(reviews, navigator)
                 newsSection(SoapboxCopy.IN_THE_NEWS, news, navigator)
                 item(key = "photos") { PhotosSection(postsSubject, navigator, title = "On stage") }
                 if (detail.tracks.isNotEmpty()) {
