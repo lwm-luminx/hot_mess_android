@@ -100,13 +100,13 @@ class TonightSnapshotTest {
     }
 
     @Test
-    fun upcomingKeepsTheNextWeekSoonestFirstAtMostSix() {
+    fun upcomingKeepsTheNextWeekSoonestFirstAtMostTheLimit() {
         val soon = Event("soon", "Soon", startAt = base.plusSeconds(2 * 3600))
         val later = Event("later", "Later", startAt = base.plusSeconds(30 * 3600))
         val nextMonth = Event("month", "Month", startAt = base.plusSeconds(30L * 24 * 3600))
         val over = Event("over", "Over", startAt = base.minusSeconds(7200), endAt = base.minusSeconds(60))
         assertEquals(listOf("soon", "later"), TonightSnapshot.upcoming(listOf(later, nextMonth, over, soon), at = base).map { it.id })
-        val many = (1..9).map { Event("e$it", "E$it", startAt = base.plusSeconds(it * 3600L)) }
+        val many = (1..TonightSnapshot.LIMIT + 3).map { Event("e$it", "E$it", startAt = base.plusSeconds(it * 3600L)) }
         assertEquals(TonightSnapshot.LIMIT, TonightSnapshot.upcoming(many, at = base).size)
     }
 
@@ -131,6 +131,40 @@ class TonightSnapshotTest {
         val tomorrow = TonightSnapshot.Event("b", "B", startsAt = base.plusSeconds(30 * 3600), url = "u")
         assertTrue(tonight.isPingable(base))
         assertEquals(false, tomorrow.isPingable(base))
+    }
+
+    @Test
+    fun theCardFeaturesTonightElseTheNextOneNeverOneDaysAway() {
+        val slot = TonightSnapshot.ROTATION.seconds
+        val start = Instant.ofEpochSecond(Math.floorDiv(base.epochSecond, slot) * slot)
+        fun at(id: String, hours: Long) = TonightSnapshot.Event(id, id, startsAt = start.plusSeconds(hours * 3600), url = "u")
+        val nothingTonight = TonightSnapshot(updatedAt = start, events = listOf(at("fri", 27), at("sat", 51), at("sun", 75)))
+        assertEquals(setOf("fri"), (0..5).map { nothingTonight.featuredEvent(start.plusSeconds(it * slot))?.id }.toSet())
+        assertEquals(1, nothingTonight.featuredEvents(start).size)
+        val twoTonight = TonightSnapshot(updatedAt = start, events = listOf(at("bingo", 2), at("karaoke", 3), at("fri", 27)))
+        assertEquals(listOf("bingo", "karaoke"), twoTonight.featuredEvents(start).map { it.id })
+        assertEquals(setOf("bingo", "karaoke"), (0..3).map { twoTonight.featuredEvent(start.plusSeconds(it * slot))?.id }.toSet())
+    }
+
+    @Test
+    fun previousAndNextStepThroughEveryEventAndHold() {
+        val events = listOf("a", "b", "c").map { TonightSnapshot.Event(it, it, startsAt = base.plusSeconds(30 * 3600), url = "u") }
+        val snapshot = TonightSnapshot(updatedAt = base, events = events)
+        assertEquals("b", snapshot.event(1, events[0], base)?.id)
+        assertEquals("c", snapshot.event(-1, events[0], base)?.id)
+        assertEquals("a", snapshot.event(1, events[2], base)?.id)
+        val browsing = TonightBrowse("c", base.plusSeconds(600))
+        assertEquals("c", snapshot.featuredEvent(base, browsing)?.id)
+        assertEquals(snapshot.featuredEvent(base.plusSeconds(601))?.id, snapshot.featuredEvent(base.plusSeconds(601), browsing)?.id)
+        assertEquals(browsing, TonightBrowse.decode(browsing.encode()))
+    }
+
+    @Test
+    fun atAVenueTheWidgetListsTheRestOfTheCitysEventsToo() {
+        val sunday = Event("sun", "Sunday Karaoke", startAt = base.plusSeconds(75 * 3600))
+        val therapy = Event("milk", "Therapy Thursdays", startAt = base.plusSeconds(2 * 3600))
+        val snapshot = TonightSnapshot.from(Now(events = listOf(sunday), cityEvents = listOf(therapy, sunday)), base)
+        assertEquals(listOf("milk", "sun"), snapshot.events.map { it.id })
     }
 
     @Test

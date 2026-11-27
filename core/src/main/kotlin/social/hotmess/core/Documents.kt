@@ -17,6 +17,12 @@ object Documents {
     val LOCALE_EVENT_LIMIT: Int = LOCALE_EVENT_FIRST.toInt()
 
     /**
+     * How many of the locale's upcoming events `reportLocation` asks for: Now's few ([LOCALE_EVENT_FIRST]) and
+     * enough more to fill a tall Tonight widget ([Now.cityEvents]). A string, like [LOCALE_EVENT_FIRST].
+     */
+    const val WIDGET_EVENT_FIRST: String = "12"
+
+    /**
      * A venue, with its address, phone and Facebook Page under its profile mixin. `bannerUrl` is its wide image
      * (its first banner, else its own photo, else its Page's cover) and `photoUrl` its own photo; both null when
      * there's none. `places { hours }` is whether it's open now and its week's hours, from Google, worded in its time zone.
@@ -97,7 +103,7 @@ object Documents {
             nearbyVenues { $VENUE_FIELDS }
             locale {
               id name bannerUrl chat { open $RECENT_MESSAGES }
-              events { upcoming(first: $LOCALE_EVENT_FIRST) { nodes { $EVENT_FIELDS } } }
+              events { upcoming(first: $WIDGET_EVENT_FIRST) { nodes { $EVENT_FIELDS } } }
               friends {
                 list { nodes { $FRIEND_OUT_FIELDS } }
                 venues { nodes { venue { $VENUE_FIELDS } friendCount friends { $FRIEND_OUT_FIELDS } } }

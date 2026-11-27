@@ -9,6 +9,7 @@ import androidx.glance.Button
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.GlanceTheme
+import androidx.glance.LocalSize
 import androidx.glance.action.ActionParameters
 import androidx.glance.action.actionParametersOf
 import androidx.glance.action.clickable
@@ -45,6 +46,7 @@ import social.hotmess.android.appGraph
 import social.hotmess.core.Now
 import social.hotmess.core.PingPush
 import social.hotmess.core.Rsvp
+import social.hotmess.core.TonightBrowse
 import social.hotmess.core.TonightSnapshot
 import java.io.File
 import java.time.Instant
@@ -78,9 +80,24 @@ object TonightStore {
     /** From a freshly loaded Now. */
     suspend fun update(context: Context, now: Now) = save(context, TonightSnapshot.from(now))
 
+    private fun browseFile(context: Context) = File(context.applicationContext.noBackupFilesDir, "tonight-browse.json")
+
+    /** Where the user last stepped the card to with the previous and next buttons. */
+    suspend fun readBrowse(context: Context): TonightBrowse? = withContext(Dispatchers.IO) {
+        TonightBrowse.decode(runCatching { browseFile(context).takeIf { it.exists() }?.readText() }.getOrNull())
+    }
+
+    suspend fun saveBrowse(context: Context, browse: TonightBrowse) {
+        withContext(Dispatchers.IO) { browseFile(context).writeText(browse.encode()) }
+        TonightWidget().updateAll(context)
+    }
+
     /** Forgets everything, for signing out. */
     suspend fun clear(context: Context) {
-        withContext(Dispatchers.IO) { file(context).delete() }
+        withContext(Dispatchers.IO) {
+            file(context).delete()
+            browseFile(context).delete()
+        }
         TonightWidget().updateAll(context)
     }
 }
@@ -98,15 +115,18 @@ class TonightWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val signedIn = context.appGraph.session.isSignedIn
         val snapshot = TonightStore.read(context)?.takeIf { signedIn }?.current(Instant.now())
+        val browsing = TonightStore.readBrowse(context)
         provideContent {
-            GlanceTheme { Content(context, snapshot) }
+            GlanceTheme { Content(context, snapshot, browsing) }
         }
     }
 
     @Composable
-    private fun Content(context: Context, snapshot: TonightSnapshot?) {
+    private fun Content(context: Context, snapshot: TonightSnapshot?, browsing: TonightBrowse?) {
         val now = Instant.now()
-        val featured = snapshot?.featuredEvent(now)
+        val featured = snapshot?.featuredEvent(now, browsing)
+        // Tall enough for the previous and next buttons (about a 4x3 widget and up).
+        val large = LocalSize.current.height >= LARGE_HEIGHT
         Column(
             modifier = GlanceModifier
                 .fillMaxSize()
@@ -122,10 +142,11 @@ class TonightWidget : GlanceAppWidget() {
                     maxLines = 1,
                     modifier = GlanceModifier.defaultWeight().clickable(open(context, SITE)),
                 )
-                if (featured != null && snapshot.events.size > 1) {
-                    // One dot per event, the featured one filled, so it reads as rotating.
+                val rotating = snapshot?.featuredEvents(now).orEmpty()
+                if (!large && featured != null && rotating.size > 1) {
+                    // One dot per event on tonight, the featured one filled, so it reads as rotating.
                     Text(
-                        text = snapshot.events.joinToString(" ") { if (it.id == featured.id) "●" else "○" },
+                        text = rotating.joinToString(" ") { if (it.id == featured.id) "●" else "○" },
                         style = TextStyle(color = GlanceTheme.colors.primary, fontSize = 8.sp),
                         maxLines = 1,
                     )
@@ -144,6 +165,9 @@ class TonightWidget : GlanceAppWidget() {
                 return@Column
             }
             featured?.let { FeaturedCard(context, it, now) }
+            if (large && featured != null && snapshot.events.size > 1) {
+                EventStepper(snapshot.events, featured)
+            }
             LazyColumn {
                 items(snapshot.pings, itemId = { ("p" + it.id).hashCode().toLong() }) { ping -> PingRow(context, ping) }
                 items(snapshot.events.filter { it.id != featured?.id }, itemId = { ("e" + it.id).hashCode().toLong() }) { event ->
@@ -198,6 +222,33 @@ class TonightWidget : GlanceAppWidget() {
         Spacer(GlanceModifier.height(6.dp))
     }
 
+    /**
+     * The large widget's previous and next buttons, with a dot per event (the one on the card filled) between them.
+     * Widgets can't take swipes, so these are how to look through everything coming up.
+     */
+    @Composable
+    private fun EventStepper(events: List<TonightSnapshot.Event>, featured: TonightSnapshot.Event) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = GlanceModifier.fillMaxWidth()) {
+            Button(
+                text = "‹ Prev",
+                onClick = actionRunCallback<StepEventFromWidget>(actionParametersOf(StepEventFromWidget.STEP to -1)),
+                modifier = GlanceModifier.defaultWeight(),
+            )
+            Text(
+                text = events.joinToString(" ") { if (it.id == featured.id) "●" else "○" },
+                style = TextStyle(color = GlanceTheme.colors.primary, fontSize = 8.sp),
+                maxLines = 1,
+                modifier = GlanceModifier.padding(horizontal = 8.dp),
+            )
+            Button(
+                text = "Next ›",
+                onClick = actionRunCallback<StepEventFromWidget>(actionParametersOf(StepEventFromWidget.STEP to 1)),
+                modifier = GlanceModifier.defaultWeight(),
+            )
+        }
+        Spacer(GlanceModifier.height(6.dp))
+    }
+
     @Composable
     private fun PingRow(context: Context, ping: TonightSnapshot.Ping) {
         Row(
@@ -234,6 +285,7 @@ class TonightWidget : GlanceAppWidget() {
 
     private companion object {
         const val SITE = "https://hotmess.social/"
+        val LARGE_HEIGHT = 250.dp
 
         /** Opens [url] in the app, as a tapped push does (MainActivity reads its `url`). */
         fun open(context: Context, url: String) = actionStartActivity(
@@ -322,6 +374,22 @@ class PingEventFromWidget : ActionCallback {
 
     companion object {
         val EVENT = ActionParameters.Key<String>("event")
+    }
+}
+
+/** The large widget's previous and next buttons: shows the event before or after the one on the card, for a while. */
+class StepEventFromWidget : ActionCallback {
+    override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
+        val step = parameters[STEP] ?: return
+        val now = Instant.now()
+        val snapshot = TonightStore.read(context) ?: return
+        val featured = snapshot.featuredEvent(now, TonightStore.readBrowse(context))
+        val next = snapshot.event(step, featured, now) ?: return
+        TonightStore.saveBrowse(context, TonightBrowse(next.id, now.plus(TonightBrowse.HOLD)))
+    }
+
+    companion object {
+        val STEP = ActionParameters.Key<Int>("step")
     }
 }
 
