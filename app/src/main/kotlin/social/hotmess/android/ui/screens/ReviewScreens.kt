@@ -78,7 +78,7 @@ fun ReviewCard(review: Review, article: Article?, onClick: (() -> Unit)?) {
     if (onClick != null) modifier = modifier.clickable(role = Role.Button, onClick = onClick)
     Surface(modifier = modifier.testTag("reviews.review"), color = tokens.surfaceRaised, contentColor = tokens.ink) {
         Column(Modifier.padding(Space.s3), verticalArrangement = Arrangement.spacedBy(Space.s1)) {
-            Text(if (article == null) review.body else "“${review.body}”", style = HotMessType.body)
+            Text(review.body, style = HotMessType.body)
             if (article != null) {
                 Text(reviewCredit(article), style = HotMessType.caption, color = tokens.inkMuted)
             }
