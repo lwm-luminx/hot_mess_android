@@ -18,8 +18,10 @@ name: Google Play
 on:
   push:
     branches: [next, main]
-  # Pull requests build the Staging bundle to check this workflow, and never upload.
+  # Pull requests that change this workflow build the Staging bundle to check it, and never upload. Other PRs skip it:
+  # the Build workflow already builds Staging through R8.
   pull_request:
+    paths: [.github/workflows/play.yml]
   workflow_dispatch:
 
 concurrency:
@@ -81,6 +83,8 @@ jobs:
             ${{ env.BUNDLE }}
             app/build/outputs/mapping/${{ env.VARIANT }}/mapping.txt
           if-no-files-found: error
+          # Release bundles and their R8 mappings stay the default 90 days; Staging ones (rebuilt on every merge) a week.
+          retention-days: ${{ github.ref_name == 'main' && 90 || 7 }}
 
       - name: Skip the upload without Play secrets
         if: env.HAS_PLAY != 'true' && github.event_name != 'pull_request'
