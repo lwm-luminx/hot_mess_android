@@ -25,7 +25,9 @@ import kotlinx.serialization.builtins.nullable
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlin.coroutines.ContinuationInterceptor
@@ -144,6 +146,73 @@ class HotMessApi(val client: AudienceKitClient) {
     suspend fun cachedVenues(localeId: String?): List<Venue>? =
         client.cachedGraphQL(Documents.VENUES, VenuesResponse.serializer(), json = json)
             ?.value?.venues?.takeIf { it.isNotEmpty() }?.sortedForList(localeId)
+
+    /**
+     * One page of the Venues list: [localeId]'s venues (those filed under it or a locale within it, or placed inside
+     * its area), or everywhere's without one, hidden ones left out, in the audience's order; [after] is the last
+     * page's [VenuePage.nextCursor]. The first page of each is kept on the phone ([cachedVenuesPage]).
+     *
+     * An API from before paging refuses the document; the first page is then the whole list at once ([venues], only
+     * the city's for a locale) with nothing after it.
+     */
+    suspend fun venuesPage(
+        localeId: String?,
+        after: String? = null,
+        first: Int = VENUES_PAGE_SIZE,
+        cachePolicy: GraphQLCachePolicy? = null,
+    ): VenuePage {
+        val variables = venuesPageVariables(localeId, after, first)
+        return try {
+            query(Documents.VENUES_PAGE, VenuesPageResponse.serializer(), variables, cachePolicy = cachePolicy).page
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: ApiError.Other) {
+            // graphql-ruby's own refusal (no code): an API without localeId and visible. Anything else stands.
+            if (after != null) throw e
+            val all = venues(localeId)
+            VenuePage(if (localeId == null) all else all.filter { it.isIn(localeId) }, nextCursor = null)
+        }
+    }
+
+    /** The first page of [venuesPage] as last loaded, to show at once while it refreshes. Null when none is kept. */
+    suspend fun cachedVenuesPage(localeId: String?, first: Int = VENUES_PAGE_SIZE): VenuePage? =
+        client.cachedGraphQL(
+            Documents.VENUES_PAGE, VenuesPageResponse.serializer(), venuesPageVariables(localeId, null, first), json = json,
+        )?.value?.page?.takeIf { it.venues.isNotEmpty() }
+
+    /** Every venue [localeId] lists, a page at a time: for a city's own page, which shows them all. */
+    suspend fun localeVenues(localeId: String): List<Venue> {
+        val venues = mutableListOf<Venue>()
+        var page = venuesPage(localeId)
+        venues += page.venues
+        var pages = 1
+        while (page.nextCursor != null && pages < LOCALE_VENUE_PAGE_LIMIT) {
+            page = venuesPage(localeId, after = page.nextCursor)
+            venues += page.venues
+            pages++
+        }
+        return venues.distinctBy { venueKey(it.id) }
+    }
+
+    /** The venues with these ids that the audience lists, in no particular order; hidden ones and other records are left out. */
+    suspend fun venuesById(ids: Collection<String>): List<Venue> {
+        if (ids.isEmpty()) return emptyList()
+        val response = query(
+            Documents.VENUES_BY_ID,
+            VenuesByIdResponse.serializer(),
+            mapOf("ids" to JsonArray(ids.distinct().map(::JsonPrimitive))),
+            cachePolicy = GraphQLCachePolicy.NetworkOnly,
+        )
+        return response.nodes.mapNotNull { node ->
+            node?.takeIf { "id" in it }?.let { runCatching { json.decodeFromJsonElement(Venue.serializer(), it) }.getOrNull() }
+        }.filterNot { it.hidden }
+    }
+
+    private fun venuesPageVariables(localeId: String?, after: String?, first: Int): Map<String, JsonElement> = buildMap {
+        put("localeId", localeId?.let(::JsonPrimitive) ?: JsonNull)
+        put("first", JsonPrimitive(first))
+        put("after", after?.let(::JsonPrimitive) ?: JsonNull)
+    }
 
     /** A venue with its upcoming events, in one request. */
     suspend fun venueOverview(id: String): VenueOverview {
@@ -1120,6 +1189,15 @@ data class VenueOverview(
 fun List<Venue>.sortedForList(localeId: String?): List<Venue> =
     filterNot { it.hidden }.sortedBy { if (it.isIn(localeId)) 0 else 1 }
 
+/** One page of the Venues list, and where the next starts: null when it's the last. */
+data class VenuePage(val venues: List<Venue>, val nextCursor: String?)
+
+/** How many venues each page of the Venues list asks for: most cities fit in one. */
+const val VENUES_PAGE_SIZE: Int = 40
+
+/** At most this many pages for one city's own page (2,000 venues), so a runaway cursor can't loop. */
+private const val LOCALE_VENUE_PAGE_LIMIT = 50
+
 /** One city's venues in the Everywhere list. */
 data class VenueCityGroup(val city: String, val venues: List<Venue>)
 
@@ -1325,6 +1403,24 @@ private data class VenuesResponse(@SerialName("venues") val venuesMixin: VenuesM
     /** `venues { list { nodes } }` on the root, the audience; a missing venues mixin reads as none. */
     val venues: List<Venue> get() = venuesMixin?.list?.nodes.orEmpty()
 }
+
+/** `venues { list { nodes pageInfo } }`, one page of the Venues list. */
+@Serializable
+private data class VenuesPageResponse(@SerialName("venues") val venuesMixin: VenuesMixin? = null) {
+    @Serializable data class VenuesMixin(val list: Page = Page())
+    @Serializable data class Page(val nodes: List<Venue> = emptyList(), val pageInfo: PageInfo = PageInfo())
+    @Serializable data class PageInfo(val hasNextPage: Boolean = false, val endCursor: String? = null)
+
+    val page: VenuePage
+        get() {
+            val list = venuesMixin?.list ?: Page()
+            return VenuePage(list.nodes, list.pageInfo.endCursor.takeIf { list.pageInfo.hasNextPage })
+        }
+}
+
+/** `nodes(ids:)`: each a venue's fields, an empty object for a record that isn't one, or null for a missing one. */
+@Serializable
+private data class VenuesByIdResponse(val nodes: List<JsonObject?> = emptyList())
 
 /** A connection's `nodes`. */
 @Serializable

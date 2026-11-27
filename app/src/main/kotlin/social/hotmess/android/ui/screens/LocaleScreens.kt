@@ -52,7 +52,6 @@ import social.hotmess.android.ui.theme.Sizes
 import social.hotmess.core.AppRoute
 import social.hotmess.core.Event
 import social.hotmess.core.Venue
-import social.hotmess.core.isIn
 
 /** How long each venue shows on a locale's card before the next. */
 private const val SHOWCASE_INTERVAL_MILLIS = 4_000L
@@ -149,7 +148,8 @@ fun LocaleScreen(id: String, name: String, navigator: Navigator) {
         } catch (_: Exception) {
             emptyList()
         }
-        LocalePage(graph.api.venues(id), events)
+        // Only this city's venues, a page at a time, not the audience's whole list.
+        LocalePage(graph.api.localeVenues(id), events)
     }
     LaunchedEffect(id) { loader.load(id, fetch = fetch) }
     val served = rememberScreenCards(LayoutScreen.LOCALE, LOCALE_CARD_KINDS, LOCALE_FALLBACK_CARDS, forLocale = id)
@@ -159,7 +159,8 @@ fun LocaleScreen(id: String, name: String, navigator: Navigator) {
     ScreenScaffold(name, onBack = navigator::back) {
         LoadStateView(state, onRetry = { loader.load(id, refresh = true, fetch = fetch) }) { page ->
             PullToRefreshBox(refreshing, onRefresh = { loader.load(id, refresh = true, fetch = fetch) }) {
-                val here = page.venues.filter { it.isIn(id) }
+                // Already the city's: filed under it or a locale within it, or inside its area.
+                val here = page.venues
                 val openVenue = { venue: Venue -> navigator.open(AppRoute.VenueDetail(venue.id)) }
                 val cards = served.takeUnless { it.cards.isEmpty() } ?: CardLayout.fallback(LOCALE_FALLBACK_CARDS)
                 Feed {

@@ -3007,6 +3007,11 @@ type AudienceMediaView implements IAudienceMedia {
     kinds: [MediaItemKind!]
 
     """
+    Staff only: only items whose license stands so, e.g. NEEDED.
+    """
+    licenseStatuses: [MediaLicenseStatus!]
+
+    """
     Only items in this playlist.
     """
     playlistId: ID
@@ -3035,6 +3040,11 @@ type AudienceMediaView implements IAudienceMedia {
     Only recordings, live versions, music videos and scenes not yet linked to a song.
     """
     withoutSong: Boolean = false
+
+    """
+    Only videos on YouTube with no Spotify track or ISRC.
+    """
+    youtubeOnly: Boolean = false
   ): [MediaItem!]!
 
   """
@@ -3748,8 +3758,8 @@ type AudienceSoapboxView implements IAudienceSoapbox {
   """
   publications(
     """
-    Only those covering a locale: its own and those of every locale it's in, so
-    a statewide publication is local to each city below it.
+    Only LGBTQ+ ones (COMMUNITY) covering a locale: its own and those of every
+    locale it's in, so a statewide publication is local to each city below it.
     """
     localeId: ID
 
@@ -3949,6 +3959,12 @@ type AudienceVenuesView implements IAudienceVenues {
     last: Int
 
     """
+    Only venues this locale lists: filed under it or a locale within it, or
+    placed inside its area (Locale.venues). An unknown locale lists none.
+    """
+    localeId: ID
+
+    """
     Leave out hidden venues, order nearest first and fill in each distance.
     """
     near: CoordinatesInput
@@ -3962,6 +3978,11 @@ type AudienceVenuesView implements IAudienceVenues {
     Only venues with this tag.
     """
     tagId: ID
+
+    """
+    True leaves out hidden venues, as the apps' Venues list does. Page with first and after: the order is stable.
+    """
+    visible: Boolean
   ): VenueConnection!
 
   """
@@ -7733,6 +7754,126 @@ type EdgeChanged {
   The member's ID.
   """
   nodeId: ID!
+}
+
+"""
+A phone call with 911 or 988 that a safety alert's counselor opened, which the guest and staff may join.
+"""
+type EmergencyBridge {
+  """
+  When 911 or 988 answered.
+  """
+  connectedAt: ISO8601DateTime
+
+  """
+  When the counselor opened it.
+  """
+  createdAt: ISO8601DateTime!
+
+  """
+  When it ended or failed.
+  """
+  endedAt: ISO8601DateTime
+
+  """
+  Its UUID.
+  """
+  id: ID!
+
+  """
+  Whether it can still be joined.
+  """
+  isOpen: Boolean!
+
+  """
+  Where it stands.
+  """
+  state: EmergencyBridgeState!
+
+  """
+  Who it dials.
+  """
+  target: EmergencyBridgeTarget!
+}
+
+"""
+A one-time way into an emergency call on a safety alert, good for 10 minutes.
+"""
+type EmergencyBridgePass {
+  """
+  A Twilio Voice access token for the in-app call; null when in-app calling is not set up, then dial in instead.
+  """
+  accessToken: String
+
+  """
+  The call it joins.
+  """
+  bridge: EmergencyBridge!
+
+  """
+  A tel: link that dials the join number and keys in the PIN.
+  """
+  dialLink: String
+
+  """
+  When it stops working.
+  """
+  expiresAt: ISO8601DateTime!
+
+  """
+  The number to dial (E.164), then key in the PIN.
+  """
+  joinNumber: String
+
+  """
+  The 6-digit PIN to key in after dialing the join number.
+  """
+  pin: String!
+}
+
+"""
+Where an emergency call on a safety alert stands.
+"""
+enum EmergencyBridgeState {
+  """
+  911 or 988 answered.
+  """
+  CONNECTED
+
+  """
+  Dialing 911 or 988.
+  """
+  DIALING
+
+  """
+  The call ended.
+  """
+  ENDED
+
+  """
+  The call didn't connect: call from a phone.
+  """
+  FAILED
+
+  """
+  Waiting for the counselor to join; nothing is dialed until then.
+  """
+  WAITING
+}
+
+"""
+Who an emergency call on a safety alert dials (startEmergencyBridge).
+"""
+enum EmergencyBridgeTarget {
+  """
+  988, the Suicide and Crisis Lifeline.
+  """
+  CRISIS_LINE
+
+  """
+  911, from the venue's number, so dispatch has its address.
+  """
+  EMERGENCY
 }
 
 """
@@ -11677,6 +11818,11 @@ interface IAudienceMedia @mixin(extensionKey: "media", field: "media", null: fal
     kinds: [MediaItemKind!]
 
     """
+    Staff only: only items whose license stands so, e.g. NEEDED.
+    """
+    licenseStatuses: [MediaLicenseStatus!]
+
+    """
     Only items in this playlist.
     """
     playlistId: ID
@@ -11705,6 +11851,11 @@ interface IAudienceMedia @mixin(extensionKey: "media", field: "media", null: fal
     Only recordings, live versions, music videos and scenes not yet linked to a song.
     """
     withoutSong: Boolean = false
+
+    """
+    Only videos on YouTube with no Spotify track or ISRC.
+    """
+    youtubeOnly: Boolean = false
   ): [MediaItem!]!
 
   """
@@ -12228,8 +12379,8 @@ interface IAudienceSoapbox @mixin(extensionKey: "soapbox", field: "soapbox", nul
   """
   publications(
     """
-    Only those covering a locale: its own and those of every locale it's in, so
-    a statewide publication is local to each city below it.
+    Only LGBTQ+ ones (COMMUNITY) covering a locale: its own and those of every
+    locale it's in, so a statewide publication is local to each city below it.
     """
     localeId: ID
 
@@ -12369,6 +12520,12 @@ interface IAudienceVenues @mixin(extensionKey: "venues", field: "venues", null: 
     last: Int
 
     """
+    Only venues this locale lists: filed under it or a locale within it, or
+    placed inside its area (Locale.venues). An unknown locale lists none.
+    """
+    localeId: ID
+
+    """
     Leave out hidden venues, order nearest first and fill in each distance.
     """
     near: CoordinatesInput
@@ -12382,6 +12539,11 @@ interface IAudienceVenues @mixin(extensionKey: "venues", field: "venues", null: 
     Only venues with this tag.
     """
     tagId: ID
+
+    """
+    True leaves out hidden venues, as the apps' Venues list does. Page with first and after: the order is stable.
+    """
+    visible: Boolean
   ): VenueConnection!
 
   """
@@ -16023,6 +16185,11 @@ enum ListingImportKind {
   PEOPLE
 
   """
+  Posters and flyers whose dated events a vision model reads and lists at their venues (PosterEventsImport).
+  """
+  POSTERS
+
+  """
   Researched social profiles and websites to fill in (ResearchedSocialsImport).
   """
   SOCIALS
@@ -17098,6 +17265,16 @@ type Location implements HasBanner & HasPhoto & HasTimestamps & Node {
   id: ID!
 
   """
+  Its point's latitude, in degrees; null without a point.
+  """
+  latitude: Float
+
+  """
+  Its point's longitude, in degrees; null without a point.
+  """
+  longitude: Float
+
+  """
   The photo's CDN URL, if there is one.
   """
   photoUrl: PhotoURL
@@ -17683,6 +17860,32 @@ type MediaItem {
   When it came out.
   """
   year: Int
+
+  """
+  The YouTube channel that posted its video.
+  """
+  youtubeChannel: String
+
+  """
+  That channel's page.
+  """
+  youtubeChannelUrl: String
+
+  """
+  Its YouTube video id.
+  """
+  youtubeId: String
+
+  """
+  On YouTube with no Spotify track or ISRC: no catalog a venue license covers
+  knows it, so its rights are asked for directly.
+  """
+  youtubeOnly: Boolean!
+
+  """
+  Its YouTube page.
+  """
+  youtubeUrl: String
 }
 
 """
@@ -17793,6 +17996,39 @@ type MediaLabel {
   The tag or collection, e.g. lesbian or new-since-2018.
   """
   name: String!
+}
+
+"""
+Where gathering the license to play a media item stands
+(MediaItem.license_status). A song released only on YouTube has no ISRC and
+isn't in the catalogs a venue's music service or PRO licenses cover, so its
+rights are asked for directly.
+"""
+enum MediaLicenseStatus {
+  """
+  The rights holder said no.
+  """
+  DECLINED
+
+  """
+  Licensed to play.
+  """
+  GRANTED
+
+  """
+  Its rights holder still needs asking.
+  """
+  NEEDED
+
+  """
+  Covered another way, or won't be played in public.
+  """
+  NOT_NEEDED
+
+  """
+  Asked; waiting on an answer.
+  """
+  REQUESTED
 }
 
 """
@@ -18855,6 +19091,18 @@ type Mutation {
     """
     input: TribeIdentifyInput!
   ): TribeIdentifyPayload @requires(permissions: ["users:write:self"])
+
+  """
+  Gets a one-time way into the emergency call open on a safety alert: yours if
+  you sent it, or your venue's if you're on staff there (unless the counselor
+  took staff out), or the counselor's.
+  """
+  joinEmergencyBridge(
+    """
+    Parameters for SafetyAlertBridgeJoin
+    """
+    input: SafetyAlertBridgeJoinInput!
+  ): SafetyAlertBridgeJoinPayload @requires(permissions: ["users:write:self", "chat:moderate:mine", "chat:moderate:venue", "audience:moderate:*", "safety:moderate:responder"])
 
   """
   Opts in to Quickie at a venue for tonight (only while the app places you
@@ -20735,6 +20983,11 @@ type Person implements HasBanner & HasReviews & HasTags & HasTaskTemplates & Nod
   chat: IPersonChat!
 
   """
+  Their bio, or what an organization does, in their own words. Null when they have none.
+  """
+  description: String
+
+  """
   Where their Donate button goes: their first link out to their own donation
   page that the audience offers, or null for none. Never pushed.
   """
@@ -21012,6 +21265,13 @@ type PersonEventConnection {
 One of a person's events, and how they're on it: themselves, or through a troupe they're in.
 """
 type PersonEventEdge {
+  """
+  Their entries on its lineup, or their troupes', in running order: when they go
+  on (projectedStartsAt as the night runs, else startsAt) and any curtain call.
+  Empty when they are billed but not on its lineup.
+  """
+  appearances: [Appearance!]!
+
   """
   A cursor for use in pagination.
   """
@@ -23516,6 +23776,12 @@ type Publication implements HasTimestamps {
   ): ArticleConnection!
 
   """
+  An LGBTQ+ publication (COMMUNITY), or a general-interest one whose articles
+  show only when the audience picks them (GENERAL).
+  """
+  coverage: PublicationCoverage!
+
+  """
   When it started publishing here.
   """
   createdAt: ISO8601DateTime!
@@ -23661,6 +23927,24 @@ type Publication implements HasTimestamps {
   Its website.
   """
   websiteUrl: String
+}
+
+"""
+Whether a Soapbox publication is an LGBTQ+ publication or a general-interest one
+that runs some LGBTQ+ stories (doc/SOAPBOX.md "General-interest publications").
+"""
+enum PublicationCoverage {
+  """
+  An LGBTQ+ publication (QSaltLake): its articles and feed show, and it is among its locale's publishers.
+  """
+  COMMUNITY
+
+  """
+  A general-interest publication (City Weekly): only articles the audience
+  features (featureArticleLink) or approves from its feed show, in the locales
+  and on the venues, events and people they are about.
+  """
+  GENERAL
 }
 
 """
@@ -24480,6 +24764,13 @@ organization), by a member or a publication. There is no rating.
 """
 type Review implements HasCredits {
   """
+  The news article it is quoted from, when it is a line from one: show it as a
+  quote from the article's publication and open the article (a teaser opens
+  canonicalUrl) to read the rest.
+  """
+  article: Article
+
+  """
   Who wrote it.
   """
   author: Profile!
@@ -24901,6 +25192,16 @@ type SafetyAlert {
   concerns: [SafetyAlertConcern!]!
 
   """
+  When a licensed crisis counselor joined.
+  """
+  counselorJoinedAt: ISO8601DateTime
+
+  """
+  The licensed crisis counselor on it, as the guest is told; null until one joins.
+  """
+  counselorName: String
+
+  """
   When it was sent.
   """
   createdAt: ISO8601DateTime!
@@ -24909,6 +25210,11 @@ type SafetyAlert {
   What they wrote, if anything.
   """
   description: String
+
+  """
+  The latest phone call with 911 or 988 its counselor opened, open or not; joinEmergencyBridge joins an open one.
+  """
+  emergencyBridge: EmergencyBridge
 
   """
   When it went to the venue's managers too: nobody picked it up in time, or the guest sent it again.
@@ -24939,6 +25245,12 @@ type SafetyAlert {
   Staff sent it to rehearse (sendPracticeSafetyAlert); nobody needs help.
   """
   practice: Boolean!
+
+  """
+  Its thread and free text were deleted after it ended (crisis chat is kept only
+  for the conversation, unless a counselor holds it).
+  """
+  purged: Boolean!
 
   """
   When the guest last sent it again.
@@ -24980,6 +25292,41 @@ type SafetyAlert {
   to see, push or block, and their thread name is "Guest (no app)".
   """
   withoutAccount: Boolean!
+}
+
+"""
+Autogenerated input type of SafetyAlertBridgeJoin
+"""
+input SafetyAlertBridgeJoinInput {
+  """
+  A unique identifier for the client performing the mutation.
+  """
+  clientMutationId: String
+
+  """
+  The alert.
+  """
+  id: ID!
+}
+
+"""
+Autogenerated return type of SafetyAlertBridgeJoin.
+"""
+type SafetyAlertBridgeJoinPayload {
+  """
+  A unique identifier for the client performing the mutation.
+  """
+  clientMutationId: String
+
+  """
+  Your way into the call.
+  """
+  pass: EmergencyBridgePass
+
+  """
+  The alert as it now stands.
+  """
+  safetyAlert: SafetyAlert
 }
 
 """
@@ -25067,6 +25414,11 @@ type SafetyAlertMessage {
   id: ID!
 
   """
+  A staff-only note (sendSafetyAlertMessage internal: true): staff and safety responders only. The guest never gets one.
+  """
+  internal: Boolean!
+
+  """
   A community resource staff or a responder shared (shareSafetyAlertResource); the body says the same in text.
   """
   resource: CommunityResource
@@ -25095,6 +25447,11 @@ input SafetyAlertMessageSendInput {
   The alert.
   """
   id: ID!
+
+  """
+  A staff-only note: staff and safety responders see it, in the incident's staff room too; the guest never does. Staff only.
+  """
+  internal: Boolean = false
 }
 
 """

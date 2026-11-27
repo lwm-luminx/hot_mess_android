@@ -52,6 +52,9 @@ object Fixtures {
         {"id":"$VENUE_ID","name":"Nyne","hidden":false,"order":1,"photoUrl":null,"bannerUrl":null,"locale":{"id":"$LOCALE_ID","name":"Spokane","label":"spokane"}},
         {"id":"2b3c4d5e-6f70-4182-9a3b-4c5d6e7f8091","name":"The Globe","hidden":false,"order":2,"photoUrl":null,"bannerUrl":null,"locale":{"id":"$LOCALE_ID","name":"Spokane","label":"spokane"}}]}}}"""
 
+    /** [venues] as one page of the paged Venues list (VenuesPage), the last. */
+    val venuesPage get() = venues.replace("]}}}", "],\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"MQ\"}}}}")
+
     const val CONTACT_MATCHING_OFF =
         """{"me":{"contactMatching":{"enabled":false,"phoneVerified":false,"contactsChecked":0,"textCodesAvailable":false,"matches":[],"incomingRequests":[]}}}"""
 

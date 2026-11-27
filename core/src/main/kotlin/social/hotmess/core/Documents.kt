@@ -217,6 +217,29 @@ object Documents {
         }
     """.trimIndent()
 
+    /**
+     * One page of the Venues list, hidden venues left out, in the audience's order: a city's (venues filed under it or
+     * a locale within it, or placed inside its area) or, without a locale, everywhere's. An API from
+     * audience_kit_api's Venues paging on; older ones refuse localeId and visible ([VENUES] then).
+     */
+    val VENUES_PAGE: String = """
+        query VenuesPage(${'$'}localeId: ID, ${'$'}first: Int!, ${'$'}after: String) {
+          venues {
+            list(localeId: ${'$'}localeId, visible: true, first: ${'$'}first, after: ${'$'}after) {
+              nodes { $VENUE_FIELDS hidden order locale { id name label } }
+              pageInfo { hasNextPage endCursor }
+            }
+          }
+        }
+    """.trimIndent()
+
+    /** Venues by id, for the cards that point at venues the Venues list hasn't paged in yet. */
+    val VENUES_BY_ID: String = """
+        query VenuesById(${'$'}ids: [ID!]!) {
+          nodes(ids: ${'$'}ids) { ... on Venue { $VENUE_FIELDS hidden order locale { id name label } } }
+        }
+    """.trimIndent()
+
     val VENUE: String = """
         query Venue(${'$'}id: ID!) {
           venues {
