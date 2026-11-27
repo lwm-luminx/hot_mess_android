@@ -177,14 +177,14 @@ class ScreenTests {
     // region Tabs
 
     @Test fun venuesListsTheLocalesVenues() {
-        stub.data("Venues", Fixtures.venues)
+        stub.data("VenuesPage", Fixtures.venuesPage)
         show { VenuesScreen(RecordingNavigator()) }
         expectText("Nyne")
         expectText("The Globe")
     }
 
     @Test fun venuesShowsTheErrorWhenTheListCantBeHad() {
-        stub.on("Venues", StubApi.Reply.Raw(503, "{}"))
+        stub.on("VenuesPage", StubApi.Reply.Raw(503, "{}"))
         show { VenuesScreen(RecordingNavigator()) }
         expectText("Something went wrong")
     }

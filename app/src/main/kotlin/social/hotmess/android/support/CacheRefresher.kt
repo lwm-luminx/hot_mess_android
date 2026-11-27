@@ -73,8 +73,16 @@ class CacheRefresher(
                 break
             }
         }
-        // Venues are audience-wide; the screens fall back to the last list on their own.
-        if (succeeded) runCatching { api.venues(null) }
+        // The Venues screen's first pages (each city's, and Everywhere's), not the audience's whole list: the screen
+        // draws them at once and pages in the rest itself.
+        if (succeeded) {
+            for (locale in locales) {
+                runCatching { api.venuesPage(locale.id, cachePolicy = GraphQLCachePolicy.Refresh) }
+                    .onFailure { if (it is CancellationException) throw it }
+            }
+            runCatching { api.venuesPage(null, cachePolicy = GraphQLCachePolicy.Refresh) }
+                .onFailure { if (it is CancellationException) throw it }
+        }
         backoff = if (succeeded) backoff.succeeded() else backoff.failed()
         succeeded
     }

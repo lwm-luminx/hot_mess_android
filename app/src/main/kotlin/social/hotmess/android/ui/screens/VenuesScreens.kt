@@ -121,7 +121,18 @@ import social.hotmess.core.SocialLink
 import social.hotmess.core.Venue
 import social.hotmess.core.VenueOverview
 import social.hotmess.core.byCity
-import social.hotmess.core.isIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.ui.platform.testTag
+import kotlinx.coroutines.CancellationException
+import social.hotmess.core.LoadState
+import social.hotmess.core.VenuePage
+import social.hotmess.core.missingVenueIds
+import social.hotmess.core.plus
+import social.hotmess.core.venueKey
 import com.audiencekit.CardKind
 import com.audiencekit.CardLayout
 import com.audiencekit.LayoutScreen
@@ -136,6 +147,10 @@ private val EVERYWHERE_CARD_KINDS = listOf(CardKind.LOCALES_SHOWCASE, CardKind.W
 /**
  * The venues on a map, then as a list. Once the device's city is known it opens on that city's venues; a segmented
  * control switches to Everywhere, every venue grouped by city with this one first.
+ *
+ * Each list comes a page at a time ([HotMessApi.venuesPage]): the city's first page usually holds all of it, and
+ * Everywhere asks for more as the list nears its end. Each first page is kept on the phone, so the screen draws at
+ * once while it refreshes. The server's cards can point at venues not paged in yet; those are looked up by id.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -144,38 +159,86 @@ fun VenuesScreen(navigator: Navigator) {
     val locale by graph.location.locale.collectAsStateWithLifecycle()
     val coordinates by graph.location.coordinates.collectAsStateWithLifecycle()
     val branding by graph.brand.branding.collectAsStateWithLifecycle()
-    val loader = rememberLoader<List<Venue>>("venues")
-    val state by loader.state.collectAsStateWithLifecycle()
-    val refreshing by loader.isRefreshing.collectAsStateWithLifecycle()
     val localeId = locale?.id
+    val name = locale?.name
     var mapExpanded by rememberSaveable { mutableStateOf(false) }
     // Opens on the device's city each time; Everywhere is every venue, by city.
     var everywhere by rememberSaveable { mutableStateOf(false) }
+    // Until the city is known there's only the one list: every venue.
+    val showsEverywhere = name == null || everywhere
+    val scopeId = if (showsEverywhere) null else localeId
+    val loader = rememberLoader<VenuePage>(if (scopeId == null) "venues-everywhere" else "venues-$scopeId")
+    val state by loader.state.collectAsStateWithLifecycle()
+    val refreshing by loader.isRefreshing.collectAsStateWithLifecycle()
+    val fetch: suspend () -> VenuePage = { graph.api.venuesPage(scopeId) }
 
-    LaunchedEffect(localeId) {
-        loader.load(localeId, cached = { graph.api.cachedVenues(localeId) }) { graph.api.venues(localeId) }
+    LaunchedEffect(scopeId) {
+        loader.load(scopeId, cached = { graph.api.cachedVenuesPage(scopeId) }, fetch = fetch)
     }
     val cardLayout = rememberScreenCards(LayoutScreen.VENUES, VENUES_CARD_KINDS, VENUES_FALLBACK_CARDS)
     val everywhereLayout = rememberScreenCards(LayoutScreen.EVERYWHERE, EVERYWHERE_CARD_KINDS, emptyList())
 
+    val scope = rememberCoroutineScope()
+    var loadingMore by remember(scopeId) { mutableStateOf(false) }
+    var moreFailed by remember(scopeId) { mutableStateOf(false) }
+    val loadMore: () -> Unit = {
+        val cursor = (state as? LoadState.Loaded)?.value?.nextCursor
+        if (cursor != null && !loadingMore) {
+            loadingMore = true
+            moreFailed = false
+            scope.launch {
+                try {
+                    val next = graph.api.venuesPage(scopeId, after = cursor)
+                    // Only onto the page it followed: a refresh meanwhile started the list again.
+                    loader.update { list -> if (list.nextCursor == cursor) list + next else list }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // Left as it was: "Show more" stays to try again, without asking again by itself.
+                    moreFailed = true
+                } finally {
+                    loadingMore = false
+                }
+            }
+        }
+    }
+
+    // Venues the server's cards point at that the list hasn't paged in, looked up by id as their cards show.
+    val lookedUp = remember { mutableStateMapOf<String, Venue>() }
+    val asked = remember { mutableSetOf<String>() }
+    val lookUp: suspend (List<String>, List<Venue>) -> Unit = { wanted, have ->
+        val missing = missingVenueIds(wanted, have + lookedUp.values, asked)
+        if (missing.isNotEmpty()) {
+            asked += missing.map(::venueKey)
+            runCatching { graph.api.venuesById(missing) }
+                .onSuccess { found -> found.forEach { lookedUp[venueKey(it.id)] = it } }
+                // Asked again next time the card shows.
+                .onFailure { if (it is CancellationException) throw it; asked -= missing.map(::venueKey).toSet() }
+        }
+    }
+
     ScreenScaffold(title = branding?.audience?.name?.let { "$it venues" } ?: "Venues") {
-        LoadStateView(state, onRetry = { loader.load(localeId) { graph.api.venues(localeId) } }) { venues ->
-            PullToRefreshBox(refreshing, onRefresh = { loader.load(localeId, refresh = true) { graph.api.venues(localeId) } }) {
-                val name = locale?.name
-                val here = venues.filter { it.isIn(localeId) }
-                // Until the city is known there's only the one list: every venue.
-                val shown = if (name == null || everywhere) venues else here
+        LoadStateView(state, onRetry = { loader.load(scopeId, refresh = true, fetch = fetch) }) { list ->
+            PullToRefreshBox(refreshing, onRefresh = { loader.load(scopeId, refresh = true, fetch = fetch) }) {
+                val venues = list.venues
+                // What the cards pick from: the list so far, then the venues looked up for them.
+                val pool = remember(venues, lookedUp.size) { (venues + lookedUp.values).distinctBy { venueKey(it.id) } }
+                val cityCards = cardLayout.takeIf { it.card(CardKind.VENUES_ALL) != null } ?: CardLayout.fallback(VENUES_FALLBACK_CARDS)
+                if (!showsEverywhere) {
+                    val wanted = cityCards.cards.filterNot { it.isFallback }.flatMap { it.venueIds }
+                    LaunchedEffect(wanted, venues.size) { lookUp(wanted, venues) }
+                }
                 Feed {
                     if (name != null) {
                         item(key = "scope") {
                             VenueScopePicker(city = name, everywhere = everywhere, onChange = { everywhere = it })
                         }
                     }
-                    if (shown.any { it.coordinate != null }) {
+                    if (venues.any { it.coordinate != null }) {
                         item(key = "map") {
                             Box(Modifier.fillMaxWidth().height(Sizes.mapInline).clip(Radius.photo)) {
                                 VenueMap(
-                                    venues = shown,
+                                    venues = venues,
                                     location = coordinates,
                                     onVenue = { navigator.open(AppRoute.VenueDetail(it)) },
                                     onMapTap = { mapExpanded = true },
@@ -191,17 +254,19 @@ fun VenuesScreen(navigator: Navigator) {
                         }
                     }
                     val open = { venue: Venue -> navigator.open(AppRoute.VenueDetail(venue.id)) }
-                    if (venues.isEmpty()) {
+                    if (venues.isEmpty() && showsEverywhere) {
                         item { DetailSection("All venues") { EmptyRow("There are no venues here yet.") } }
-                    } else if (everywhereLayout.card(CardKind.LOCALES_SHOWCASE) != null && (name == null || everywhere)) {
+                    } else if (everywhereLayout.card(CardKind.LOCALES_SHOWCASE) != null && showsEverywhere) {
                         // The server's locales, each with some of its venues in turn; tapping one opens its page.
                         everywhereLayout.cards.forEach { card ->
                             when (card.kind) {
                                 CardKind.LOCALES_SHOWCASE -> card.localeId?.let { id ->
                                     item(key = card.id) {
+                                        // Only the cards on screen look up their venues.
+                                        LaunchedEffect(card.id, venues.size) { lookUp(card.venueIds, venues) }
                                         LocaleShowcaseCard(
                                             name = card.title ?: "Venues",
-                                            venues = venues.pickedBy(card) { it.id },
+                                            venues = pool.pickedBy(card) { it.id },
                                             onClick = { navigator.open(AppRoute.LocaleDetail(id, card.title ?: "Venues")) },
                                         )
                                     }
@@ -210,33 +275,37 @@ fun VenuesScreen(navigator: Navigator) {
                                 CardKind.PROMO_SLOT -> item(key = card.id) { PromoSlotView(card, everywhereLayout.id, navigator) }
                             }
                         }
-                    } else if (name == null || everywhere) {
+                    } else if (showsEverywhere) {
                         venues.byCity(localeId).forEach { group ->
                             cardSection("city-${group.city}", group.city, group.venues, key = { it.id }) { venue ->
                                 VenueCard(venue, onClick = { open(venue) })
                             }
                         }
+                        venuesFooter(list.nextCursor, loadingMore, moreFailed, loadMore)
                     } else {
+                        val here = venues
                         if (here.isEmpty()) {
                             item(key = "empty") { DetailSection(name) { EmptyRow("No venues in $name yet.") } }
                         }
                         // The city's cards in the server's order when it sent the city's list, else the built-in one.
-                        val cards = cardLayout.takeIf { it.card(CardKind.VENUES_ALL) != null } ?: CardLayout.fallback(VENUES_FALLBACK_CARDS)
-                        cards.cards.forEach { card ->
+                        cityCards.cards.forEach { card ->
                             when (card.kind) {
                                 CardKind.VENUES_ALL -> {
                                     val title = card.title.takeUnless { card.isFallback } ?: name
-                                    cardSection("here", title, here.rankedBy(card) { it.id }, key = { it.id }) { venue -> VenueCard(venue, onClick = { open(venue) }) }
+                                    val ranked = if (card.isFallback) here else pool.pickedBy(card) { it.id }.ifEmpty { here }
+                                    cardSection("here", title, ranked, key = { it.id }) { venue -> VenueCard(venue, onClick = { open(venue) }) }
+                                    // The rest of the city's list follows its own; a card that names every venue needs none.
+                                    if (card.isFallback || ranked === here) venuesFooter(list.nextCursor, loadingMore, moreFailed, loadMore)
                                 }
                                 // Only the server sends these, with their own headings.
                                 CardKind.VENUES_TONIGHT, CardKind.VENUES_NEARBY ->
-                                    cardSection(card.id, card.title, venues.pickedBy(card) { it.id }, key = { it.id }) { venue -> VenueCard(venue, onClick = { open(venue) }) }
+                                    cardSection(card.id, card.title, pool.pickedBy(card) { it.id }, key = { it.id }) { venue -> VenueCard(venue, onClick = { open(venue) }) }
                                 // "Don't see your local spot?": suggesting needs an account.
                                 CardKind.VENUES_THIN_CITY -> if (graph.session.isSignedIn) {
                                     item(key = "thin-city") { ThinCityCard(here.size, name, navigator) }
                                 }
                                 CardKind.WEB -> card.web?.let { content -> item(key = card.id) { WebCardView(content) } }
-                                CardKind.PROMO_SLOT -> item(key = card.id) { PromoSlotView(card, cards.id, navigator) }
+                                CardKind.PROMO_SLOT -> item(key = card.id) { PromoSlotView(card, cityCards.id, navigator) }
                             }
                         }
                     }
@@ -244,7 +313,7 @@ fun VenuesScreen(navigator: Navigator) {
             }
             if (mapExpanded) {
                 FullScreenVenueMap(
-                    venues = if (locale?.name == null || everywhere) venues else venues.filter { it.isIn(localeId) },
+                    venues = (state as? LoadState.Loaded)?.value?.venues.orEmpty(),
                     location = coordinates,
                     onVenue = {
                         mapExpanded = false
@@ -252,6 +321,24 @@ fun VenuesScreen(navigator: Navigator) {
                     },
                     onClose = { mapExpanded = false },
                 )
+            }
+        }
+    }
+}
+
+/**
+ * The end of a paged venues list: asks for the next page as it scrolls into view, with a spinner while it loads and
+ * "Show more" after a failure. Nothing once every venue is in.
+ */
+private fun LazyListScope.venuesFooter(nextCursor: String?, loading: Boolean, failed: Boolean, loadMore: () -> Unit) {
+    nextCursor ?: return
+    item(key = "venues-more") {
+        if (!failed) LaunchedEffect(nextCursor) { loadMore() }
+        Box(Modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
+            if (loading) {
+                CircularProgressIndicator(Modifier.size(24.dp))
+            } else {
+                TextButton(onClick = loadMore, modifier = Modifier.testTag("venues.showMore")) { Text("Show more") }
             }
         }
     }
