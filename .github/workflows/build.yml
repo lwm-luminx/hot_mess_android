@@ -1,12 +1,21 @@
 name: Build
 
+# Not on pushes to next: the PR into next already ran this, and the Google Play workflow builds next's Staging bundle.
 on:
   push:
-    branches: [next, main]
+    branches: [main]
   pull_request:
+    # ready_for_review: drafts skip the build, so marking a PR ready runs it.
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# A new push to a PR cancels that PR's older run; runs on main always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
